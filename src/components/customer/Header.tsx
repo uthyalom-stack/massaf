@@ -35,24 +35,24 @@ export function Header({ navLinks }: HeaderProps) {
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center gap-8" aria-label="Main Navigation">
             {navLinks.map((link) => (
-              <a
+              <Link
                 key={link.label}
                 href={link.href}
                 className="text-sm font-medium text-slate-600 hover:text-emerald-800 transition-colors focus:outline-none focus:text-emerald-800"
               >
                 {link.label}
-              </a>
+              </Link>
             ))}
           </nav>
 
           {/* Header Action CTA */}
           <div className="hidden md:flex items-center gap-4">
-            <a
-              href="#search"
+            <Link
+              href="/find-a-therapist"
               className="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow-xs focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
             >
               Find a Therapist
-            </a>
+            </Link>
           </div>
 
           {/* Mobile Menu Toggle Button */}
@@ -83,25 +83,25 @@ export function Header({ navLinks }: HeaderProps) {
         <div className="md:hidden border-b border-slate-200 bg-white/95 backdrop-blur-lg px-4 pt-2 pb-6 space-y-3">
           <nav className="flex flex-col space-y-2">
             {navLinks.map((link) => (
-              <a
+              <Link
                 key={link.label}
                 href={link.href}
                 onClick={() => setMobileMenuOpen(false)}
                 className="px-3 py-2 rounded-lg text-base font-medium text-slate-700 hover:bg-slate-50 hover:text-emerald-800 transition-colors"
               >
                 {link.label}
-              </a>
+              </Link>
             ))}
           </nav>
 
           <div className="pt-2">
-            <a
-              href="#search"
+            <Link
+              href="/find-a-therapist"
               onClick={() => setMobileMenuOpen(false)}
               className="block w-full text-center px-4 py-2.5 text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow-xs"
             >
               Find a Therapist
-            </a>
+            </Link>
           </div>
         </div>
       )}

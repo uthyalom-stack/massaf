@@ -38,9 +38,9 @@ export function Footer({ navLinks }: FooterProps) {
             <ul className="space-y-2.5 text-sm">
               {navLinks.map((link) => (
                 <li key={link.label}>
-                  <a href={link.href} className="hover:text-emerald-400 transition-colors">
+                  <Link href={link.href} className="hover:text-emerald-400 transition-colors">
                     {link.label}
-                  </a>
+                  </Link>
                 </li>
               ))}
             </ul>

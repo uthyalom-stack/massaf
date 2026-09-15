@@ -1,14 +1,24 @@
 'use client';
 
 import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 export function LocationSearch() {
+  const router = useRouter();
   const [locationQuery, setLocationQuery] = useState('');
   const [serviceType, setServiceType] = useState('all');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Non-functional search presentational control for Phase 2 as per scope rules
+    const params = new URLSearchParams();
+    if (locationQuery.trim()) {
+      params.set('query', locationQuery.trim());
+    }
+    if (serviceType && serviceType !== 'all') {
+      params.set('type', serviceType);
+    }
+    const queryString = params.toString();
+    router.push(`/find-a-therapist${queryString ? `?${queryString}` : ''}`);
   };
 
   return (
@@ -67,7 +77,6 @@ export function LocationSearch() {
           <span className="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
           Supported across major U.S. cities and suburbs
         </span>
-        <span className="hidden sm:inline text-slate-400">Phase 2 Preview</span>
       </div>
     </div>
   );
