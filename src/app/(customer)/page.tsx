@@ -1,4 +1,5 @@
 import React from 'react';
+import Link from 'next/link';
 import { LocationSearch } from '@/components/customer/LocationSearch';
 import { TherapistGrid } from '@/components/customer/TherapistGrid';
 import { TestimonialSection } from '@/components/customer/TestimonialSection';
@@ -175,12 +176,12 @@ export default function CustomerHomePage() {
             Find and book top-rated massage therapists in your area today. Personalized care is just a few clicks away.
           </p>
           <div className="pt-4 flex flex-col sm:flex-row items-center justify-center gap-4">
-            <a
-              href="#search"
+            <Link
+              href="/find-a-therapist"
               className="w-full sm:w-auto inline-flex items-center justify-center px-8 py-4 bg-white text-emerald-950 font-bold text-base sm:text-lg rounded-xl hover:bg-emerald-50 transition-colors shadow-lg cursor-pointer"
             >
               Find a Therapist Now
-            </a>
+            </Link>
           </div>
         </div>
       </section>

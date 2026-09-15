@@ -7,6 +7,7 @@ export interface MockTherapist {
   reviewCount: number;
   location: string; // e.g. "Los Angeles, CA"
   serviceAreas: string[]; // e.g. ["Downtown LA", "Beverly Hills", "Santa Monica"]
+  zipCodes: string[]; // e.g. ["90210", "90401", "90230"]
   startingPrice: number;
   availability: string; // e.g. "Available Today", "Next available Tomorrow"
   offersStudio: boolean;
