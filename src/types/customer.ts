@@ -1,8 +1,22 @@
+export interface TherapistService {
+  id: string;
+  name: string;
+  durationMinutes: number;
+  price: number;
+  description: string;
+}
+
+export interface TherapistScheduleWindow {
+  days: string;
+  hours: string;
+}
+
 export interface MockTherapist {
   id: string;
   name: string;
   title: string;
   image: string;
+  galleryImages: string[];
   rating: number;
   reviewCount: number;
   location: string; // e.g. "Los Angeles, CA"
@@ -13,6 +27,11 @@ export interface MockTherapist {
   offersStudio: boolean;
   offersInHome: boolean;
   specialties: string[];
+  bio: string;
+  experience: string;
+  approach: string;
+  services: TherapistService[];
+  schedule: TherapistScheduleWindow[];
   isMostBooked?: boolean;
   isFeatured?: boolean;
 }
