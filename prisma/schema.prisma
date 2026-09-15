@@ -1,0 +1,273 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// User role for internal administration
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  STAFF
+}
+
+// Booking status lifecycle
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  REFUNDED
+  NO_SHOW
+}
+
+// Location options for appointments
+enum ServiceLocationType {
+  STUDIO
+  IN_HOME
+}
+
+// Generic payment statuses (provider agnostic)
+enum PaymentStatus {
+  UNPAID
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+// Generic payment methods (provider agnostic)
+enum PaymentMethod {
+  CARD
+  CRYPTO
+  CASH
+  OTHER
+}
+
+// Moderation state for customer reviews
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Internal administrative users
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  role      Role     @default(ADMIN)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Customers who book massage appointments
+model Customer {
+  id        String    @id @default(uuid())
+  name      String
+  email     String    @unique
+  phone     String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  bookings  Booking[]
+  reviews   Review[]
+
+  @@index([email])
+}
+
+/// Massage therapists providing services
+model Therapist {
+  id           String   @id @default(uuid())
+  name         String
+  bio          String?
+  profileImage String?
+  email        String?  @unique
+  phone        String?
+  rating       Float    @default(0.0)
+  reviewCount  Int      @default(0)
+  isActive     Boolean  @default(true)
+  isFeatured   Boolean  @default(false)
+  offersStudio Boolean  @default(true)
+  offersInHome Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  photos         TherapistPhoto[]
+  services       TherapistService[]
+  availabilities TherapistAvailability[]
+  serviceAreas   ServiceArea[]
+  bookings       Booking[]
+  reviews        Review[]
+
+  @@index([isActive])
+  @@index([isFeatured])
+}
+
+/// Gallery photos for therapist profiles
+model TherapistPhoto {
+  id          String   @id @default(uuid())
+  therapistId String
+  url         String
+  altText     String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  therapist   Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+
+  @@index([therapistId])
+}
+
+/// Offered massage services
+model Service {
+  id              String   @id @default(uuid())
+  name            String
+  description     String?
+  durationMinutes Int
+  price           Float
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  therapists TherapistService[]
+  bookings   Booking[]
+
+  @@index([isActive])
+}
+
+/// Junction model establishing therapist-service mappings and custom overrides
+model TherapistService {
+  id                   String   @id @default(uuid())
+  therapistId          String
+  serviceId            String
+  customPrice          Float?
+  customDurationMinutes Int?
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+
+  therapist Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+  service   Service   @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([therapistId, serviceId])
+  @@index([therapistId])
+  @@index([serviceId])
+}
+
+/// Therapist availability schedules (recurring or specific dates)
+model TherapistAvailability {
+  id            String    @id @default(uuid())
+  therapistId   String
+  dayOfWeek     Int?      // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  specificDate  DateTime? // Specific date override/exception
+  startTime     String    // HH:mm format e.g. "09:00"
+  endTime       String    // HH:mm format e.g. "17:00"
+  isUnavailable Boolean   @default(false) // True if blocking off time/leave
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  therapist Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+
+  @@index([therapistId])
+  @@index([dayOfWeek])
+  @@index([specificDate])
+}
+
+/// Service coverage areas for therapists (U.S. city and ZIP code based)
+model ServiceArea {
+  id          String   @id @default(uuid())
+  therapistId String
+  cityName    String
+  state       String   // 2-letter state code e.g. "NY", "CA"
+  zipCode     String
+  createdAt   DateTime @default(now())
+
+  therapist Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+
+  @@index([zipCode])
+  @@index([cityName])
+  @@index([therapistId, zipCode])
+}
+
+/// Customer bookings
+model Booking {
+  id                  String              @id @default(uuid())
+  bookingNumber       String              @unique
+  customerId          String
+  therapistId         String?             // Optional initially for auto-matching
+  serviceId           String
+  marketingLinkId     String?
+  appointmentDateTime DateTime
+  durationMinutes     Int
+  locationType        ServiceLocationType @default(STUDIO)
+  addressLine1        String?             // Required for IN_HOME
+  addressLine2        String?
+  city                String?
+  state               String?
+  zipCode             String?
+  notes               String?
+  status              BookingStatus       @default(PENDING)
+
+  // Provider-agnostic payment information
+  amount              Float
+  paymentStatus       PaymentStatus       @default(UNPAID)
+  paymentMethod       PaymentMethod?
+  paymentReference    String?             // Transaction hash or ID from payment provider
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer      Customer       @relation(fields: [customerId], references: [id])
+  therapist     Therapist?     @relation(fields: [therapistId], references: [id])
+  service       Service        @relation(fields: [serviceId], references: [id])
+  marketingLink MarketingLink? @relation(fields: [marketingLinkId], references: [id], onDelete: SetNull)
+  review        Review?
+
+  @@index([customerId])
+  @@index([therapistId])
+  @@index([serviceId])
+  @@index([marketingLinkId])
+  @@index([appointmentDateTime])
+  @@index([status])
+}
+
+/// Customer reviews for therapists
+model Review {
+  id          String       @id @default(uuid())
+  customerId  String
+  therapistId String
+  bookingId   String?      @unique
+  rating      Int          // 1 to 5 stars
+  comment     String?
+  status      ReviewStatus @default(APPROVED)
+  isPublished Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  customer  Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  therapist Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+  booking   Booking?  @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@index([therapistId])
+  @@index([customerId])
+  @@index([isPublished])
+}
+
+/// Simple marketing tracking links
+model MarketingLink {
+  id             String   @id @default(uuid())
+  name           String
+  code           String   @unique // Unique tracking identifier/slug
+  destinationUrl String
+  clicks         Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  bookings Booking[]
+
+  @@index([code])
+}
