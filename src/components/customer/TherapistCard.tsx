@@ -1,5 +1,6 @@
 import React from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { MockTherapist } from '@/types/customer';
 import { RatingDisplay } from '@/components/ui/RatingDisplay';
 
@@ -8,10 +9,12 @@ interface TherapistCardProps {
 }
 
 export function TherapistCard({ therapist }: TherapistCardProps) {
+  const profileHref = `/therapists/${therapist.id}`;
+
   return (
     <div className="group relative flex flex-col overflow-hidden rounded-2xl bg-white border border-slate-200 shadow-sm transition-all duration-200 hover:shadow-md hover:border-slate-300">
       {/* Image Container */}
-      <div className="relative h-64 w-full overflow-hidden bg-slate-100">
+      <Link href={profileHref} className="relative h-64 w-full overflow-hidden bg-slate-100 block">
         <Image
           src={therapist.image}
           alt={therapist.name}
@@ -41,14 +44,16 @@ export function TherapistCard({ therapist }: TherapistCardProps) {
             </span>
           )}
         </div>
-      </div>
+      </Link>
 
       {/* Content */}
       <div className="flex flex-1 flex-col p-5">
         <div className="flex items-start justify-between gap-2 mb-1">
           <div>
             <h3 className="text-lg font-bold text-slate-900 group-hover:text-emerald-700 transition-colors">
-              {therapist.name}
+              <Link href={profileHref} className="hover:underline">
+                {therapist.name}
+              </Link>
             </h3>
             <p className="text-xs font-medium text-slate-500">{therapist.title}</p>
           </div>
@@ -86,12 +91,12 @@ export function TherapistCard({ therapist }: TherapistCardProps) {
             <span className="text-xs text-slate-500 font-normal"> / session</span>
           </div>
 
-          <button
-            type="button"
+          <Link
+            href={profileHref}
             className="inline-flex items-center justify-center px-3.5 py-2 text-xs font-semibold rounded-lg bg-emerald-700 text-white hover:bg-emerald-800 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 cursor-pointer"
           >
             View Profile
-          </button>
+          </Link>
         </div>
       </div>
     </div>
