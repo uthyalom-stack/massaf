@@ -17,7 +17,6 @@ export async function GET(request: Request) {
     const booking = await db.booking.findUnique({
       where: { id },
       include: {
-        customer: true,
         therapist: true,
         service: true,
       },
@@ -30,13 +29,13 @@ export async function GET(request: Request) {
       );
     }
 
-    // Fall back to mock therapist/service names if DB relations aren't populated completely
     const mockTherapist = MOCK_THERAPISTS.find((t) => t.id === booking.therapistId);
     const mockService = mockTherapist?.services.find((s) => s.id === booking.serviceId);
 
     const therapistName = booking.therapist?.name || mockTherapist?.name || 'Assigned Therapist';
     const serviceName = booking.service?.name || mockService?.name || 'Massage Therapy Session';
 
+    // Privacy boundary: Do NOT return customer name, customer email, full address, address line 2, or notes
     return NextResponse.json({
       booking: {
         id: booking.id,
@@ -47,20 +46,12 @@ export async function GET(request: Request) {
         appointmentDateTime: booking.appointmentDateTime.toISOString(),
         durationMinutes: booking.durationMinutes,
         locationType: booking.locationType,
-        addressLine1: booking.addressLine1,
-        addressLine2: booking.addressLine2,
-        city: booking.city,
-        state: booking.state,
-        zipCode: booking.zipCode,
-        notes: booking.notes,
         therapistName,
         serviceName,
-        customerName: booking.customer.name,
-        customerEmail: booking.customer.email,
       },
     });
   } catch (error) {
-    console.error('Error fetching booking:', error);
+    console.error('Error fetching booking details:', error);
     return NextResponse.json(
       { error: 'Failed to retrieve booking information' },
       { status: 500 }

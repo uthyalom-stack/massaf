@@ -3,6 +3,7 @@
 import React, { useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { formatUtcDateString, formatUtcTimeString } from '@/lib/timezone';
 
 interface BookingDetails {
   id: string;
@@ -13,16 +14,8 @@ interface BookingDetails {
   appointmentDateTime: string;
   durationMinutes: number;
   locationType: string;
-  addressLine1?: string;
-  addressLine2?: string;
-  city?: string;
-  state?: string;
-  zipCode?: string;
-  notes?: string;
   therapistName: string;
   serviceName: string;
-  customerName: string;
-  customerEmail: string;
 }
 
 function SuccessContent() {
@@ -106,17 +99,8 @@ function SuccessContent() {
     );
   }
 
-  const apptDate = new Date(booking.appointmentDateTime);
-  const formattedDate = apptDate.toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  });
-  const formattedTime = apptDate.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const formattedDate = formatUtcDateString(booking.appointmentDateTime);
+  const formattedTime = formatUtcTimeString(booking.appointmentDateTime);
 
   return (
     <div className="max-w-2xl mx-auto bg-white rounded-3xl border border-slate-200 p-6 sm:p-10 shadow-xs space-y-8">
@@ -182,11 +166,6 @@ function SuccessContent() {
             <span className="font-semibold text-slate-800">
               {booking.locationType === 'STUDIO' ? 'Studio' : 'In-Home'}
             </span>
-            {booking.locationType === 'IN_HOME' && booking.addressLine1 && (
-              <p className="text-xs text-slate-600 mt-0.5">
-                {booking.addressLine1}, {booking.city}, {booking.state} {booking.zipCode}
-              </p>
-            )}
           </div>
 
           <div>

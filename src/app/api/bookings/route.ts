@@ -3,6 +3,8 @@ import { db } from '@/lib/db';
 import { bookingSchema } from '@/lib/validations/booking';
 import { MOCK_THERAPISTS } from '@/lib/mock-data';
 import { ensureTherapistAndServiceInDb } from '@/lib/db-sync';
+import { isAppointmentTimeAvailable } from '@/lib/availability';
+import { parseAppointmentDateTime } from '@/lib/timezone';
 
 export async function POST(request: Request) {
   try {
@@ -56,19 +58,36 @@ export async function POST(request: Request) {
       );
     }
 
-    // 5. Date and Time parsing
-    const appointmentDateTime = new Date(`${data.date}T${data.time}:00`);
-    if (isNaN(appointmentDateTime.getTime())) {
+    // 5. Authoritative Server-side Availability Check
+    const availabilityCheck = isAppointmentTimeAvailable(
+      therapist,
+      data.date,
+      data.time,
+      service.durationMinutes
+    );
+
+    if (!availabilityCheck.isValid) {
       return NextResponse.json(
-        { error: 'Invalid appointment date or time' },
+        { error: availabilityCheck.reason || 'Selected date/time is outside therapist working hours' },
         { status: 400 }
       );
     }
 
-    // 6. Ensure DB dependencies exist (Therapist & Service)
+    // 6. Consistent Timezone Date/Time Parsing
+    let appointmentDateTime: Date;
+    try {
+      appointmentDateTime = parseAppointmentDateTime(data.date, data.time);
+    } catch {
+      return NextResponse.json(
+        { error: 'Invalid appointment date or time format' },
+        { status: 400 }
+      );
+    }
+
+    // 7. Ensure DB dependencies exist (Therapist & Service)
     await ensureTherapistAndServiceInDb(therapist.id, service.id);
 
-    // 7. Find or create customer by email
+    // 8. Find or create customer by email
     const customerName = `${data.firstName} ${data.lastName}`.trim();
     let customer = await db.customer.findUnique({
       where: { email: data.email.toLowerCase() },
@@ -83,7 +102,6 @@ export async function POST(request: Request) {
         },
       });
     } else {
-      // Update phone or name if necessary
       customer = await db.customer.update({
         where: { id: customer.id },
         data: {
@@ -93,13 +111,13 @@ export async function POST(request: Request) {
       });
     }
 
-    // 8. Generate unique booking number
+    // 9. Generate unique booking number
     const bookingNumber = `MSF-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
 
-    // 9. Derive price server-side (DO NOT TRUST CLIENT)
+    // 10. Derive price server-side (DO NOT TRUST CLIENT)
     const authoritativePrice = service.price;
 
-    // 10. Persist Booking in Prisma DB
+    // 11. Persist Booking in Prisma DB
     const booking = await db.booking.create({
       data: {
         bookingNumber,

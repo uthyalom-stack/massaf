@@ -1,12 +1,18 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
 import { MOCK_THERAPISTS } from '@/lib/mock-data';
 import { MockTherapist, TherapistService } from '@/types/customer';
 import { bookingSchema } from '@/lib/validations/booking';
+import {
+  getScheduleWindowForDate,
+  getAvailableTimeSlots,
+  isAppointmentTimeAvailable,
+} from '@/lib/availability';
+import { formatUtcDateString, formatUtcTimeString } from '@/lib/timezone';
 
 export function BookingForm() {
   const router = useRouter();
@@ -15,24 +21,38 @@ export function BookingForm() {
   const therapistParam = searchParams.get('therapist');
   const serviceParam = searchParams.get('service');
 
-  // Compute initial therapist based on URL param or fallback
-  const initialTherapist =
-    MOCK_THERAPISTS.find((t) => t.id === therapistParam) || MOCK_THERAPISTS[0] || null;
+  // Check therapist validity if parameter provided
+  const foundTherapist = therapistParam
+    ? MOCK_THERAPISTS.find((t) => t.id === therapistParam) || null
+    : null;
 
   // Selected therapist state
-  const [selectedTherapist, setSelectedTherapist] = useState<MockTherapist | null>(initialTherapist);
+  const [selectedTherapist, setSelectedTherapist] = useState<MockTherapist | null>(() => {
+    if (therapistParam) return foundTherapist;
+    return MOCK_THERAPISTS[0] || null;
+  });
+
+  // Invalid Therapist URL State
+  const invalidTherapistUrl = Boolean(therapistParam && !foundTherapist);
+
+  // Check service validity if parameter provided
+  const foundService = useMemo(() => {
+    if (!selectedTherapist || !serviceParam) return null;
+    return selectedTherapist.services.find((s) => s.id === serviceParam) || null;
+  }, [selectedTherapist, serviceParam]);
+
+  const invalidServiceUrl = Boolean(serviceParam && !foundService);
 
   // Selected service state
   const [selectedService, setSelectedService] = useState<TherapistService | null>(() => {
-    if (!initialTherapist) return null;
-    const foundService = initialTherapist.services.find((s) => s.id === serviceParam);
-    return foundService || initialTherapist.services[0] || null;
+    if (foundService) return foundService;
+    return selectedTherapist?.services[0] || null;
   });
 
   // Location state
   const [locationType, setLocationType] = useState<'STUDIO' | 'IN_HOME'>(() => {
-    if (initialTherapist?.offersStudio) return 'STUDIO';
-    if (initialTherapist?.offersInHome) return 'IN_HOME';
+    if (selectedTherapist?.offersStudio) return 'STUDIO';
+    if (selectedTherapist?.offersInHome) return 'IN_HOME';
     return 'STUDIO';
   });
 
@@ -60,6 +80,17 @@ export function BookingForm() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
 
+  // Availability calculation
+  const currentScheduleWindow = useMemo(() => {
+    if (!selectedTherapist || !date) return null;
+    return getScheduleWindowForDate(selectedTherapist.schedule, date);
+  }, [selectedTherapist, date]);
+
+  const availableTimeSlots = useMemo(() => {
+    if (!selectedTherapist || !date || !selectedService) return [];
+    return getAvailableTimeSlots(selectedTherapist, date, selectedService.durationMinutes);
+  }, [selectedTherapist, date, selectedService]);
+
   const handleTherapistChange = (therapistId: string) => {
     const therapist = MOCK_THERAPISTS.find((t) => t.id === therapistId) || null;
     setSelectedTherapist(therapist);
@@ -78,8 +109,26 @@ export function BookingForm() {
     setServerError(null);
     setFieldErrors({});
 
-    if (!selectedTherapist || !selectedService) {
-      setServerError('Please select a valid therapist and service.');
+    if (!selectedTherapist) {
+      setServerError('Please select a valid therapist.');
+      return;
+    }
+
+    if (!selectedService) {
+      setServerError('Please select a valid service.');
+      return;
+    }
+
+    // Customer-side schedule & duration validation
+    const availabilityCheck = isAppointmentTimeAvailable(
+      selectedTherapist,
+      date,
+      time,
+      selectedService.durationMinutes
+    );
+
+    if (!availabilityCheck.isValid) {
+      setServerError(availabilityCheck.reason || 'Selected appointment date or time is unavailable.');
       return;
     }
 
@@ -155,15 +204,35 @@ export function BookingForm() {
     }
   };
 
-  if (!selectedTherapist) {
+  // 1. Invalid Therapist Parameter Error State
+  if (invalidTherapistUrl) {
     return (
-      <div className="text-center py-12">
-        <p className="text-slate-600">Therapist not found.</p>
-        <Link href="/find-a-therapist" className="text-emerald-700 underline text-sm mt-2 inline-block">
-          Browse Therapists
+      <div className="max-w-2xl mx-auto bg-white rounded-3xl border border-rose-200 p-8 sm:p-12 shadow-xs text-center space-y-6">
+        <div className="w-16 h-16 bg-rose-100 text-rose-700 rounded-2xl flex items-center justify-center mx-auto">
+          <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        </div>
+        <div className="space-y-2">
+          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+            Therapist Not Found
+          </h1>
+          <p className="text-slate-600 text-sm">
+            The requested therapist ID (&quot;{therapistParam}&quot;) does not exist or is no longer available.
+          </p>
+        </div>
+        <Link
+          href="/find-a-therapist"
+          className="inline-flex items-center justify-center px-6 py-3 rounded-xl bg-emerald-700 text-white font-semibold text-sm hover:bg-emerald-800 transition-colors"
+        >
+          Explore All Available Therapists
         </Link>
       </div>
     );
+  }
+
+  if (!selectedTherapist) {
+    return null;
   }
 
   return (
@@ -180,7 +249,18 @@ export function BookingForm() {
             <h2 className="text-xl font-bold text-slate-900">Therapist & Service</h2>
           </div>
 
-          {/* Therapist Selection Dropdown / Card */}
+          {/* Invalid Service Query Parameter Warning */}
+          {invalidServiceUrl && (
+            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 text-amber-900 text-xs space-y-1">
+              <span className="font-bold block">Invalid Service Parameter</span>
+              <p>
+                The requested service ID (&quot;{serviceParam}&quot;) is not offered by {selectedTherapist.name}.
+                Please explicitly choose one of the available services below.
+              </p>
+            </div>
+          )}
+
+          {/* Therapist Selection Dropdown */}
           <div className="space-y-3">
             <label htmlFor="therapistSelect" className="block text-sm font-semibold text-slate-700">
               Selected Massage Practitioner
@@ -224,7 +304,7 @@ export function BookingForm() {
           {/* Service Radio List */}
           <div className="space-y-3">
             <label className="block text-sm font-semibold text-slate-700">
-              Select Service
+              Select Service <span className="text-rose-500">*</span>
             </label>
             {fieldErrors.serviceId && (
               <p className="text-xs font-medium text-rose-600">{fieldErrors.serviceId}</p>
@@ -345,7 +425,10 @@ export function BookingForm() {
                 type="date"
                 min={todayStr}
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
+                onChange={(e) => {
+                  setDate(e.target.value);
+                  setTime(''); // Reset time selection when date changes
+                }}
                 className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 outline-none"
               />
               {fieldErrors.date && (
@@ -361,20 +444,15 @@ export function BookingForm() {
                 id="timeSelect"
                 value={time}
                 onChange={(e) => setTime(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 outline-none"
+                disabled={!currentScheduleWindow || availableTimeSlots.length === 0}
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 outline-none disabled:opacity-50 disabled:bg-slate-100"
               >
-                <option value="08:00">08:00 AM</option>
-                <option value="09:00">09:00 AM</option>
-                <option value="10:00">10:00 AM</option>
-                <option value="11:00">11:00 AM</option>
-                <option value="12:00">12:00 PM</option>
-                <option value="13:00">01:00 PM</option>
-                <option value="14:00">02:00 PM</option>
-                <option value="15:00">03:00 PM</option>
-                <option value="16:00">04:00 PM</option>
-                <option value="17:00">05:00 PM</option>
-                <option value="18:00">06:00 PM</option>
-                <option value="19:00">07:00 PM</option>
+                <option value="">-- Choose Time Slot --</option>
+                {availableTimeSlots.map((slot) => (
+                  <option key={slot.value} value={slot.value}>
+                    {slot.label}
+                  </option>
+                ))}
               </select>
               {fieldErrors.time && (
                 <p className="text-xs font-medium text-rose-600 mt-1">{fieldErrors.time}</p>
@@ -382,8 +460,26 @@ export function BookingForm() {
             </div>
           </div>
 
+          {/* Availability Status Message */}
+          {!currentScheduleWindow ? (
+            <div className="p-3 bg-rose-50 rounded-xl border border-rose-200 text-xs text-rose-800">
+              <span className="font-bold block mb-0.5">Therapist Unavailable on Selected Date</span>
+              {selectedTherapist.name} does not work on this day of the week. Please select an available working day.
+            </div>
+          ) : availableTimeSlots.length === 0 ? (
+            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900">
+              <span className="font-bold block mb-0.5">No Suitable Time Slots</span>
+              The selected service duration ({selectedService?.durationMinutes} mins) cannot fit inside working hours ({currentScheduleWindow.hoursStr}) for this date.
+            </div>
+          ) : (
+            <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-900">
+              <span className="font-semibold block mb-0.5">Working Schedule for Selected Day</span>
+              {currentScheduleWindow.daysStr}: {currentScheduleWindow.hoursStr} ({availableTimeSlots.length} available slots)
+            </div>
+          )}
+
           <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600">
-            <span className="font-semibold text-slate-900 block mb-0.5">Therapist Schedule Reference</span>
+            <span className="font-semibold text-slate-900 block mb-0.5">Therapist Weekly Working Hours</span>
             {selectedTherapist.schedule.map((s, idx) => (
               <span key={idx} className="inline-block mr-3">
                 {s.days}: {s.hours}
@@ -611,7 +707,7 @@ export function BookingForm() {
             <div className="flex justify-between items-center pb-3 border-b border-slate-100">
               <span className="text-slate-500">Date & Time</span>
               <span className="font-semibold text-slate-800 text-right">
-                {date ? new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'} @ {time}
+                {date && time ? `${formatUtcDateString(`${date}T00:00:00Z`)} @ ${formatUtcTimeString(`2000-01-01T${time}:00Z`)}` : '—'}
               </span>
             </div>
 
@@ -662,9 +758,9 @@ export function BookingForm() {
 
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={isSubmitting || !currentScheduleWindow || availableTimeSlots.length === 0}
             className={`w-full py-4 px-6 rounded-2xl font-bold text-base text-white transition-all shadow-md flex items-center justify-center gap-2 ${
-              isSubmitting
+              isSubmitting || !currentScheduleWindow || availableTimeSlots.length === 0
                 ? 'bg-slate-400 cursor-not-allowed'
                 : 'bg-emerald-700 hover:bg-emerald-800 cursor-pointer active:scale-[0.99]'
             }`}
