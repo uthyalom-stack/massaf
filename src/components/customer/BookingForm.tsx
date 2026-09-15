@@ -44,8 +44,12 @@ export function BookingForm() {
   const invalidServiceUrl = Boolean(serviceParam && !foundService);
 
   // Selected service state
+  // If serviceParam was explicitly provided: preselect foundService if valid, or null if invalid.
+  // If no serviceParam was provided: preselect therapist's first service.
   const [selectedService, setSelectedService] = useState<TherapistService | null>(() => {
-    if (foundService) return foundService;
+    if (serviceParam !== null) {
+      return foundService;
+    }
     return selectedTherapist?.services[0] || null;
   });
 
@@ -444,7 +448,7 @@ export function BookingForm() {
                 id="timeSelect"
                 value={time}
                 onChange={(e) => setTime(e.target.value)}
-                disabled={!currentScheduleWindow || availableTimeSlots.length === 0}
+                disabled={!selectedService || !currentScheduleWindow || availableTimeSlots.length === 0}
                 className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 outline-none disabled:opacity-50 disabled:bg-slate-100"
               >
                 <option value="">-- Choose Time Slot --</option>
@@ -461,7 +465,12 @@ export function BookingForm() {
           </div>
 
           {/* Availability Status Message */}
-          {!currentScheduleWindow ? (
+          {!selectedService ? (
+            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900">
+              <span className="font-bold block mb-0.5">Please Select a Service</span>
+              Select a service in Step 1 to view available appointment times.
+            </div>
+          ) : !currentScheduleWindow ? (
             <div className="p-3 bg-rose-50 rounded-xl border border-rose-200 text-xs text-rose-800">
               <span className="font-bold block mb-0.5">Therapist Unavailable on Selected Date</span>
               {selectedTherapist.name} does not work on this day of the week. Please select an available working day.
@@ -690,18 +699,18 @@ export function BookingForm() {
               <span className="font-bold text-slate-900 text-right">{selectedTherapist.name}</span>
             </div>
 
-            {selectedService && (
-              <>
-                <div className="flex justify-between items-start pb-3 border-b border-slate-100">
-                  <span className="text-slate-500">Service</span>
-                  <span className="font-bold text-slate-900 text-right">{selectedService.name}</span>
-                </div>
+            <div className="flex justify-between items-start pb-3 border-b border-slate-100">
+              <span className="text-slate-500">Service</span>
+              <span className="font-bold text-slate-900 text-right">
+                {selectedService ? selectedService.name : 'Not selected'}
+              </span>
+            </div>
 
-                <div className="flex justify-between items-center pb-3 border-b border-slate-100">
-                  <span className="text-slate-500">Duration</span>
-                  <span className="font-semibold text-slate-800">{selectedService.durationMinutes} minutes</span>
-                </div>
-              </>
+            {selectedService && (
+              <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+                <span className="text-slate-500">Duration</span>
+                <span className="font-semibold text-slate-800">{selectedService.durationMinutes} minutes</span>
+              </div>
             )}
 
             <div className="flex justify-between items-center pb-3 border-b border-slate-100">
@@ -758,9 +767,9 @@ export function BookingForm() {
 
           <button
             type="submit"
-            disabled={isSubmitting || !currentScheduleWindow || availableTimeSlots.length === 0}
+            disabled={isSubmitting || !selectedService || !currentScheduleWindow || availableTimeSlots.length === 0}
             className={`w-full py-4 px-6 rounded-2xl font-bold text-base text-white transition-all shadow-md flex items-center justify-center gap-2 ${
-              isSubmitting || !currentScheduleWindow || availableTimeSlots.length === 0
+              isSubmitting || !selectedService || !currentScheduleWindow || availableTimeSlots.length === 0
                 ? 'bg-slate-400 cursor-not-allowed'
                 : 'bg-emerald-700 hover:bg-emerald-800 cursor-pointer active:scale-[0.99]'
             }`}
