@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import { MockTherapist } from '@/types/customer';
 import { TherapistCard } from '@/components/customer/TherapistCard';
 
@@ -15,12 +15,6 @@ export function TherapistResults({
   onResetFilters,
   hasActiveFilters,
 }: TherapistResultsProps) {
-  const [matchRequested, setMatchRequested] = useState(false);
-
-  const handleMatchRequest = () => {
-    setMatchRequested(true);
-  };
-
   return (
     <div className="space-y-6">
       {/* Results Header / Result Count */}
@@ -80,7 +74,7 @@ export function TherapistResults({
               No Direct Matching Therapists Found
             </h3>
             <p className="text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
-              We couldn&apos;t find an exact match for your combination of location, ZIP code, or service type. Try broadening your location parameters or request custom therapist matching.
+              We couldn&apos;t find an exact match for your combination of city, ZIP code, or service type. Try adjusting your location filters or exploring nearby areas.
             </p>
           </div>
 
@@ -98,37 +92,36 @@ export function TherapistResults({
 
             <button
               type="button"
-              onClick={handleMatchRequest}
-              className="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-sm rounded-xl transition-colors shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 cursor-pointer"
+              disabled
+              className="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 bg-slate-100 border border-slate-200 text-slate-500 font-semibold text-sm rounded-xl cursor-not-allowed opacity-90"
+              title="Automatic therapist matching will be available in a future release."
             >
-              Match Me With A Therapist
+              Match Me With A Therapist (Coming Soon)
             </button>
           </div>
 
-          {/* Match Request Feedback Banner */}
-          {matchRequested && (
-            <div className="mt-6 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-left space-y-2 text-xs sm:text-sm text-emerald-900 animate-fadeIn">
-              <div className="flex items-center gap-2 font-bold text-emerald-900">
-                <svg
-                  className="w-5 h-5 text-emerald-600 shrink-0"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-                Matching Preference Noted
-              </div>
-              <p className="text-emerald-800 leading-relaxed">
-                Thank you for your interest! Automated therapist matching and concierge assignment will be enabled in an upcoming platform release. In the meantime, try clearing your search filters to explore available practitioners in nearby service areas.
-              </p>
+          {/* Honest Informational Note */}
+          <div className="mt-6 p-4 rounded-2xl bg-slate-50 border border-slate-200 text-left space-y-1.5 text-xs sm:text-sm text-slate-700">
+            <div className="flex items-center gap-2 font-semibold text-slate-900">
+              <svg
+                className="w-4 h-4 text-emerald-700 shrink-0"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              Automated Concierge Matching Feature
             </div>
-          )}
+            <p className="text-slate-600 leading-relaxed text-xs">
+              Automated therapist assignment is planned for a future platform update. To see available therapists right now, click <strong>Reset Search Filters</strong> or adjust your city and ZIP code.
+            </p>
+          </div>
         </div>
       )}
     </div>

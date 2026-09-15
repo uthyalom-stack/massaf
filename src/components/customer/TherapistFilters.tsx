@@ -30,12 +30,18 @@ export function TherapistFilters({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    onFilterChange({
+      city: filters.city,
+      zip: filters.zip,
+      serviceType: filters.serviceType,
+      specialty: filters.specialty,
+    });
   };
 
   return (
     <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
           {/* City / Location Input */}
           <div className="space-y-1.5">
             <label
@@ -192,6 +198,27 @@ export function TherapistFilters({
               </div>
             </div>
           </div>
+
+          {/* Search Button */}
+          <button
+            type="submit"
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-sm rounded-xl transition-colors shadow-xs focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 cursor-pointer"
+          >
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+            <span>Search Therapists</span>
+          </button>
         </div>
 
         {/* Clear & Active Indicator Bar */}
