@@ -1,36 +1,91 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MASSAF - U.S. Massage Therapist Booking Platform
+
+MASSAF is a U.S.-based massage therapist booking platform controlled by one company. It allows customers to discover local therapists, schedule studio or in-home appointments, manage bookings, and leave reviews.
+
+## Tech Stack
+
+- **Framework:** [Next.js](https://nextjs.org/) (App Router)
+- **Language:** [TypeScript](https://www.typescriptlang.org/)
+- **Styling:** [Tailwind CSS](https://tailwindcss.com/)
+- **Database:** [Turso](https://turso.tech/) / [libSQL](https://github.com/tursodatabase/libsql)
+- **ORM:** [Prisma](https://www.prisma.io/) with `@prisma/adapter-libsql`
+- **Validation:** [Zod](https://zod.dev/)
+- **Hosting Target:** [Netlify](https://www.netlify.com/) (Eventual production target)
+
+---
 
 ## Getting Started
 
-First, run the development server:
+### 1. Prerequisites
+
+Ensure you have Node.js (v20+) and npm installed on your machine.
+
+### 2. Environment Setup
+
+Copy `.env.example` to create your local environment configuration:
+
+```bash
+cp .env.example .env
+```
+
+For local development fallback using SQLite:
+```env
+TURSO_DATABASE_URL="file:./dev.db"
+TURSO_AUTH_TOKEN=""
+NEXT_PUBLIC_APP_URL="http://localhost:3000"
+```
+
+For connecting to a remote Turso database:
+```env
+TURSO_DATABASE_URL="libsql://your-database-name-your-org.turso.io"
+TURSO_AUTH_TOKEN="your-turso-auth-token"
+NEXT_PUBLIC_APP_URL="http://localhost:3000"
+```
+
+### 3. Install Dependencies
+
+```bash
+npm install
+```
+
+### 4. Prisma Setup and Generation
+
+To validate the schema and generate the Prisma client:
+
+```bash
+npx prisma validate
+npx prisma generate
+```
+
+To sync local SQLite or Turso schema:
+
+```bash
+npx prisma db push
+```
+
+### 5. Running the Application
+
+Start the local development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Architectural Notes
 
-## Learn More
+### Database Access Layer
+Database access is handled through `src/lib/db.ts`, which instantiates `@prisma/adapter-libsql` and `@libsql/client`.
 
-To learn more about Next.js, take a look at the following resources:
+### Payment Integration Note
+Payment integration (such as cryptocurrency or other payment methods) is **intentionally NOT implemented in Phase 1**. The `Booking` model contains provider-agnostic fields (`amount`, `paymentStatus`, `paymentMethod`, `paymentReference`) to support flexible payment providers in future phases without vendor lock-in.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Folder Structure
+- `src/app/(customer)/`: Customer-facing routes and layouts.
+- `src/app/admin/`: Platform administrative interface routes.
+- `src/app/api/`: Server API routes.
+- `src/lib/`: Shared utilities, database access layer, and Zod validation schemas.
+- `src/types/`: Domain TypeScript type definitions.
