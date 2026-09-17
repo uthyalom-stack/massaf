@@ -19,6 +19,7 @@ export async function GET(request: Request) {
       include: {
         therapist: true,
         service: true,
+        review: true,
       },
     });
 
@@ -35,7 +36,7 @@ export async function GET(request: Request) {
     const therapistName = booking.therapist?.name || mockTherapist?.name || 'Assigned Therapist';
     const serviceName = booking.service?.name || mockService?.name || 'Massage Therapy Session';
 
-    // Privacy boundary: Do NOT return customer name, customer email, full address, address line 2, or notes
+    // Strict Privacy boundary: Do NOT return customer name, email, phone, full address, or internal database customer IDs
     return NextResponse.json({
       booking: {
         id: booking.id,
@@ -48,6 +49,14 @@ export async function GET(request: Request) {
         locationType: booking.locationType,
         therapistName,
         serviceName,
+        hasReview: !!booking.review,
+        existingReview: booking.review
+          ? {
+              rating: booking.review.rating,
+              comment: booking.review.comment,
+              status: booking.review.status,
+            }
+          : null,
       },
     });
   } catch (error) {
