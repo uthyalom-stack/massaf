@@ -6,6 +6,8 @@ import { MOCK_THERAPISTS, MOCK_THERAPIST_REVIEWS } from '@/lib/mock-data';
 import { RatingDisplay } from '@/components/ui/RatingDisplay';
 import { ReviewCard } from '@/components/customer/ReviewCard';
 import { TherapistGallery } from '@/components/customer/TherapistGallery';
+import { db } from '@/lib/db';
+import { formatUtcDateString } from '@/lib/timezone';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -36,9 +38,65 @@ export default async function TherapistProfilePage({ params }: PageProps) {
     notFound();
   }
 
-  const reviews = MOCK_THERAPIST_REVIEWS.filter(
+  // Fetch approved and published database reviews for this therapist
+  let dbReviewsFormatted: Array<{
+    id: string;
+    customerName: string;
+    customerLocation: string;
+    rating: number;
+    date: string;
+    comment: string;
+    serviceType: string;
+  }> = [];
+
+  try {
+    const dbReviews = await db.review.findMany({
+      where: {
+        therapistId: therapist.id,
+        status: 'APPROVED',
+        isPublished: true,
+      },
+      include: {
+        customer: true,
+        booking: {
+          include: {
+            service: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    dbReviewsFormatted = dbReviews.map((rev) => {
+      // Obfuscate customer name for privacy (e.g. "Jane D.")
+      const rawName = rev.customer?.name || 'Verified Client';
+      const nameParts = rawName.trim().split(' ');
+      const formattedName =
+        nameParts.length > 1
+          ? `${nameParts[0]} ${nameParts[nameParts.length - 1][0]}.`
+          : rawName;
+
+      return {
+        id: rev.id,
+        customerName: formattedName,
+        customerLocation: therapist.location,
+        rating: rev.rating,
+        date: formatUtcDateString(rev.createdAt.toISOString()),
+        comment: rev.comment || '',
+        serviceType: rev.booking?.service?.name || 'Massage Therapy Session',
+      };
+    });
+  } catch (err) {
+    console.error('Error fetching database reviews for therapist:', err);
+  }
+
+  const mockReviews = MOCK_THERAPIST_REVIEWS.filter(
     (rev) => rev.therapistId === therapist.id
   );
+
+  const allReviews = [...dbReviewsFormatted, ...mockReviews];
 
   return (
     <div className="min-h-screen bg-slate-50 py-8 sm:py-12">
@@ -253,9 +311,9 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                 <RatingDisplay rating={therapist.rating} reviewCount={therapist.reviewCount} size="md" />
               </div>
 
-              {reviews.length > 0 ? (
+              {allReviews.length > 0 ? (
                 <div className="grid grid-cols-1 gap-4">
-                  {reviews.map((rev) => (
+                  {allReviews.map((rev) => (
                     <ReviewCard
                       key={rev.id}
                       reviewerName={rev.customerName}
