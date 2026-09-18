@@ -68,7 +68,7 @@ export async function POST(request: Request) {
     const authoritativePrice = therapistService.customPrice ?? service.price;
     const durationMinutes = therapistService.customDurationMinutes ?? service.durationMinutes;
 
-    // 4. Validate location type is supported by therapist
+    // 4. Validate location type is supported by therapist & validate ServiceArea for IN_HOME
     if (data.locationType === 'STUDIO' && !therapist.offersStudio) {
       return NextResponse.json(
         { error: 'This therapist does not offer studio appointments' },
@@ -76,11 +76,35 @@ export async function POST(request: Request) {
       );
     }
 
-    if (data.locationType === 'IN_HOME' && !therapist.offersInHome) {
-      return NextResponse.json(
-        { error: 'This therapist does not offer in-home appointments' },
-        { status: 400 }
-      );
+    if (data.locationType === 'IN_HOME') {
+      if (!therapist.offersInHome) {
+        return NextResponse.json(
+          { error: 'This therapist does not offer in-home appointments' },
+          { status: 400 }
+        );
+      }
+
+      // Validate customer location against therapist's ServiceAreas if therapist has configured service areas
+      if (therapist.serviceAreas.length > 0) {
+        const reqZip = data.zipCode?.trim().toLowerCase();
+        const reqCity = data.city?.trim().toLowerCase();
+        const reqState = data.state?.trim().toLowerCase();
+
+        const isSupportedArea = therapist.serviceAreas.some((sa) => {
+          const zipMatch = sa.zipCode.trim().toLowerCase() === reqZip;
+          const cityMatch =
+            sa.cityName.trim().toLowerCase() === reqCity &&
+            sa.state.trim().toLowerCase() === reqState;
+          return zipMatch || cityMatch;
+        });
+
+        if (!isSupportedArea) {
+          return NextResponse.json(
+            { error: "This location is outside this therapist's service area." },
+            { status: 400 }
+          );
+        }
+      }
     }
 
     // 5. Authoritative Server-side Availability Check
@@ -106,6 +130,40 @@ export async function POST(request: Request) {
     } catch {
       return NextResponse.json(
         { error: 'Invalid appointment date or time format' },
+        { status: 400 }
+      );
+    }
+
+    // 6b. Booking Conflict Protection (prevent double-booking overlapping active bookings)
+    const requestedStart = appointmentDateTime.getTime();
+    const requestedEnd = requestedStart + durationMinutes * 60 * 1000;
+
+    const existingBookings = await db.booking.findMany({
+      where: {
+        therapistId: therapist.id,
+        status: {
+          notIn: ['CANCELLED', 'REFUNDED'],
+        },
+        appointmentDateTime: {
+          lt: new Date(requestedEnd),
+        },
+      },
+      select: {
+        id: true,
+        appointmentDateTime: true,
+        durationMinutes: true,
+      },
+    });
+
+    const hasConflict = existingBookings.some((existing) => {
+      const existingStart = existing.appointmentDateTime.getTime();
+      const existingEnd = existingStart + existing.durationMinutes * 60 * 1000;
+      return existingStart < requestedEnd && existingEnd > requestedStart;
+    });
+
+    if (hasConflict) {
+      return NextResponse.json(
+        { error: 'That appointment time is no longer available. Please choose another time.' },
         { status: 400 }
       );
     }

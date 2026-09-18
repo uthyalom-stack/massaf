@@ -61,6 +61,9 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     return 'STUDIO';
   });
 
+  // Active step in checkout workflow: 1: Therapist/Service, 2: Location, 3: Date & Time, 4: Customer Details, 5: Review & Confirmation
+  const [activeStep, setActiveStep] = useState<number>(1);
+
   // Date and Time state
   const todayStr = new Date().toISOString().split('T')[0];
   const [date, setDate] = useState<string>(todayStr);
@@ -115,12 +118,12 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     setFieldErrors({});
 
     if (!selectedTherapist) {
-      setServerError('Please select a valid therapist.');
+      setServerError('This therapist is no longer available.');
       return;
     }
 
     if (!selectedService) {
-      setServerError('Please select a valid service.');
+      setServerError('This service is no longer available.');
       return;
     }
 
@@ -133,7 +136,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     );
 
     if (!availabilityCheck.isValid) {
-      setServerError(availabilityCheck.reason || 'Selected appointment date or time is unavailable.');
+      setServerError('That appointment time is no longer available. Please choose another time.');
       return;
     }
 
@@ -166,6 +169,10 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
         }
       }
       setFieldErrors(newFieldErrors);
+      // Focus step with error
+      if (newFieldErrors.firstName || newFieldErrors.lastName || newFieldErrors.email || newFieldErrors.phone || newFieldErrors.addressLine1 || newFieldErrors.city || newFieldErrors.state || newFieldErrors.zipCode) {
+        setActiveStep(4);
+      }
       return;
     }
 
@@ -184,7 +191,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
       const resData = await response.json();
 
       if (!response.ok) {
-        setServerError(resData.error || 'Failed to submit booking. Please try again.');
+        setServerError(resData.error || 'An unexpected error occurred. Please try again.');
         if (resData.details) {
           const apiFieldErrors: Record<string, string> = {};
           for (const [key, val] of Object.entries(resData.details)) {
@@ -198,11 +205,11 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
         return;
       }
 
-      // Success! Redirect to booking confirmation page
+      // Success! Redirect to booking confirmation / success page
       router.push(`/booking/success?id=${resData.booking.id}`);
     } catch (err) {
       console.error('Booking submission error:', err);
-      setServerError('Network error. Please check your connection and try again.');
+      setServerError('An unexpected error occurred. Please try again.');
       setIsSubmitting(false);
     }
   };
@@ -218,17 +225,17 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
         </div>
         <div className="space-y-2">
           <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-            Therapist Not Found
+            Therapist Not Available
           </h1>
           <p className="text-slate-600 text-sm">
-            The requested therapist (&quot;{therapistParam}&quot;) does not exist or is no longer available.
+            This therapist is no longer available. Please select another practitioner.
           </p>
         </div>
         <Link
           href="/find-a-therapist"
           className="inline-flex items-center justify-center px-6 py-3 rounded-xl bg-emerald-700 text-white font-semibold text-sm hover:bg-emerald-800 transition-colors"
         >
-          Explore All Available Therapists
+          Explore Available Therapists
         </Link>
       </div>
     );
@@ -264,32 +271,74 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
   return (
     <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
       {/* Main Steps Column */}
-      <div className="lg:col-span-7 space-y-8">
+      <div className="lg:col-span-7 space-y-6">
+
+        {/* Checkout Steps Indicator */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs flex items-center justify-between text-xs font-semibold text-slate-600 overflow-x-auto gap-2">
+          {[
+            { id: 1, label: 'Therapist & Service' },
+            { id: 2, label: 'Location' },
+            { id: 3, label: 'Date & Time' },
+            { id: 4, label: 'Customer Details' },
+            { id: 5, label: 'Review' },
+          ].map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => setActiveStep(s.id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all cursor-pointer whitespace-nowrap ${
+                activeStep === s.id
+                  ? 'bg-emerald-700 text-white shadow-xs'
+                  : 'hover:bg-slate-100 text-slate-600'
+              }`}
+            >
+              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                activeStep === s.id ? 'bg-white text-emerald-800' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {s.id}
+              </span>
+              <span>{s.label}</span>
+            </button>
+          ))}
+        </div>
 
         {/* Section 1: Therapist & Service Selection */}
-        <section className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6">
-          <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
-            <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold text-sm flex items-center justify-center">
-              1
-            </span>
-            <h2 className="text-xl font-bold text-slate-900">Therapist & Service</h2>
+        <section className={`bg-white rounded-3xl border p-6 sm:p-8 shadow-xs transition-all ${
+          activeStep === 1 ? 'border-emerald-600 ring-2 ring-emerald-600/10' : 'border-slate-200'
+        }`}>
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-6">
+            <div className="flex items-center gap-3">
+              <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold text-sm flex items-center justify-center">
+                1
+              </span>
+              <h2 className="text-xl font-bold text-slate-900">Therapist & Service</h2>
+            </div>
+            {activeStep !== 1 && (
+              <button
+                type="button"
+                onClick={() => setActiveStep(1)}
+                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
+              >
+                Change
+              </button>
+            )}
           </div>
 
           {/* Invalid Service Query Parameter Warning */}
           {invalidServiceUrl && (
-            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 text-amber-900 text-xs space-y-1">
-              <span className="font-bold block">Invalid Service Parameter</span>
+            <div className="p-4 mb-4 bg-amber-50 rounded-2xl border border-amber-200 text-amber-900 text-xs space-y-1">
+              <span className="font-bold block">This service is no longer available.</span>
               <p>
                 The requested service (&quot;{serviceParam}&quot;) is not offered by {selectedTherapist.name}.
-                Please explicitly choose one of the available services below.
+                Please choose from the available services below.
               </p>
             </div>
           )}
 
           {/* Therapist Selection Dropdown */}
-          <div className="space-y-3">
+          <div className="space-y-3 mb-6">
             <label htmlFor="therapistSelect" className="block text-sm font-semibold text-slate-700">
-              Selected Massage Practitioner
+              Selected Massage Therapist
             </label>
             <select
               id="therapistSelect"
@@ -305,7 +354,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
             </select>
 
             {/* Selected Therapist Mini Badge */}
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center gap-4 mt-2">
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center gap-4">
               <div className="relative w-14 h-14 rounded-full overflow-hidden bg-slate-200 shrink-0">
                 <Image
                   src={selectedTherapist.image}
@@ -372,19 +421,44 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
               </div>
             ) : (
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-600">
-                This practitioner currently has no active services available for booking.
+                This service is no longer available for this therapist.
               </div>
             )}
           </div>
+
+          {activeStep === 1 && (
+            <div className="mt-6 text-right">
+              <button
+                type="button"
+                onClick={() => setActiveStep(2)}
+                className="px-6 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-sm rounded-xl transition-colors cursor-pointer"
+              >
+                Continue to Location →
+              </button>
+            </div>
+          )}
         </section>
 
         {/* Section 2: Location Selection */}
-        <section className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6">
-          <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
-            <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold text-sm flex items-center justify-center">
-              2
-            </span>
-            <h2 className="text-xl font-bold text-slate-900">Appointment Location</h2>
+        <section className={`bg-white rounded-3xl border p-6 sm:p-8 shadow-xs transition-all ${
+          activeStep === 2 ? 'border-emerald-600 ring-2 ring-emerald-600/10' : 'border-slate-200'
+        }`}>
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-6">
+            <div className="flex items-center gap-3">
+              <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold text-sm flex items-center justify-center">
+                2
+              </span>
+              <h2 className="text-xl font-bold text-slate-900">Appointment Type & Location</h2>
+            </div>
+            {activeStep !== 2 && (
+              <button
+                type="button"
+                onClick={() => setActiveStep(2)}
+                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
+              >
+                Change
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -408,7 +482,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
               <p className="text-xs text-slate-500">
                 {selectedTherapist.offersStudio
                   ? `Visit practitioner's private studio in ${selectedTherapist.location}.`
-                  : 'Not offered by this practitioner.'}
+                  : 'Not offered by this therapist.'}
               </p>
             </button>
 
@@ -432,19 +506,51 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
               <p className="text-xs text-slate-500">
                 {selectedTherapist.offersInHome
                   ? 'Practitioner comes to your home, hotel, or office with full equipment.'
-                  : 'Not offered by this practitioner.'}
+                  : 'Not offered by this therapist.'}
               </p>
             </button>
           </div>
+
+          {activeStep === 2 && (
+            <div className="mt-6 flex justify-between items-center">
+              <button
+                type="button"
+                onClick={() => setActiveStep(1)}
+                className="px-4 py-2 text-slate-600 font-semibold text-sm hover:underline cursor-pointer"
+              >
+                ← Back
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveStep(3)}
+                className="px-6 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-sm rounded-xl transition-colors cursor-pointer"
+              >
+                Continue to Date & Time →
+              </button>
+            </div>
+          )}
         </section>
 
         {/* Section 3: Date & Time Selection */}
-        <section className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6">
-          <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
-            <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold text-sm flex items-center justify-center">
-              3
-            </span>
-            <h2 className="text-xl font-bold text-slate-900">Date & Time</h2>
+        <section className={`bg-white rounded-3xl border p-6 sm:p-8 shadow-xs transition-all ${
+          activeStep === 3 ? 'border-emerald-600 ring-2 ring-emerald-600/10' : 'border-slate-200'
+        }`}>
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-6">
+            <div className="flex items-center gap-3">
+              <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold text-sm flex items-center justify-center">
+                3
+              </span>
+              <h2 className="text-xl font-bold text-slate-900">Date & Time</h2>
+            </div>
+            {activeStep !== 3 && (
+              <button
+                type="button"
+                onClick={() => setActiveStep(3)}
+                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
+              >
+                Change
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -493,45 +599,70 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
           </div>
 
           {/* Availability Status Message */}
-          {!selectedService ? (
-            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900">
-              <span className="font-bold block mb-0.5">Please Select a Service</span>
-              Select a service in Step 1 to view available appointment times.
-            </div>
-          ) : !currentScheduleWindow ? (
-            <div className="p-3 bg-rose-50 rounded-xl border border-rose-200 text-xs text-rose-800">
-              <span className="font-bold block mb-0.5">Therapist Unavailable on Selected Date</span>
-              {selectedTherapist.name} does not work on this day of the week. Please select an available working day.
-            </div>
-          ) : availableTimeSlots.length === 0 ? (
-            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900">
-              <span className="font-bold block mb-0.5">No Suitable Time Slots</span>
-              The selected service duration ({selectedService?.durationMinutes} mins) cannot fit inside working hours ({currentScheduleWindow.hoursStr}) for this date.
-            </div>
-          ) : (
-            <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-900">
-              <span className="font-semibold block mb-0.5">Working Schedule for Selected Day</span>
-              {currentScheduleWindow.daysStr}: {currentScheduleWindow.hoursStr} ({availableTimeSlots.length} available slots)
+          <div className="mt-4">
+            {!selectedService ? (
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900">
+                <span className="font-bold block mb-0.5">Please Select a Service</span>
+                Select a service in Step 1 to view available appointment times.
+              </div>
+            ) : !currentScheduleWindow ? (
+              <div className="p-3 bg-rose-50 rounded-xl border border-rose-200 text-xs text-rose-800">
+                <span className="font-bold block mb-0.5">Therapist Unavailable on Selected Date</span>
+                {selectedTherapist.name} does not work on this day of the week. Please choose another date.
+              </div>
+            ) : availableTimeSlots.length === 0 ? (
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900">
+                <span className="font-bold block mb-0.5">That appointment time is no longer available. Please choose another time.</span>
+                The selected service duration ({selectedService?.durationMinutes} mins) cannot fit inside working hours ({currentScheduleWindow.hoursStr}) for this date.
+              </div>
+            ) : (
+              <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-900">
+                <span className="font-semibold block mb-0.5">Working Schedule for Selected Day</span>
+                {currentScheduleWindow.daysStr}: {currentScheduleWindow.hoursStr} ({availableTimeSlots.length} available slots)
+              </div>
+            )}
+          </div>
+
+          {activeStep === 3 && (
+            <div className="mt-6 flex justify-between items-center">
+              <button
+                type="button"
+                onClick={() => setActiveStep(2)}
+                className="px-4 py-2 text-slate-600 font-semibold text-sm hover:underline cursor-pointer"
+              >
+                ← Back
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveStep(4)}
+                className="px-6 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-sm rounded-xl transition-colors cursor-pointer"
+              >
+                Continue to Customer Details →
+              </button>
             </div>
           )}
-
-          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600">
-            <span className="font-semibold text-slate-900 block mb-0.5">Therapist Weekly Working Hours</span>
-            {selectedTherapist.schedule.map((s, idx) => (
-              <span key={idx} className="inline-block mr-3">
-                {s.days}: {s.hours}
-              </span>
-            ))}
-          </div>
         </section>
 
         {/* Section 4: Customer Contact & Address Information */}
-        <section className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6">
-          <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
-            <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold text-sm flex items-center justify-center">
-              4
-            </span>
-            <h2 className="text-xl font-bold text-slate-900">Your Contact Details</h2>
+        <section className={`bg-white rounded-3xl border p-6 sm:p-8 shadow-xs transition-all ${
+          activeStep === 4 ? 'border-emerald-600 ring-2 ring-emerald-600/10' : 'border-slate-200'
+        }`}>
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-6">
+            <div className="flex items-center gap-3">
+              <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold text-sm flex items-center justify-center">
+                4
+              </span>
+              <h2 className="text-xl font-bold text-slate-900">Your Contact Details</h2>
+            </div>
+            {activeStep !== 4 && (
+              <button
+                type="button"
+                onClick={() => setActiveStep(4)}
+                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
+              >
+                Change
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -606,7 +737,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
 
           {/* In-Home Address Fields */}
           {locationType === 'IN_HOME' && (
-            <div className="pt-4 border-t border-slate-100 space-y-4">
+            <div className="pt-4 mt-4 border-t border-slate-100 space-y-4">
               <h3 className="text-sm font-bold text-slate-900">In-Home Service Address</h3>
 
               <div>
@@ -698,7 +829,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
           )}
 
           {/* Notes */}
-          <div>
+          <div className="mt-4">
             <label htmlFor="notes" className="block text-xs font-semibold text-slate-700 mb-1">
               Special Instructions or Focus Areas (Optional)
             </label>
@@ -711,6 +842,25 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
               className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 outline-none"
             />
           </div>
+
+          {activeStep === 4 && (
+            <div className="mt-6 flex justify-between items-center">
+              <button
+                type="button"
+                onClick={() => setActiveStep(3)}
+                className="px-4 py-2 text-slate-600 font-semibold text-sm hover:underline cursor-pointer"
+              >
+                ← Back
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveStep(5)}
+                className="px-6 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-sm rounded-xl transition-colors cursor-pointer"
+              >
+                Review Summary →
+              </button>
+            </div>
+          )}
         </section>
       </div>
 
@@ -723,15 +873,33 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
 
           <div className="space-y-4 text-sm">
             <div className="flex justify-between items-start pb-3 border-b border-slate-100">
-              <span className="text-slate-500">Therapist</span>
-              <span className="font-bold text-slate-900 text-right">{selectedTherapist.name}</span>
+              <div>
+                <span className="text-slate-500 text-xs block">Therapist</span>
+                <span className="font-bold text-slate-900">{selectedTherapist.name}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveStep(1)}
+                className="text-xs text-emerald-700 font-semibold hover:underline cursor-pointer"
+              >
+                Edit
+              </button>
             </div>
 
             <div className="flex justify-between items-start pb-3 border-b border-slate-100">
-              <span className="text-slate-500">Service</span>
-              <span className="font-bold text-slate-900 text-right">
-                {selectedService ? selectedService.name : 'Not selected'}
-              </span>
+              <div>
+                <span className="text-slate-500 text-xs block">Service</span>
+                <span className="font-bold text-slate-900">
+                  {selectedService ? selectedService.name : 'Not selected'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveStep(1)}
+                className="text-xs text-emerald-700 font-semibold hover:underline cursor-pointer"
+              >
+                Edit
+              </button>
             </div>
 
             {selectedService && (
@@ -742,53 +910,99 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
             )}
 
             <div className="flex justify-between items-center pb-3 border-b border-slate-100">
-              <span className="text-slate-500">Date & Time</span>
-              <span className="font-semibold text-slate-800 text-right">
-                {date && time ? `${formatUtcDateString(`${date}T00:00:00Z`)} @ ${formatUtcTimeString(`2000-01-01T${time}:00Z`)}` : '—'}
-              </span>
+              <div>
+                <span className="text-slate-500 text-xs block">Date & Time</span>
+                <span className="font-semibold text-slate-800">
+                  {date && time ? `${formatUtcDateString(`${date}T00:00:00Z`)} @ ${formatUtcTimeString(`2000-01-01T${time}:00Z`)}` : '—'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveStep(3)}
+                className="text-xs text-emerald-700 font-semibold hover:underline cursor-pointer"
+              >
+                Edit
+              </button>
             </div>
 
             <div className="flex justify-between items-center pb-3 border-b border-slate-100">
-              <span className="text-slate-500">Location</span>
-              <span className="font-semibold text-slate-800">
-                {locationType === 'STUDIO' ? 'Studio' : 'In-Home'}
-              </span>
+              <div>
+                <span className="text-slate-500 text-xs block">Appointment Type</span>
+                <span className="font-semibold text-slate-800">
+                  {locationType === 'STUDIO' ? 'Studio' : 'In-Home'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveStep(2)}
+                className="text-xs text-emerald-700 font-semibold hover:underline cursor-pointer"
+              >
+                Edit
+              </button>
             </div>
 
             {locationType === 'IN_HOME' && addressLine1 && (
               <div className="flex justify-between items-start pb-3 border-b border-slate-100">
-                <span className="text-slate-500">Address</span>
-                <span className="font-medium text-slate-700 text-right text-xs max-w-[200px]">
-                  {addressLine1}{addressLine2 ? `, ${addressLine2}` : ''}<br />
-                  {city}, {state} {zipCode}
-                </span>
+                <div>
+                  <span className="text-slate-500 text-xs block">Location</span>
+                  <span className="font-medium text-slate-700 text-xs">
+                    {addressLine1}{addressLine2 ? `, ${addressLine2}` : ''}<br />
+                    {city}, {state} {zipCode}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveStep(4)}
+                  className="text-xs text-emerald-700 font-semibold hover:underline cursor-pointer"
+                >
+                  Edit
+                </button>
+              </div>
+            )}
+
+            {firstName && lastName && (
+              <div className="flex justify-between items-start pb-3 border-b border-slate-100">
+                <div>
+                  <span className="text-slate-500 text-xs block">Customer</span>
+                  <span className="font-medium text-slate-800 text-xs">
+                    {firstName} {lastName}<br />
+                    {email} • {phone}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveStep(4)}
+                  className="text-xs text-emerald-700 font-semibold hover:underline cursor-pointer"
+                >
+                  Edit
+                </button>
               </div>
             )}
 
             {/* Price breakdown */}
             <div className="pt-2 flex justify-between items-baseline">
-              <span className="text-base font-bold text-slate-900">Total Base Price</span>
+              <span className="text-base font-bold text-slate-900">Total Price</span>
               <span className="text-2xl font-extrabold text-emerald-800">
                 ${selectedService ? selectedService.price : 0}
               </span>
             </div>
 
-            {/* Payment Status Label */}
+            {/* Payment Placeholder Notice */}
             <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200/80 text-amber-900 space-y-1">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider">Payment Status</span>
+                <span className="text-xs font-bold uppercase tracking-wider">Payment Step</span>
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
-                  Payment: Pending
+                  Payment Pending
                 </span>
               </div>
               <p className="text-xs text-amber-800 leading-relaxed">
-                Payment has NOT been processed yet. Payment integration will be completed in a subsequent phase.
+                Booking details confirmed. Payment will be completed in the next step. No charge will be made right now.
               </p>
             </div>
           </div>
 
           {serverError && (
-            <div className="p-4 bg-rose-50 rounded-2xl border border-rose-200 text-rose-800 text-xs font-medium">
+            <div className="p-4 bg-rose-50 rounded-2xl border border-rose-200 text-rose-800 text-xs font-semibold">
               {serverError}
             </div>
           )}
@@ -808,10 +1022,10 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
-                <span>Submitting Appointment...</span>
+                <span>Processing Request...</span>
               </>
             ) : (
-              <span>Confirm & Book Appointment</span>
+              <span>Continue to Payment</span>
             )}
           </button>
         </div>

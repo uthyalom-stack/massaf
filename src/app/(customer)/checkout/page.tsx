@@ -4,7 +4,7 @@ import { getActiveTherapists } from '@/lib/db-therapists';
 
 export const dynamic = 'force-dynamic';
 
-export default async function BookingPage() {
+export default async function CheckoutPage() {
   const activeTherapists = await getActiveTherapists();
 
   return (
