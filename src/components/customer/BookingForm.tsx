@@ -4,8 +4,7 @@ import React, { useState, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
-import { MOCK_THERAPISTS } from '@/lib/mock-data';
-import { MockTherapist, TherapistService } from '@/types/customer';
+import { CustomerTherapist, TherapistService } from '@/types/customer';
 import { bookingSchema } from '@/lib/validations/booking';
 import {
   getScheduleWindowForDate,
@@ -14,7 +13,11 @@ import {
 } from '@/lib/availability';
 import { formatUtcDateString, formatUtcTimeString } from '@/lib/timezone';
 
-export function BookingForm() {
+interface BookingFormProps {
+  activeTherapists: CustomerTherapist[];
+}
+
+export function BookingForm({ activeTherapists }: BookingFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -23,13 +26,13 @@ export function BookingForm() {
 
   // Check therapist validity if parameter provided
   const foundTherapist = therapistParam
-    ? MOCK_THERAPISTS.find((t) => t.id === therapistParam) || null
+    ? activeTherapists.find((t) => t.id === therapistParam) || null
     : null;
 
   // Selected therapist state
-  const [selectedTherapist, setSelectedTherapist] = useState<MockTherapist | null>(() => {
+  const [selectedTherapist, setSelectedTherapist] = useState<CustomerTherapist | null>(() => {
     if (therapistParam) return foundTherapist;
-    return MOCK_THERAPISTS[0] || null;
+    return activeTherapists[0] || null;
   });
 
   // Invalid Therapist URL State
@@ -44,8 +47,6 @@ export function BookingForm() {
   const invalidServiceUrl = Boolean(serviceParam && !foundService);
 
   // Selected service state
-  // If serviceParam was explicitly provided: preselect foundService if valid, or null if invalid.
-  // If no serviceParam was provided: preselect therapist's first service.
   const [selectedService, setSelectedService] = useState<TherapistService | null>(() => {
     if (serviceParam !== null) {
       return foundService;
@@ -96,7 +97,7 @@ export function BookingForm() {
   }, [selectedTherapist, date, selectedService]);
 
   const handleTherapistChange = (therapistId: string) => {
-    const therapist = MOCK_THERAPISTS.find((t) => t.id === therapistId) || null;
+    const therapist = activeTherapists.find((t) => t.id === therapistId) || null;
     setSelectedTherapist(therapist);
     if (therapist) {
       setSelectedService(therapist.services[0] || null);
@@ -168,9 +169,7 @@ export function BookingForm() {
       return;
     }
 
-    // Double-submission protection
     if (isSubmitting) return;
-
     setIsSubmitting(true);
 
     try {
@@ -222,7 +221,7 @@ export function BookingForm() {
             Therapist Not Found
           </h1>
           <p className="text-slate-600 text-sm">
-            The requested therapist ID (&quot;{therapistParam}&quot;) does not exist or is no longer available.
+            The requested therapist (&quot;{therapistParam}&quot;) does not exist or is no longer available.
           </p>
         </div>
         <Link
@@ -235,8 +234,31 @@ export function BookingForm() {
     );
   }
 
-  if (!selectedTherapist) {
-    return null;
+  // 2. Empty Therapists State
+  if (activeTherapists.length === 0 || !selectedTherapist) {
+    return (
+      <div className="max-w-2xl mx-auto bg-white rounded-3xl border border-slate-200 p-8 sm:p-12 shadow-xs text-center space-y-6">
+        <div className="w-16 h-16 bg-amber-50 text-amber-700 rounded-2xl flex items-center justify-center mx-auto">
+          <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <div className="space-y-2">
+          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+            No Therapists Currently Available
+          </h1>
+          <p className="text-slate-600 text-sm">
+            There are currently no active massage therapists available for booking. Please check back later.
+          </p>
+        </div>
+        <Link
+          href="/find-a-therapist"
+          className="inline-flex items-center justify-center px-6 py-3 rounded-xl bg-emerald-700 text-white font-semibold text-sm hover:bg-emerald-800 transition-colors"
+        >
+          Return to Find a Therapist
+        </Link>
+      </div>
+    );
   }
 
   return (
@@ -258,7 +280,7 @@ export function BookingForm() {
             <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 text-amber-900 text-xs space-y-1">
               <span className="font-bold block">Invalid Service Parameter</span>
               <p>
-                The requested service ID (&quot;{serviceParam}&quot;) is not offered by {selectedTherapist.name}.
+                The requested service (&quot;{serviceParam}&quot;) is not offered by {selectedTherapist.name}.
                 Please explicitly choose one of the available services below.
               </p>
             </div>
@@ -275,9 +297,9 @@ export function BookingForm() {
               onChange={(e) => handleTherapistChange(e.target.value)}
               className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 outline-none transition-all"
             >
-              {MOCK_THERAPISTS.map((t) => (
+              {activeTherapists.map((t) => (
                 <option key={t.id} value={t.id}>
-                  {t.name} — {t.title} ({t.location})
+                  {t.name} {t.title ? `— ${t.title}` : ''} ({t.location})
                 </option>
               ))}
             </select>
@@ -294,7 +316,7 @@ export function BookingForm() {
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="text-base font-bold text-slate-900 truncate">{selectedTherapist.name}</h3>
-                <p className="text-xs text-slate-500 truncate">{selectedTherapist.title} • {selectedTherapist.location}</p>
+                <p className="text-xs text-slate-500 truncate">{selectedTherapist.location}</p>
                 <div className="flex items-center gap-2 mt-1">
                   <span className="text-xs font-semibold text-amber-600 flex items-center gap-1">
                     ★ {selectedTherapist.rating}
@@ -313,40 +335,46 @@ export function BookingForm() {
             {fieldErrors.serviceId && (
               <p className="text-xs font-medium text-rose-600">{fieldErrors.serviceId}</p>
             )}
-            <div className="space-y-3">
-              {selectedTherapist.services.map((svc) => {
-                const isSelected = selectedService?.id === svc.id;
-                return (
-                  <div
-                    key={svc.id}
-                    onClick={() => setSelectedService(svc)}
-                    className={`cursor-pointer p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                      isSelected
-                        ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20'
-                        : 'border-slate-200 hover:border-slate-300 bg-white'
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="radio"
-                        name="service"
-                        checked={isSelected}
-                        onChange={() => setSelectedService(svc)}
-                        className="mt-1 h-4 w-4 text-emerald-700 border-slate-300 focus:ring-emerald-600"
-                      />
-                      <div>
-                        <p className="text-sm font-bold text-slate-900">{svc.name}</p>
-                        <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{svc.description}</p>
+            {selectedTherapist.services.length > 0 ? (
+              <div className="space-y-3">
+                {selectedTherapist.services.map((svc) => {
+                  const isSelected = selectedService?.id === svc.id;
+                  return (
+                    <div
+                      key={svc.id}
+                      onClick={() => setSelectedService(svc)}
+                      className={`cursor-pointer p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                        isSelected
+                          ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20'
+                          : 'border-slate-200 hover:border-slate-300 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="radio"
+                          name="service"
+                          checked={isSelected}
+                          onChange={() => setSelectedService(svc)}
+                          className="mt-1 h-4 w-4 text-emerald-700 border-slate-300 focus:ring-emerald-600"
+                        />
+                        <div>
+                          <p className="text-sm font-bold text-slate-900">{svc.name}</p>
+                          <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{svc.description}</p>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0 pl-7 sm:pl-0">
+                        <p className="text-base font-extrabold text-slate-900">${svc.price}</p>
+                        <p className="text-xs font-medium text-slate-500">{svc.durationMinutes} mins</p>
                       </div>
                     </div>
-                    <div className="text-right shrink-0 pl-7 sm:pl-0">
-                      <p className="text-base font-extrabold text-slate-900">${svc.price}</p>
-                      <p className="text-xs font-medium text-slate-500">{svc.durationMinutes} mins</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-600">
+                This practitioner currently has no active services available for booking.
+              </div>
+            )}
           </div>
         </section>
 
@@ -431,7 +459,7 @@ export function BookingForm() {
                 value={date}
                 onChange={(e) => {
                   setDate(e.target.value);
-                  setTime(''); // Reset time selection when date changes
+                  setTime('');
                 }}
                 className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 outline-none"
               />

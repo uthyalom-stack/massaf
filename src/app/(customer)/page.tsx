@@ -5,19 +5,73 @@ import { TherapistGrid } from '@/components/customer/TherapistGrid';
 import { TestimonialSection } from '@/components/customer/TestimonialSection';
 import { HowItWorks } from '@/components/customer/HowItWorks';
 import { SectionHeading } from '@/components/ui/SectionHeading';
-import {
-  MOCK_THERAPISTS,
-  MOCK_TESTIMONIALS,
-  MOCK_THERAPIST_REVIEWS,
-} from '@/lib/mock-data';
+import { getActiveTherapists } from '@/lib/db-therapists';
+import { db } from '@/lib/db';
+import { formatUtcDateString } from '@/lib/timezone';
+import { MOCK_TESTIMONIALS } from '@/lib/mock-data';
+import { MockReview } from '@/types/customer';
 
-export default function CustomerHomePage() {
-  const mostBookedTherapists = MOCK_THERAPISTS.filter(
-    (t) => t.isMostBooked
-  );
-  const featuredTherapists = MOCK_THERAPISTS.filter(
+export const dynamic = 'force-dynamic';
+
+export default async function CustomerHomePage() {
+  const activeTherapists = await getActiveTherapists();
+
+  // Most Booked Therapists: based strictly on real Prisma booking counts (> 0)
+  const mostBookedTherapists = activeTherapists
+    .filter((t) => t.bookingCount > 0)
+    .sort((a, b) => b.bookingCount - a.bookingCount);
+
+  // Featured Therapists: based strictly on therapist.isFeatured flag
+  const featuredTherapists = activeTherapists.filter(
     (t) => t.isFeatured
   );
+
+  // Fetch recent approved & published database reviews for homepage showcase
+  let dbReviewsFormatted: MockReview[] = [];
+  try {
+    const dbReviews = await db.review.findMany({
+      where: {
+        status: 'APPROVED',
+        isPublished: true,
+      },
+      include: {
+        customer: true,
+        therapist: true,
+        booking: {
+          include: {
+            service: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 6,
+    });
+
+    if (dbReviews.length > 0) {
+      dbReviewsFormatted = dbReviews.map((rev) => {
+        const rawName = rev.customer?.name || 'Verified Client';
+        const nameParts = rawName.trim().split(' ');
+        const formattedName =
+          nameParts.length > 1
+            ? `${nameParts[0]} ${nameParts[nameParts.length - 1][0]}.`
+            : rawName;
+
+        return {
+          id: rev.id,
+          therapistId: rev.therapistId,
+          therapistName: rev.therapist?.name || 'Practitioner',
+          customerName: formattedName,
+          customerLocation: 'United States',
+          rating: rev.rating,
+          date: formatUtcDateString(rev.createdAt.toISOString()),
+          comment: rev.comment || '',
+          serviceType: rev.booking?.service?.name || '',
+        };
+      });
+    }
+  } catch (err) {
+    console.error('Error fetching homepage reviews:', err);
+  }
 
   return (
     <div className="flex flex-col">
@@ -79,20 +133,24 @@ export default function CustomerHomePage() {
       </section>
 
       {/* 2. MOST BOOKED THERAPISTS */}
-      <TherapistGrid
-        badge="Popular Choice"
-        title="Most Booked Therapists"
-        subtitle="Consistently top-rated professionals with high client satisfaction and repeat bookings."
-        therapists={mostBookedTherapists}
-      />
+      {mostBookedTherapists.length > 0 && (
+        <TherapistGrid
+          badge="Popular Choice"
+          title="Most Booked Therapists"
+          subtitle="Consistently top-rated professionals with high client satisfaction and repeat bookings."
+          therapists={mostBookedTherapists}
+        />
+      )}
 
       {/* 3. FEATURED THERAPISTS */}
-      <TherapistGrid
-        badge="Handpicked Talent"
-        title="Featured Therapists"
-        subtitle="Meet highlighted specialists offering exceptional bodywork, sports recovery, and deep relaxation."
-        therapists={featuredTherapists}
-      />
+      {featuredTherapists.length > 0 && (
+        <TherapistGrid
+          badge="Handpicked Talent"
+          title="Featured Therapists"
+          subtitle="Meet highlighted specialists offering exceptional bodywork, sports recovery, and deep relaxation."
+          therapists={featuredTherapists}
+        />
+      )}
 
       {/* 4. HOW IT WORKS */}
       <HowItWorks />
@@ -100,7 +158,7 @@ export default function CustomerHomePage() {
       {/* 5. REVIEWS & TESTIMONIALS */}
       <TestimonialSection
         testimonials={MOCK_TESTIMONIALS}
-        therapistReviews={MOCK_THERAPIST_REVIEWS}
+        therapistReviews={dbReviewsFormatted}
       />
 
       {/* 6. ABOUT / COMPANY INTRO SECTION */}

@@ -1,11 +1,11 @@
 'use client';
 
 import React from 'react';
-import { MockTherapist } from '@/types/customer';
+import { CustomerTherapist } from '@/types/customer';
 import { TherapistCard } from '@/components/customer/TherapistCard';
 
 interface TherapistResultsProps {
-  therapists: MockTherapist[];
+  therapists: CustomerTherapist[];
   onResetFilters: () => void;
   hasActiveFilters: boolean;
 }

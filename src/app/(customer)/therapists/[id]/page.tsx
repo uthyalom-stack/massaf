@@ -2,7 +2,7 @@ import React from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Metadata } from 'next';
-import { MOCK_THERAPISTS, MOCK_THERAPIST_REVIEWS } from '@/lib/mock-data';
+import { getActiveTherapistById } from '@/lib/db-therapists';
 import { RatingDisplay } from '@/components/ui/RatingDisplay';
 import { ReviewCard } from '@/components/customer/ReviewCard';
 import { TherapistGallery } from '@/components/customer/TherapistGallery';
@@ -15,24 +15,27 @@ interface PageProps {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { id } = await params;
-  const therapist = MOCK_THERAPISTS.find((t) => t.id === id);
+  const therapist = await getActiveTherapistById(id);
 
   if (!therapist) {
     return {
       title: 'Therapist Not Found | MASSAF',
-      description: 'The requested therapist profile could not be found.',
+      description: 'The requested therapist profile could not be found or is currently inactive.',
     };
   }
 
+  const titleText = therapist.title ? ` - ${therapist.title}` : '';
+  const bioExcerpt = therapist.bio ? `${therapist.bio.slice(0, 150)}...` : '';
+
   return {
     title: `${therapist.name} | MASSAF Massage Therapy`,
-    description: `${therapist.name} - ${therapist.title} in ${therapist.location}. ${therapist.bio.slice(0, 150)}...`,
+    description: `${therapist.name}${titleText} in ${therapist.location}. ${bioExcerpt}`,
   };
 }
 
 export default async function TherapistProfilePage({ params }: PageProps) {
   const { id } = await params;
-  const therapist = MOCK_THERAPISTS.find((t) => t.id === id);
+  const therapist = await getActiveTherapistById(id);
 
   if (!therapist) {
     notFound();
@@ -46,57 +49,46 @@ export default async function TherapistProfilePage({ params }: PageProps) {
     rating: number;
     date: string;
     comment: string;
-    serviceType: string;
+    serviceType?: string;
   }> = [];
 
-  try {
-    const dbReviews = await db.review.findMany({
-      where: {
-        therapistId: therapist.id,
-        status: 'APPROVED',
-        isPublished: true,
-      },
-      include: {
-        customer: true,
-        booking: {
-          include: {
-            service: true,
-          },
+  const dbReviews = await db.review.findMany({
+    where: {
+      therapistId: therapist.id,
+      status: 'APPROVED',
+      isPublished: true,
+    },
+    include: {
+      customer: true,
+      booking: {
+        include: {
+          service: true,
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  });
 
-    dbReviewsFormatted = dbReviews.map((rev) => {
-      // Obfuscate customer name for privacy (e.g. "Jane D.")
-      const rawName = rev.customer?.name || 'Verified Client';
-      const nameParts = rawName.trim().split(' ');
-      const formattedName =
-        nameParts.length > 1
-          ? `${nameParts[0]} ${nameParts[nameParts.length - 1][0]}.`
-          : rawName;
+  dbReviewsFormatted = dbReviews.map((rev) => {
+    const rawName = rev.customer?.name || 'Verified Client';
+    const nameParts = rawName.trim().split(' ');
+    const formattedName =
+      nameParts.length > 1
+        ? `${nameParts[0]} ${nameParts[nameParts.length - 1][0]}.`
+        : rawName;
 
-      return {
-        id: rev.id,
-        customerName: formattedName,
-        customerLocation: therapist.location,
-        rating: rev.rating,
-        date: formatUtcDateString(rev.createdAt.toISOString()),
-        comment: rev.comment || '',
-        serviceType: rev.booking?.service?.name || 'Massage Therapy Session',
-      };
-    });
-  } catch (err) {
-    console.error('Error fetching database reviews for therapist:', err);
-  }
-
-  const mockReviews = MOCK_THERAPIST_REVIEWS.filter(
-    (rev) => rev.therapistId === therapist.id
-  );
-
-  const allReviews = [...dbReviewsFormatted, ...mockReviews];
+    return {
+      id: rev.id,
+      customerName: formattedName,
+      customerLocation: therapist.location,
+      rating: rev.rating,
+      date: formatUtcDateString(rev.createdAt.toISOString()),
+      comment: rev.comment || '',
+      serviceType: rev.booking?.service?.name || undefined,
+    };
+  });
 
   return (
     <div className="min-h-screen bg-slate-50 py-8 sm:py-12">
@@ -120,7 +112,7 @@ export default async function TherapistProfilePage({ params }: PageProps) {
             {/* Gallery Column */}
             <div className="lg:col-span-5">
               <TherapistGallery
-                images={therapist.galleryImages || [therapist.image]}
+                images={therapist.galleryImages.length > 0 ? therapist.galleryImages : [therapist.image]}
                 therapistName={therapist.name}
               />
             </div>
@@ -147,7 +139,7 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                     </span>
                   )}
 
-                  {therapist.isMostBooked && (
+                  {(therapist.isFeatured || therapist.bookingCount > 0) && (
                     <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
                       Top Rated Practitioner
                     </span>
@@ -159,9 +151,11 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                   <h1 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
                     {therapist.name}
                   </h1>
-                  <p className="text-base sm:text-lg font-medium text-slate-600 mt-1">
-                    {therapist.title}
-                  </p>
+                  {therapist.title && (
+                    <p className="text-base sm:text-lg font-medium text-slate-600 mt-1">
+                      {therapist.title}
+                    </p>
+                  )}
                 </div>
 
                 {/* Rating & Location */}
@@ -178,21 +172,23 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                 </div>
 
                 {/* Specialties list summary */}
-                <div className="pt-2">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
-                    Primary Specialties
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {therapist.specialties.map((spec) => (
-                      <span
-                        key={spec}
-                        className="inline-flex items-center px-3 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-800 border border-slate-200/60"
-                      >
-                        {spec}
-                      </span>
-                    ))}
+                {therapist.specialties && therapist.specialties.length > 0 && (
+                  <div className="pt-2">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                      Primary Specialties
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {therapist.specialties.map((spec) => (
+                        <span
+                          key={spec}
+                          className="inline-flex items-center px-3 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-800 border border-slate-200/60"
+                        >
+                          {spec}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {/* Pricing & Call To Action */}
@@ -200,14 +196,18 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                 <div>
                   <p className="text-xs font-medium text-slate-500">Starting price</p>
                   <div className="flex items-baseline gap-1">
-                    <span className="text-3xl font-extrabold text-slate-900">${therapist.startingPrice}</span>
-                    <span className="text-sm text-slate-500 font-medium">/ session</span>
+                    <span className="text-3xl font-extrabold text-slate-900">
+                      {therapist.startingPrice > 0 ? `$${therapist.startingPrice}` : 'N/A'}
+                    </span>
+                    {therapist.startingPrice > 0 && (
+                      <span className="text-sm text-slate-500 font-medium">/ session</span>
+                    )}
                   </div>
                 </div>
 
                 <Link
                   href={`/booking?therapist=${therapist.id}`}
-                  className="inline-flex items-center justify-center px-8 py-3.5 text-base font-bold rounded-xl bg-emerald-700 text-white hover:bg-emerald-800 transition-all shadow-sm hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 cursor-pointer text-center"
+                  className="inline-flex items-center justify-center px-8 py-3.5 text-base font-bold rounded-xl bg-emerald-700 text-white hover:bg-emerald-800 transition-all shadow-xs hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 cursor-pointer text-center"
                 >
                   Book Now
                 </Link>
@@ -231,22 +231,26 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                   <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-1">
                     Biography
                   </h3>
-                  <p>{therapist.bio}</p>
+                  <p>{therapist.bio || 'No biography details provided.'}</p>
                 </div>
 
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-1">
-                    Experience & Background
-                  </h3>
-                  <p>{therapist.experience}</p>
-                </div>
+                {therapist.experience && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-1">
+                      Experience & Background
+                    </h3>
+                    <p>{therapist.experience}</p>
+                  </div>
+                )}
 
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-1">
-                    Therapeutic Approach
-                  </h3>
-                  <p>{therapist.approach}</p>
-                </div>
+                {therapist.approach && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-1">
+                      Therapeutic Approach
+                    </h3>
+                    <p>{therapist.approach}</p>
+                  </div>
+                )}
               </div>
             </section>
 
@@ -261,40 +265,46 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                 </span>
               </div>
 
-              <div className="space-y-4">
-                {therapist.services.map((service) => (
-                  <div
-                    key={service.id}
-                    className="p-5 rounded-2xl border border-slate-200 hover:border-slate-300 transition-all bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                  >
-                    <div className="space-y-1 max-w-xl">
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <h3 className="text-lg font-bold text-slate-900">
-                          {service.name}
-                        </h3>
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-slate-200/80 text-slate-700">
-                          {service.durationMinutes} mins
-                        </span>
+              {therapist.services.length > 0 ? (
+                <div className="space-y-4">
+                  {therapist.services.map((service) => (
+                    <div
+                      key={service.id}
+                      className="p-5 rounded-2xl border border-slate-200 hover:border-slate-300 transition-all bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                    >
+                      <div className="space-y-1 max-w-xl">
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <h3 className="text-lg font-bold text-slate-900">
+                            {service.name}
+                          </h3>
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-slate-200/80 text-slate-700">
+                            {service.durationMinutes} mins
+                          </span>
+                        </div>
+                        <p className="text-sm text-slate-600 leading-relaxed">
+                          {service.description}
+                        </p>
                       </div>
-                      <p className="text-sm text-slate-600 leading-relaxed">
-                        {service.description}
-                      </p>
-                    </div>
 
-                    <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-200">
-                      <span className="text-xl sm:text-2xl font-extrabold text-slate-900">
-                        ${service.price}
-                      </span>
-                      <Link
-                        href={`/booking?therapist=${therapist.id}&service=${service.id}`}
-                        className="inline-flex items-center justify-center px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-700 text-white hover:bg-emerald-800 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
-                      >
-                        Select
-                      </Link>
+                      <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-200">
+                        <span className="text-xl sm:text-2xl font-extrabold text-slate-900">
+                          ${service.price}
+                        </span>
+                        <Link
+                          href={`/booking?therapist=${therapist.id}&service=${service.id}`}
+                          className="inline-flex items-center justify-center px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-700 text-white hover:bg-emerald-800 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+                        >
+                          Select
+                        </Link>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-6 text-center text-slate-500 text-sm bg-slate-50 rounded-2xl border border-slate-200">
+                  No services currently listed for this therapist.
+                </div>
+              )}
             </section>
 
             {/* Reviews Section */}
@@ -311,9 +321,9 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                 <RatingDisplay rating={therapist.rating} reviewCount={therapist.reviewCount} size="md" />
               </div>
 
-              {allReviews.length > 0 ? (
+              {dbReviewsFormatted.length > 0 ? (
                 <div className="grid grid-cols-1 gap-4">
-                  {allReviews.map((rev) => (
+                  {dbReviewsFormatted.map((rev) => (
                     <ReviewCard
                       key={rev.id}
                       reviewerName={rev.customerName}
@@ -375,21 +385,23 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                   </div>
                 </div>
 
-                <div className="pt-3 border-t border-slate-100">
-                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                    Service Areas & Neighborhoods
-                  </h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {therapist.serviceAreas.map((area) => (
-                      <span
-                        key={area}
-                        className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-700"
-                      >
-                        {area}
-                      </span>
-                    ))}
+                {therapist.serviceAreas && therapist.serviceAreas.length > 0 && (
+                  <div className="pt-3 border-t border-slate-100">
+                    <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                      Service Areas & Neighborhoods
+                    </h4>
+                    <div className="flex flex-wrap gap-1.5">
+                      {therapist.serviceAreas.map((area) => (
+                        <span
+                          key={area}
+                          className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-700"
+                        >
+                          {area}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
 

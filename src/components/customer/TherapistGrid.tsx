@@ -1,5 +1,5 @@
 import React from 'react';
-import { MockTherapist } from '@/types/customer';
+import { CustomerTherapist } from '@/types/customer';
 import { TherapistCard } from '@/components/customer/TherapistCard';
 import { SectionHeading } from '@/components/ui/SectionHeading';
 
@@ -8,7 +8,7 @@ interface TherapistGridProps {
   badge?: string;
   title: string;
   subtitle?: string;
-  therapists: MockTherapist[];
+  therapists: CustomerTherapist[];
 }
 
 export function TherapistGrid({
@@ -18,6 +18,10 @@ export function TherapistGrid({
   subtitle,
   therapists,
 }: TherapistGridProps) {
+  if (!therapists || therapists.length === 0) {
+    return null;
+  }
+
   return (
     <section id={id} className="py-12 sm:py-16 bg-slate-50/50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

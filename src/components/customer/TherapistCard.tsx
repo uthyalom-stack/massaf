@@ -1,18 +1,18 @@
 import React from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { MockTherapist } from '@/types/customer';
+import { CustomerTherapist } from '@/types/customer';
 import { RatingDisplay } from '@/components/ui/RatingDisplay';
 
 interface TherapistCardProps {
-  therapist: MockTherapist;
+  therapist: CustomerTherapist;
 }
 
 export function TherapistCard({ therapist }: TherapistCardProps) {
   const profileHref = `/therapists/${therapist.id}`;
 
   return (
-    <div className="group relative flex flex-col overflow-hidden rounded-2xl bg-white border border-slate-200 shadow-sm transition-all duration-200 hover:shadow-md hover:border-slate-300">
+    <div className="group relative flex flex-col overflow-hidden rounded-2xl bg-white border border-slate-200 shadow-xs transition-all duration-200 hover:shadow-md hover:border-slate-300">
       {/* Image Container */}
       <Link href={profileHref} className="relative h-64 w-full overflow-hidden bg-slate-100 block">
         <Image
@@ -25,7 +25,7 @@ export function TherapistCard({ therapist }: TherapistCardProps) {
 
         {/* Availability Badge */}
         <div className="absolute top-3 left-3">
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-white/95 backdrop-blur-sm text-emerald-800 shadow-xs ring-1 ring-emerald-500/20">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-white/95 backdrop-blur-xs text-emerald-800 shadow-2xs ring-1 ring-emerald-500/20">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" aria-hidden="true" />
             {therapist.availability}
           </span>
@@ -55,7 +55,9 @@ export function TherapistCard({ therapist }: TherapistCardProps) {
                 {therapist.name}
               </Link>
             </h3>
-            <p className="text-xs font-medium text-slate-500">{therapist.title}</p>
+            {therapist.title && (
+              <p className="text-xs font-medium text-slate-500">{therapist.title}</p>
+            )}
           </div>
         </div>
 
@@ -72,19 +74,21 @@ export function TherapistCard({ therapist }: TherapistCardProps) {
         </div>
 
         {/* Specialties tags */}
-        <div className="mt-3.5 flex flex-wrap gap-1.5">
-          {therapist.specialties.map((specialty) => (
-            <span
-              key={specialty}
-              className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-slate-100 text-slate-700"
-            >
-              {specialty}
-            </span>
-          ))}
-        </div>
+        {therapist.specialties && therapist.specialties.length > 0 && (
+          <div className="mt-3.5 flex flex-wrap gap-1.5">
+            {therapist.specialties.map((specialty) => (
+              <span
+                key={specialty}
+                className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-slate-100 text-slate-700"
+              >
+                {specialty}
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Footer info & CTA */}
-        <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
+        <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between mt-auto">
           <div>
             <span className="text-xs text-slate-500 block">Starting from</span>
             <span className="text-lg font-bold text-slate-900">${therapist.startingPrice}</span>
