@@ -5,6 +5,7 @@ import { MOCK_THERAPISTS } from '@/lib/mock-data';
 import { ensureTherapistAndServiceInDb } from '@/lib/db-sync';
 import { isAppointmentTimeAvailable } from '@/lib/availability';
 import { parseAppointmentDateTime } from '@/lib/timezone';
+import { cookies } from 'next/headers';
 
 export async function POST(request: Request) {
   try {
@@ -111,19 +112,37 @@ export async function POST(request: Request) {
       });
     }
 
-    // 9. Generate unique booking number
+    // 9. Server-side Marketing Link Resolution from trusted first-party cookie
+    let marketingLinkId: string | null = null;
+    try {
+      const cookieStore = await cookies();
+      const refCode = cookieStore.get('massaf_marketing_ref')?.value;
+      if (refCode) {
+        const marketingLink = await db.marketingLink.findUnique({
+          where: { code: refCode },
+        });
+        if (marketingLink && marketingLink.isActive) {
+          marketingLinkId = marketingLink.id;
+        }
+      }
+    } catch {
+      // Ignore attribution lookup failures to ensure customer booking flow never fails
+    }
+
+    // 10. Generate unique booking number
     const bookingNumber = `MSF-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
 
-    // 10. Derive price server-side (DO NOT TRUST CLIENT)
+    // 11. Derive price server-side (DO NOT TRUST CLIENT)
     const authoritativePrice = service.price;
 
-    // 11. Persist Booking in Prisma DB
+    // 12. Persist Booking in Prisma DB
     const booking = await db.booking.create({
       data: {
         bookingNumber,
         customerId: customer.id,
         therapistId: therapist.id,
         serviceId: service.id,
+        marketingLinkId,
         appointmentDateTime,
         durationMinutes: service.durationMinutes,
         locationType: data.locationType,

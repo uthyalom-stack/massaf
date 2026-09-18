@@ -37,6 +37,9 @@ export interface MarketingLinkSummary {
   code: string;
   destinationUrl: string;
   clicks: number;
+  isActive: boolean;
+  createdAt: Date | string;
+  updatedAt: Date | string;
   bookingsCount: number;
   totalRevenue: number;
 }

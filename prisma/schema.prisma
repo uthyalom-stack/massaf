@@ -262,12 +262,14 @@ model MarketingLink {
   id             String   @id @default(uuid())
   name           String
   code           String   @unique // Unique tracking identifier/slug
-  destinationUrl String
+  destinationUrl String   @default("/")
   clicks         Int      @default(0)
+  isActive       Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   bookings Booking[]
 
   @@index([code])
+  @@index([isActive])
 }
