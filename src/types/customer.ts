@@ -11,6 +11,31 @@ export interface TherapistScheduleWindow {
   hours: string;
 }
 
+export interface CustomerTherapist {
+  id: string;
+  name: string;
+  title?: string;
+  image: string;
+  galleryImages: string[];
+  rating: number;
+  reviewCount: number;
+  location: string;
+  serviceAreas: string[];
+  zipCodes: string[];
+  startingPrice: number;
+  availability: string;
+  offersStudio: boolean;
+  offersInHome: boolean;
+  specialties: string[];
+  bio: string;
+  experience?: string;
+  approach?: string;
+  services: TherapistService[];
+  schedule: TherapistScheduleWindow[];
+  bookingCount: number;
+  isFeatured: boolean;
+}
+
 export interface MockTherapist {
   id: string;
   name: string;
@@ -19,11 +44,11 @@ export interface MockTherapist {
   galleryImages: string[];
   rating: number;
   reviewCount: number;
-  location: string; // e.g. "Los Angeles, CA"
-  serviceAreas: string[]; // e.g. ["Downtown LA", "Beverly Hills", "Santa Monica"]
-  zipCodes: string[]; // e.g. ["90210", "90401", "90230"]
+  location: string;
+  serviceAreas: string[];
+  zipCodes: string[];
   startingPrice: number;
-  availability: string; // e.g. "Available Today", "Next available Tomorrow"
+  availability: string;
   offersStudio: boolean;
   offersInHome: boolean;
   specialties: string[];

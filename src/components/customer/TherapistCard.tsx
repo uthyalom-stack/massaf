@@ -1,11 +1,11 @@
 import React from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { MockTherapist } from '@/types/customer';
+import { CustomerTherapist } from '@/types/customer';
 import { RatingDisplay } from '@/components/ui/RatingDisplay';
 
 interface TherapistCardProps {
-  therapist: MockTherapist;
+  therapist: CustomerTherapist;
 }
 
 export function TherapistCard({ therapist }: TherapistCardProps) {

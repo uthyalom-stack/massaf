@@ -1,5 +1,5 @@
 import { db } from '@/lib/db';
-import { MockTherapist, TherapistService as PublicTherapistService, TherapistScheduleWindow } from '@/types/customer';
+import { CustomerTherapist, TherapistService as PublicTherapistService, TherapistScheduleWindow } from '@/types/customer';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const DAY_SHORT_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -128,9 +128,12 @@ export interface RawTherapistData {
   services?: RawTherapistService[];
   serviceAreas?: RawServiceArea[];
   availabilities?: RawAvailability[];
+  _count?: {
+    bookings: number;
+  };
 }
 
-export function formatDbTherapistToPublic(therapist: RawTherapistData): MockTherapist {
+export function formatDbTherapistToPublic(therapist: RawTherapistData): CustomerTherapist {
   const photos = (therapist.photos || []).sort((a, b) => a.sortOrder - b.sortOrder);
 
   const fallbackAvatar = '/images/default-avatar.svg';
@@ -169,6 +172,8 @@ export function formatDbTherapistToPublic(therapist: RawTherapistData): MockTher
     ? 'Appointments Available'
     : 'Schedule Available';
 
+  const bookingCount = therapist._count?.bookings ?? 0;
+
   return {
     id: therapist.id,
     name: therapist.name,
@@ -190,12 +195,12 @@ export function formatDbTherapistToPublic(therapist: RawTherapistData): MockTher
     approach: '',
     services: formattedServices,
     schedule,
+    bookingCount,
     isFeatured: therapist.isFeatured,
-    isMostBooked: therapist.isFeatured || (therapist.rating >= 4.8 && therapist.reviewCount > 0),
   };
 }
 
-export async function getActiveTherapists(): Promise<MockTherapist[]> {
+export async function getActiveTherapists(): Promise<CustomerTherapist[]> {
   const dbTherapists = await db.therapist.findMany({
     where: {
       isActive: true,
@@ -215,6 +220,11 @@ export async function getActiveTherapists(): Promise<MockTherapist[]> {
       },
       serviceAreas: true,
       availabilities: true,
+      _count: {
+        select: {
+          bookings: true,
+        },
+      },
     },
     orderBy: [
       { isFeatured: 'desc' },
@@ -226,7 +236,7 @@ export async function getActiveTherapists(): Promise<MockTherapist[]> {
   return dbTherapists.map((t) => formatDbTherapistToPublic(t));
 }
 
-export async function getActiveTherapistById(id: string): Promise<MockTherapist | null> {
+export async function getActiveTherapistById(id: string): Promise<CustomerTherapist | null> {
   if (!id) return null;
 
   const therapist = await db.therapist.findFirst({
@@ -249,6 +259,11 @@ export async function getActiveTherapistById(id: string): Promise<MockTherapist 
       },
       serviceAreas: true,
       availabilities: true,
+      _count: {
+        select: {
+          bookings: true,
+        },
+      },
     },
   });
 

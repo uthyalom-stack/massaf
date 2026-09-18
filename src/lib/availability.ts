@@ -1,4 +1,4 @@
-import { MockTherapist, TherapistScheduleWindow } from '@/types/customer';
+import { CustomerTherapist, MockTherapist, TherapistScheduleWindow } from '@/types/customer';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -121,7 +121,6 @@ export function getScheduleWindowForDate(
   schedule: TherapistScheduleWindow[],
   dateStr: string
 ): { daysStr: string; hoursStr: string; startMinutes: number; endMinutes: number } | null {
-  // Use UTC date to avoid local timezone offset shifting the day
   const dateObj = new Date(`${dateStr}T00:00:00Z`);
   if (isNaN(dateObj.getTime())) return null;
 
@@ -201,7 +200,7 @@ export function getDbScheduleWindowForDate(
  * Time slots are generated in 30-minute increments.
  */
 export function getAvailableTimeSlots(
-  therapist: MockTherapist,
+  therapist: CustomerTherapist | MockTherapist,
   dateStr: string,
   durationMinutes: number
 ): { value: string; label: string }[] {
@@ -224,7 +223,7 @@ export function getAvailableTimeSlots(
  * Validates whether a specific appointment date, start time ("HH:mm"), and duration fits within the therapist's schedule.
  */
 export function isAppointmentTimeAvailable(
-  therapist: MockTherapist,
+  therapist: CustomerTherapist | MockTherapist,
   dateStr: string,
   timeStr: string,
   durationMinutes: number

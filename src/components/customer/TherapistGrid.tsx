@@ -1,5 +1,5 @@
 import React from 'react';
-import { MockTherapist } from '@/types/customer';
+import { CustomerTherapist } from '@/types/customer';
 import { TherapistCard } from '@/components/customer/TherapistCard';
 import { SectionHeading } from '@/components/ui/SectionHeading';
 
@@ -8,7 +8,7 @@ interface TherapistGridProps {
   badge?: string;
   title: string;
   subtitle?: string;
-  therapists: MockTherapist[];
+  therapists: CustomerTherapist[];
 }
 
 export function TherapistGrid({

@@ -2,12 +2,12 @@
 
 import React, { useMemo } from 'react';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
-import { MockTherapist } from '@/types/customer';
+import { CustomerTherapist } from '@/types/customer';
 import { TherapistFilters } from '@/components/customer/TherapistFilters';
 import { TherapistResults } from '@/components/customer/TherapistResults';
 
 interface TherapistDiscoveryClientProps {
-  initialTherapists: MockTherapist[];
+  initialTherapists: CustomerTherapist[];
 }
 
 export function TherapistDiscoveryClient({

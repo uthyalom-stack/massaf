@@ -4,7 +4,7 @@ import React, { useState, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
-import { MockTherapist, TherapistService } from '@/types/customer';
+import { CustomerTherapist, TherapistService } from '@/types/customer';
 import { bookingSchema } from '@/lib/validations/booking';
 import {
   getScheduleWindowForDate,
@@ -14,7 +14,7 @@ import {
 import { formatUtcDateString, formatUtcTimeString } from '@/lib/timezone';
 
 interface BookingFormProps {
-  activeTherapists: MockTherapist[];
+  activeTherapists: CustomerTherapist[];
 }
 
 export function BookingForm({ activeTherapists }: BookingFormProps) {
@@ -30,7 +30,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     : null;
 
   // Selected therapist state
-  const [selectedTherapist, setSelectedTherapist] = useState<MockTherapist | null>(() => {
+  const [selectedTherapist, setSelectedTherapist] = useState<CustomerTherapist | null>(() => {
     if (therapistParam) return foundTherapist;
     return activeTherapists[0] || null;
   });
@@ -299,7 +299,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
             >
               {activeTherapists.map((t) => (
                 <option key={t.id} value={t.id}>
-                  {t.name} — {t.title} ({t.location})
+                  {t.name} {t.title ? `— ${t.title}` : ''} ({t.location})
                 </option>
               ))}
             </select>
@@ -316,7 +316,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="text-base font-bold text-slate-900 truncate">{selectedTherapist.name}</h3>
-                <p className="text-xs text-slate-500 truncate">{selectedTherapist.title} • {selectedTherapist.location}</p>
+                <p className="text-xs text-slate-500 truncate">{selectedTherapist.location}</p>
                 <div className="flex items-center gap-2 mt-1">
                   <span className="text-xs font-semibold text-amber-600 flex items-center gap-1">
                     ★ {selectedTherapist.rating}
@@ -459,7 +459,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                 value={date}
                 onChange={(e) => {
                   setDate(e.target.value);
-                  setTime(''); // Reset time selection when date changes
+                  setTime('');
                 }}
                 className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 outline-none"
               />

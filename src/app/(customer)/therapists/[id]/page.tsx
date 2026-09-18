@@ -139,7 +139,7 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                     </span>
                   )}
 
-                  {therapist.isMostBooked && (
+                  {(therapist.isFeatured || therapist.bookingCount > 0) && (
                     <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
                       Top Rated Practitioner
                     </span>

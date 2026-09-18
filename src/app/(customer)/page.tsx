@@ -16,9 +16,12 @@ export const dynamic = 'force-dynamic';
 export default async function CustomerHomePage() {
   const activeTherapists = await getActiveTherapists();
 
-  const mostBookedTherapists = activeTherapists.filter(
-    (t) => t.isMostBooked
-  );
+  // Most Booked Therapists: based strictly on real Prisma booking counts (> 0)
+  const mostBookedTherapists = activeTherapists
+    .filter((t) => t.bookingCount > 0)
+    .sort((a, b) => b.bookingCount - a.bookingCount);
+
+  // Featured Therapists: based strictly on therapist.isFeatured flag
   const featuredTherapists = activeTherapists.filter(
     (t) => t.isFeatured
   );
