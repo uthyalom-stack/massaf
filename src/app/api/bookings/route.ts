@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { bookingSchema } from '@/lib/validations/booking';
-import { MOCK_THERAPISTS } from '@/lib/mock-data';
-import { ensureTherapistAndServiceInDb } from '@/lib/db-sync';
+import { formatDbTherapistToPublic } from '@/lib/db-therapists';
 import { isAppointmentTimeAvailable } from '@/lib/availability';
 import { parseAppointmentDateTime } from '@/lib/timezone';
 import { cookies } from 'next/headers';
@@ -26,23 +25,48 @@ export async function POST(request: Request) {
 
     const data = parseResult.data;
 
-    // 2. Validate therapist existence in authoritative server data
-    const therapist = MOCK_THERAPISTS.find((t) => t.id === data.therapistId);
+    // 2. Validate therapist existence in database (must be active)
+    const therapist = await db.therapist.findFirst({
+      where: {
+        id: data.therapistId,
+        isActive: true,
+      },
+      include: {
+        services: {
+          where: {
+            isActive: true,
+            service: { isActive: true },
+          },
+          include: { service: true },
+        },
+        availabilities: true,
+        photos: true,
+        serviceAreas: true,
+      },
+    });
+
     if (!therapist) {
       return NextResponse.json(
-        { error: 'Selected therapist could not be found' },
+        { error: 'Selected therapist could not be found or is unavailable' },
         { status: 404 }
       );
     }
 
-    // 3. Validate service belongs to selected therapist
-    const service = therapist.services.find((s) => s.id === data.serviceId);
-    if (!service) {
+    // 3. Validate service belongs to selected therapist and is active
+    const therapistService = therapist.services.find(
+      (ts) => ts.serviceId === data.serviceId || ts.service.id === data.serviceId
+    );
+
+    if (!therapistService || !therapistService.service) {
       return NextResponse.json(
         { error: 'Selected service is not offered by this therapist' },
         { status: 400 }
       );
     }
+
+    const service = therapistService.service;
+    const authoritativePrice = therapistService.customPrice ?? service.price;
+    const durationMinutes = therapistService.customDurationMinutes ?? service.durationMinutes;
 
     // 4. Validate location type is supported by therapist
     if (data.locationType === 'STUDIO' && !therapist.offersStudio) {
@@ -60,11 +84,12 @@ export async function POST(request: Request) {
     }
 
     // 5. Authoritative Server-side Availability Check
+    const publicTherapist = formatDbTherapistToPublic(therapist);
     const availabilityCheck = isAppointmentTimeAvailable(
-      therapist,
+      publicTherapist,
       data.date,
       data.time,
-      service.durationMinutes
+      durationMinutes
     );
 
     if (!availabilityCheck.isValid) {
@@ -85,10 +110,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 7. Ensure DB dependencies exist (Therapist & Service)
-    await ensureTherapistAndServiceInDb(therapist.id, service.id);
-
-    // 8. Find or create customer by email
+    // 7. Find or create customer by email
     const customerName = `${data.firstName} ${data.lastName}`.trim();
     let customer = await db.customer.findUnique({
       where: { email: data.email.toLowerCase() },
@@ -112,7 +134,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // 9. Server-side Marketing Link Resolution from trusted first-party cookie
+    // 8. Server-side Marketing Link Resolution from trusted first-party cookie
     let marketingLinkId: string | null = null;
     try {
       const cookieStore = await cookies();
@@ -129,13 +151,10 @@ export async function POST(request: Request) {
       // Ignore attribution lookup failures to ensure customer booking flow never fails
     }
 
-    // 10. Generate unique booking number
+    // 9. Generate unique booking number
     const bookingNumber = `MSF-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
 
-    // 11. Derive price server-side (DO NOT TRUST CLIENT)
-    const authoritativePrice = service.price;
-
-    // 12. Persist Booking in Prisma DB
+    // 10. Persist Booking in Prisma DB
     const booking = await db.booking.create({
       data: {
         bookingNumber,
@@ -144,7 +163,7 @@ export async function POST(request: Request) {
         serviceId: service.id,
         marketingLinkId,
         appointmentDateTime,
-        durationMinutes: service.durationMinutes,
+        durationMinutes,
         locationType: data.locationType,
         addressLine1: data.locationType === 'IN_HOME' ? data.addressLine1 : null,
         addressLine2: data.locationType === 'IN_HOME' ? data.addressLine2 : null,
@@ -154,7 +173,7 @@ export async function POST(request: Request) {
         notes: data.notes || null,
         amount: authoritativePrice,
         status: 'PENDING',
-        paymentStatus: 'PENDING',
+        paymentStatus: 'UNPAID',
       },
     });
 
@@ -171,7 +190,7 @@ export async function POST(request: Request) {
           locationType: booking.locationType,
           therapistName: therapist.name,
           serviceName: service.name,
-          durationMinutes: service.durationMinutes,
+          durationMinutes,
         },
       },
       { status: 201 }

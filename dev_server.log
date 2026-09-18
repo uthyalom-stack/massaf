@@ -1,0 +1,23 @@
+
+> massaf@0.1.0 dev
+> next dev
+
+▲ Next.js 16.3.5 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.0.2:3000
+- Environments: .env
+✓ Ready in 552ms
+✓ Running next.config.ts took 53ms
+
+○ Compiling /find-a-therapist ...
+ GET /find-a-therapist 200 in 5.3s (next.js: 4.5s, application-code: 730ms)
+[browser] Image with src "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=600" was detected as the Largest Contentful Paint (LCP). Please add the `loading="eager"` property if this image is above the fold.
+Read more: https://nextjs.org/docs/app/api-reference/components/image#loading
+ GET /therapists/therapist-db-1 200 in 2.3s (next.js: 2.1s, application-code: 120ms)
+ GET /booking?therapist=therapist-db-1 200 in 1682ms (next.js: 1601ms, application-code: 81ms)
+ GET /find-a-therapist 200 in 109ms (next.js: 11ms, application-code: 98ms)
+[browser] Image with src "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=600" was detected as the Largest Contentful Paint (LCP). Please add the `loading="eager"` property if this image is above the fold.
+Read more: https://nextjs.org/docs/app/api-reference/components/image#loading
+ GET /therapists/therapist-db-1 200 in 386ms (next.js: 25ms, application-code: 361ms)
+ GET /booking?therapist=therapist-db-1 200 in 568ms (next.js: 12ms, application-code: 556ms)
+[browser] Image with src "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=600" has "fill" but is missing "sizes" prop. Please add it to improve page performance. Read more: https://nextjs.org/docs/api-reference/next/image#sizes

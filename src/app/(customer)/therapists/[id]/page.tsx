@@ -2,7 +2,7 @@ import React from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Metadata } from 'next';
-import { MOCK_THERAPISTS, MOCK_THERAPIST_REVIEWS } from '@/lib/mock-data';
+import { getActiveTherapistById } from '@/lib/db-therapists';
 import { RatingDisplay } from '@/components/ui/RatingDisplay';
 import { ReviewCard } from '@/components/customer/ReviewCard';
 import { TherapistGallery } from '@/components/customer/TherapistGallery';
@@ -15,12 +15,12 @@ interface PageProps {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { id } = await params;
-  const therapist = MOCK_THERAPISTS.find((t) => t.id === id);
+  const therapist = await getActiveTherapistById(id);
 
   if (!therapist) {
     return {
       title: 'Therapist Not Found | MASSAF',
-      description: 'The requested therapist profile could not be found.',
+      description: 'The requested therapist profile could not be found or is currently inactive.',
     };
   }
 
@@ -32,7 +32,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function TherapistProfilePage({ params }: PageProps) {
   const { id } = await params;
-  const therapist = MOCK_THERAPISTS.find((t) => t.id === id);
+  const therapist = await getActiveTherapistById(id);
 
   if (!therapist) {
     notFound();
@@ -92,12 +92,6 @@ export default async function TherapistProfilePage({ params }: PageProps) {
     console.error('Error fetching database reviews for therapist:', err);
   }
 
-  const mockReviews = MOCK_THERAPIST_REVIEWS.filter(
-    (rev) => rev.therapistId === therapist.id
-  );
-
-  const allReviews = [...dbReviewsFormatted, ...mockReviews];
-
   return (
     <div className="min-h-screen bg-slate-50 py-8 sm:py-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
@@ -120,7 +114,7 @@ export default async function TherapistProfilePage({ params }: PageProps) {
             {/* Gallery Column */}
             <div className="lg:col-span-5">
               <TherapistGallery
-                images={therapist.galleryImages || [therapist.image]}
+                images={therapist.galleryImages.length > 0 ? therapist.galleryImages : [therapist.image]}
                 therapistName={therapist.name}
               />
             </div>
@@ -200,8 +194,12 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                 <div>
                   <p className="text-xs font-medium text-slate-500">Starting price</p>
                   <div className="flex items-baseline gap-1">
-                    <span className="text-3xl font-extrabold text-slate-900">${therapist.startingPrice}</span>
-                    <span className="text-sm text-slate-500 font-medium">/ session</span>
+                    <span className="text-3xl font-extrabold text-slate-900">
+                      {therapist.startingPrice > 0 ? `$${therapist.startingPrice}` : 'N/A'}
+                    </span>
+                    {therapist.startingPrice > 0 && (
+                      <span className="text-sm text-slate-500 font-medium">/ session</span>
+                    )}
                   </div>
                 </div>
 
@@ -231,7 +229,7 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                   <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-1">
                     Biography
                   </h3>
-                  <p>{therapist.bio}</p>
+                  <p>{therapist.bio || 'No biography details provided.'}</p>
                 </div>
 
                 <div>
@@ -261,40 +259,46 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                 </span>
               </div>
 
-              <div className="space-y-4">
-                {therapist.services.map((service) => (
-                  <div
-                    key={service.id}
-                    className="p-5 rounded-2xl border border-slate-200 hover:border-slate-300 transition-all bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                  >
-                    <div className="space-y-1 max-w-xl">
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <h3 className="text-lg font-bold text-slate-900">
-                          {service.name}
-                        </h3>
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-slate-200/80 text-slate-700">
-                          {service.durationMinutes} mins
-                        </span>
+              {therapist.services.length > 0 ? (
+                <div className="space-y-4">
+                  {therapist.services.map((service) => (
+                    <div
+                      key={service.id}
+                      className="p-5 rounded-2xl border border-slate-200 hover:border-slate-300 transition-all bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                    >
+                      <div className="space-y-1 max-w-xl">
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <h3 className="text-lg font-bold text-slate-900">
+                            {service.name}
+                          </h3>
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-slate-200/80 text-slate-700">
+                            {service.durationMinutes} mins
+                          </span>
+                        </div>
+                        <p className="text-sm text-slate-600 leading-relaxed">
+                          {service.description}
+                        </p>
                       </div>
-                      <p className="text-sm text-slate-600 leading-relaxed">
-                        {service.description}
-                      </p>
-                    </div>
 
-                    <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-200">
-                      <span className="text-xl sm:text-2xl font-extrabold text-slate-900">
-                        ${service.price}
-                      </span>
-                      <Link
-                        href={`/booking?therapist=${therapist.id}&service=${service.id}`}
-                        className="inline-flex items-center justify-center px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-700 text-white hover:bg-emerald-800 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
-                      >
-                        Select
-                      </Link>
+                      <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-200">
+                        <span className="text-xl sm:text-2xl font-extrabold text-slate-900">
+                          ${service.price}
+                        </span>
+                        <Link
+                          href={`/booking?therapist=${therapist.id}&service=${service.id}`}
+                          className="inline-flex items-center justify-center px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-700 text-white hover:bg-emerald-800 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+                        >
+                          Select
+                        </Link>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-6 text-center text-slate-500 text-sm bg-slate-50 rounded-2xl border border-slate-200">
+                  No services currently listed for this therapist.
+                </div>
+              )}
             </section>
 
             {/* Reviews Section */}
@@ -311,9 +315,9 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                 <RatingDisplay rating={therapist.rating} reviewCount={therapist.reviewCount} size="md" />
               </div>
 
-              {allReviews.length > 0 ? (
+              {dbReviewsFormatted.length > 0 ? (
                 <div className="grid grid-cols-1 gap-4">
-                  {allReviews.map((rev) => (
+                  {dbReviewsFormatted.map((rev) => (
                     <ReviewCard
                       key={rev.id}
                       reviewerName={rev.customerName}

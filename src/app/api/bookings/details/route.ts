@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { MOCK_THERAPISTS } from '@/lib/mock-data';
 
 export async function GET(request: Request) {
   try {
@@ -30,11 +29,8 @@ export async function GET(request: Request) {
       );
     }
 
-    const mockTherapist = MOCK_THERAPISTS.find((t) => t.id === booking.therapistId);
-    const mockService = mockTherapist?.services.find((s) => s.id === booking.serviceId);
-
-    const therapistName = booking.therapist?.name || mockTherapist?.name || 'Assigned Therapist';
-    const serviceName = booking.service?.name || mockService?.name || 'Massage Therapy Session';
+    const therapistName = booking.therapist?.name || 'Assigned Therapist';
+    const serviceName = booking.service?.name || 'Massage Therapy Session';
 
     // Strict Privacy boundary: Do NOT return customer name, email, phone, full address, or internal database customer IDs
     return NextResponse.json({

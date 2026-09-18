@@ -3,26 +3,51 @@ import { MockTherapist, TherapistScheduleWindow } from '@/types/customer';
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 /**
- * Parses a time string like "8:00 AM", "7:30 AM", "12:00 PM", "7:00 PM" into minutes from midnight (0..1439).
+ * Interface representing raw TherapistAvailability records from Prisma DB
+ */
+export interface DbAvailabilityRecord {
+  id: string;
+  dayOfWeek: number | null;
+  specificDate: Date | null;
+  startTime: string; // e.g., "09:00" or "9:00 AM"
+  endTime: string;   // e.g., "17:00" or "5:00 PM"
+  isUnavailable: boolean;
+}
+
+/**
+ * Parses a time string like "8:00 AM", "7:30 AM", "12:00 PM", "7:00 PM", or "09:00", "17:30"
+ * into minutes from midnight (0..1439).
  */
 export function parseTimeStringToMinutes(timeStr: string): number {
   const cleanStr = timeStr.trim();
-  const match = cleanStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (!match) {
-    throw new Error(`Invalid time format: ${timeStr}`);
+
+  // Try 12-hour format first (e.g. 8:00 AM)
+  const match12 = cleanStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (match12) {
+    let hours = parseInt(match12[1], 10);
+    const minutes = parseInt(match12[2], 10);
+    const meridian = match12[3].toUpperCase();
+
+    if (meridian === 'PM' && hours < 12) {
+      hours += 12;
+    } else if (meridian === 'AM' && hours === 12) {
+      hours = 0;
+    }
+
+    return hours * 60 + minutes;
   }
 
-  let hours = parseInt(match[1], 10);
-  const minutes = parseInt(match[2], 10);
-  const meridian = match[3].toUpperCase();
-
-  if (meridian === 'PM' && hours < 12) {
-    hours += 12;
-  } else if (meridian === 'AM' && hours === 12) {
-    hours = 0;
+  // Try 24-hour format (e.g. 09:00, 17:30)
+  const match24 = cleanStr.match(/^(\d{1,2}):(\d{2})$/);
+  if (match24) {
+    const hours = parseInt(match24[1], 10);
+    const minutes = parseInt(match24[2], 10);
+    if (hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60) {
+      return hours * 60 + minutes;
+    }
   }
 
-  return hours * 60 + minutes;
+  throw new Error(`Invalid time format: ${timeStr}`);
 }
 
 /**
@@ -73,7 +98,7 @@ export function parseScheduleDays(daysStr: string): number[] {
 }
 
 /**
- * Parses schedule hours like "8:00 AM – 7:00 PM" into start and end minutes from midnight.
+ * Parses schedule hours like "8:00 AM – 7:00 PM" or "08:00 - 19:00" into start and end minutes from midnight.
  */
 export function parseScheduleHours(hoursStr: string): { startMinutes: number; endMinutes: number } | null {
   const normalized = hoursStr.replace(/–|—/g, '-').trim();
@@ -115,6 +140,57 @@ export function getScheduleWindowForDate(
         };
       }
     }
+  }
+
+  return null;
+}
+
+/**
+ * Checks availability against DB records directly (handling specific date exceptions and recurring day of week).
+ */
+export function getDbScheduleWindowForDate(
+  availabilities: DbAvailabilityRecord[],
+  dateStr: string
+): { daysStr: string; hoursStr: string; startMinutes: number; endMinutes: number } | null {
+  const dateObj = new Date(`${dateStr}T00:00:00Z`);
+  if (isNaN(dateObj.getTime())) return null;
+
+  const targetYmd = dateObj.toISOString().split('T')[0];
+  const dayOfWeek = dateObj.getUTCDay();
+
+  // 1. Check specific date match
+  const specificMatch = availabilities.find((a) => {
+    if (!a.specificDate) return false;
+    const specYmd = new Date(a.specificDate).toISOString().split('T')[0];
+    return specYmd === targetYmd;
+  });
+
+  if (specificMatch) {
+    if (specificMatch.isUnavailable) return null;
+    const startMinutes = parseTimeStringToMinutes(specificMatch.startTime);
+    const endMinutes = parseTimeStringToMinutes(specificMatch.endTime);
+    return {
+      daysStr: DAY_NAMES[dayOfWeek],
+      hoursStr: `${specificMatch.startTime} – ${specificMatch.endTime}`,
+      startMinutes,
+      endMinutes,
+    };
+  }
+
+  // 2. Check recurring day of week match
+  const recurringMatch = availabilities.find(
+    (a) => a.dayOfWeek === dayOfWeek && !a.isUnavailable
+  );
+
+  if (recurringMatch) {
+    const startMinutes = parseTimeStringToMinutes(recurringMatch.startTime);
+    const endMinutes = parseTimeStringToMinutes(recurringMatch.endTime);
+    return {
+      daysStr: DAY_NAMES[dayOfWeek],
+      hoursStr: `${recurringMatch.startTime} – ${recurringMatch.endTime}`,
+      startMinutes,
+      endMinutes,
+    };
   }
 
   return null;
