@@ -2,11 +2,15 @@ import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { db } from '@/lib/db';
 import { photoSchema, photoUpdateSchema } from '@/lib/validations/admin-therapist';
+import { verifyAdminApiKey } from '@/lib/admin-guard';
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authError = verifyAdminApiKey(request);
+  if (authError) return authError;
+
   const { id } = await params;
 
   try {
@@ -50,6 +54,9 @@ export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authError = verifyAdminApiKey(request);
+  if (authError) return authError;
+
   const { id } = await params;
 
   try {
@@ -107,6 +114,9 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authError = verifyAdminApiKey(request);
+  if (authError) return authError;
+
   const { id } = await params;
   const { searchParams } = new URL(request.url);
   const photoId = searchParams.get('photoId');

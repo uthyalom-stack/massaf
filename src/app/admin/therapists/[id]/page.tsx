@@ -15,6 +15,7 @@ interface PageProps {
 
 export default async function AdminEditTherapistPage({ params }: PageProps) {
   const { id } = await params;
+  const apiKey = process.env.MASSAF_ADMIN_API_KEY || '';
 
   let therapistData: DetailedTherapist | null = null;
   let availableGlobalServices: Array<{
@@ -111,6 +112,7 @@ export default async function AdminEditTherapistPage({ params }: PageProps) {
     <EditTherapistForm
       initialTherapist={therapistData}
       availableGlobalServices={availableGlobalServices}
+      apiKey={apiKey}
     />
   );
 }

@@ -68,6 +68,7 @@ interface EditTherapistProps {
     durationMinutes: number;
     price: number;
   }>;
+  apiKey: string;
 }
 
 const DAYS_OF_WEEK = [
@@ -83,6 +84,7 @@ const DAYS_OF_WEEK = [
 export function EditTherapistForm({
   initialTherapist,
   availableGlobalServices,
+  apiKey,
 }: EditTherapistProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<
@@ -150,7 +152,10 @@ export function EditTherapistForm({
     try {
       const res = await fetch(`/api/admin/therapists/${therapist.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-api-key': apiKey,
+        },
         body: JSON.stringify({
           name: basicForm.name.trim(),
           email: basicForm.email.trim() || undefined,
@@ -192,7 +197,10 @@ export function EditTherapistForm({
     try {
       const res = await fetch(`/api/admin/therapists/${therapist.id}/photos`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-api-key': apiKey,
+        },
         body: JSON.stringify({
           url: newPhotoUrl.trim(),
           altText: newPhotoAlt.trim() || undefined,
@@ -228,7 +236,10 @@ export function EditTherapistForm({
     try {
       const res = await fetch(`/api/admin/therapists/${therapist.id}/photos`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-api-key': apiKey,
+        },
         body: JSON.stringify({ photoId, sortOrder }),
       });
 
@@ -257,7 +268,12 @@ export function EditTherapistForm({
     try {
       const res = await fetch(
         `/api/admin/therapists/${therapist.id}/photos?photoId=${photoId}`,
-        { method: 'DELETE' }
+        {
+          method: 'DELETE',
+          headers: {
+            'x-admin-api-key': apiKey,
+          },
+        }
       );
 
       if (!res.ok) {
@@ -287,7 +303,10 @@ export function EditTherapistForm({
     try {
       const res = await fetch(`/api/admin/therapists/${therapist.id}/services`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-api-key': apiKey,
+        },
         body: JSON.stringify({
           serviceId: selectedServiceId,
           customPrice: customPrice ? parseFloat(customPrice) : undefined,
@@ -326,7 +345,12 @@ export function EditTherapistForm({
     try {
       const res = await fetch(
         `/api/admin/therapists/${therapist.id}/services?serviceId=${serviceId}`,
-        { method: 'DELETE' }
+        {
+          method: 'DELETE',
+          headers: {
+            'x-admin-api-key': apiKey,
+          },
+        }
       );
 
       if (!res.ok) {
@@ -356,7 +380,10 @@ export function EditTherapistForm({
     try {
       const res = await fetch(`/api/admin/therapists/${therapist.id}/service-areas`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-api-key': apiKey,
+        },
         body: JSON.stringify({
           cityName: cityName.trim(),
           state: stateCode.trim().toUpperCase(),
@@ -393,7 +420,12 @@ export function EditTherapistForm({
     try {
       const res = await fetch(
         `/api/admin/therapists/${therapist.id}/service-areas?areaId=${areaId}`,
-        { method: 'DELETE' }
+        {
+          method: 'DELETE',
+          headers: {
+            'x-admin-api-key': apiKey,
+          },
+        }
       );
 
       if (!res.ok) {
@@ -426,7 +458,10 @@ export function EditTherapistForm({
     try {
       const res = await fetch(`/api/admin/therapists/${therapist.id}/availability`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-api-key': apiKey,
+        },
         body: JSON.stringify({
           dayOfWeek: Number(dayOfWeek),
           startTime,
@@ -472,7 +507,10 @@ export function EditTherapistForm({
     try {
       const res = await fetch(`/api/admin/therapists/${therapist.id}/availability`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-api-key': apiKey,
+        },
         body: JSON.stringify({
           availabilityId: editingAvailability.id,
           dayOfWeek: editingAvailability.dayOfWeek !== null && editingAvailability.dayOfWeek !== undefined
@@ -513,7 +551,12 @@ export function EditTherapistForm({
     try {
       const res = await fetch(
         `/api/admin/therapists/${therapist.id}/availability?availabilityId=${availabilityId}`,
-        { method: 'DELETE' }
+        {
+          method: 'DELETE',
+          headers: {
+            'x-admin-api-key': apiKey,
+          },
+        }
       );
 
       if (!res.ok) {

@@ -25,9 +25,10 @@ export interface AdminTherapistItem {
 
 interface TherapistListProps {
   initialTherapists: AdminTherapistItem[];
+  apiKey: string;
 }
 
-export function TherapistList({ initialTherapists }: TherapistListProps) {
+export function TherapistList({ initialTherapists, apiKey }: TherapistListProps) {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -60,7 +61,10 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
       setTogglingId(id);
       const res = await fetch(`/api/admin/therapists/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-api-key': apiKey,
+        },
         body: JSON.stringify({ isActive: !currentStatus }),
       });
 

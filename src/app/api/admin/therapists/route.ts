@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { db } from '@/lib/db';
 import { therapistBaseSchema } from '@/lib/validations/admin-therapist';
+import { verifyAdminApiKey } from '@/lib/admin-guard';
 
 export async function GET() {
   try {
@@ -28,6 +29,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const authError = verifyAdminApiKey(request);
+  if (authError) return authError;
+
   try {
     const body = await request.json();
     const validated = therapistBaseSchema.parse(body);

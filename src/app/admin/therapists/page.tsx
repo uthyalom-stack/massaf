@@ -11,6 +11,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function AdminTherapistsPage() {
   let initialTherapists: AdminTherapistItem[] = [];
+  const apiKey = process.env.MASSAF_ADMIN_API_KEY || '';
 
   try {
     const dbTherapists = await db.therapist.findMany({
@@ -77,7 +78,7 @@ export default async function AdminTherapistsPage() {
       </div>
 
       {/* Main List */}
-      <TherapistList initialTherapists={initialTherapists} />
+      <TherapistList initialTherapists={initialTherapists} apiKey={apiKey} />
     </div>
   );
 }
