@@ -87,41 +87,6 @@ function isValidReviewStatusTransition(currentStatus: ReviewStatus, newStatus: R
   return ['PENDING', 'APPROVED', 'REJECTED'].includes(newStatus);
 }
 
-/**
- * Recalculates therapist's aggregate rating and reviewCount based on approved/published reviews in DB.
- */
-async function syncTherapistRating(therapistId: string) {
-  try {
-    const approvedReviews = await db.review.findMany({
-      where: {
-        therapistId,
-        status: 'APPROVED',
-        isPublished: true,
-      },
-      select: {
-        rating: true,
-      },
-    });
-
-    const count = approvedReviews.length;
-    let avgRating = 0;
-    if (count > 0) {
-      const sum = approvedReviews.reduce((acc, r) => acc + r.rating, 0);
-      avgRating = Math.round((sum / count) * 10) / 10;
-    }
-
-    await db.therapist.update({
-      where: { id: therapistId },
-      data: {
-        rating: avgRating,
-        reviewCount: count,
-      },
-    });
-  } catch (err) {
-    console.error(`Failed to sync therapist rating for ${therapistId}:`, err);
-  }
-}
-
 export async function updateReviewStatusAction(input: unknown) {
   try {
     checkServerAdminAuth();
@@ -144,18 +109,46 @@ export async function updateReviewStatusAction(input: unknown) {
 
     const isPublished = validated.status === 'APPROVED';
 
-    const updated = await db.review.update({
-      where: { id: validated.reviewId },
-      data: {
-        status: validated.status,
-        isPublished,
-      },
-    });
+    // Execute review status update and therapist rating aggregate update in a transaction so both succeed or fail together
+    const updated = await db.$transaction(async (tx) => {
+      const updatedReview = await tx.review.update({
+        where: { id: validated.reviewId },
+        data: {
+          status: validated.status,
+          isPublished,
+        },
+      });
 
-    // Sync therapist aggregate rating & reviewCount
-    if (review.therapistId) {
-      await syncTherapistRating(review.therapistId);
-    }
+      if (review.therapistId) {
+        const approvedReviews = await tx.review.findMany({
+          where: {
+            therapistId: review.therapistId,
+            status: 'APPROVED',
+            isPublished: true,
+          },
+          select: {
+            rating: true,
+          },
+        });
+
+        const count = approvedReviews.length;
+        let avgRating = 0;
+        if (count > 0) {
+          const sum = approvedReviews.reduce((acc, r) => acc + r.rating, 0);
+          avgRating = Math.round((sum / count) * 10) / 10;
+        }
+
+        await tx.therapist.update({
+          where: { id: review.therapistId },
+          data: {
+            rating: avgRating,
+            reviewCount: count,
+          },
+        });
+      }
+
+      return updatedReview;
+    });
 
     safeRevalidatePath('/admin');
     safeRevalidatePath('/admin/reviews');

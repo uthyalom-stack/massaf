@@ -83,7 +83,7 @@ export default async function AdminReviewDetailPage({ params }: PageProps) {
               appointmentDateTime: rawReview.booking.appointmentDateTime.toISOString(),
               locationType: rawReview.booking.locationType,
               status: rawReview.booking.status,
-              serviceName: rawReview.booking.service?.name || 'Massage Session',
+              serviceName: rawReview.booking.service?.name || 'Service unavailable',
               durationMinutes: rawReview.booking.durationMinutes,
             }
           : null,

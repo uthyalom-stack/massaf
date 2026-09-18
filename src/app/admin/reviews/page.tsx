@@ -128,7 +128,7 @@ export default async function AdminReviewsPage({ searchParams }: PageProps) {
             id: rev.booking.id,
             bookingNumber: rev.booking.bookingNumber,
             appointmentDateTime: rev.booking.appointmentDateTime.toISOString(),
-            serviceName: rev.booking.service?.name || 'Massage Session',
+            serviceName: rev.booking.service?.name || 'Service unavailable',
           }
         : null,
     }));
