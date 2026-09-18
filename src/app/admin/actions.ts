@@ -15,7 +15,8 @@ import {
   assignBookingTherapistSchema,
   cancelBookingSchema,
 } from '@/lib/validations/admin-booking';
-import { BookingStatus } from '@prisma/client';
+import { updateReviewStatusSchema } from '@/lib/validations/admin-review';
+import { BookingStatus, ReviewStatus } from '@prisma/client';
 import { revalidatePath } from 'next/cache';
 
 /**
@@ -71,6 +72,104 @@ export async function createTherapistAction(input: unknown) {
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to create therapist record.',
+    };
+  }
+}
+
+// --- Reviews Moderation ---
+
+/**
+ * Validates whether a transition between ReviewStatus values is permissible.
+ */
+function isValidReviewStatusTransition(currentStatus: ReviewStatus, newStatus: ReviewStatus): boolean {
+  if (currentStatus === newStatus) return true;
+  // All transitions between PENDING, APPROVED, and REJECTED are valid for admin moderation
+  return ['PENDING', 'APPROVED', 'REJECTED'].includes(newStatus);
+}
+
+/**
+ * Recalculates therapist's aggregate rating and reviewCount based on approved/published reviews in DB.
+ */
+async function syncTherapistRating(therapistId: string) {
+  try {
+    const approvedReviews = await db.review.findMany({
+      where: {
+        therapistId,
+        status: 'APPROVED',
+        isPublished: true,
+      },
+      select: {
+        rating: true,
+      },
+    });
+
+    const count = approvedReviews.length;
+    let avgRating = 0;
+    if (count > 0) {
+      const sum = approvedReviews.reduce((acc, r) => acc + r.rating, 0);
+      avgRating = Math.round((sum / count) * 10) / 10;
+    }
+
+    await db.therapist.update({
+      where: { id: therapistId },
+      data: {
+        rating: avgRating,
+        reviewCount: count,
+      },
+    });
+  } catch (err) {
+    console.error(`Failed to sync therapist rating for ${therapistId}:`, err);
+  }
+}
+
+export async function updateReviewStatusAction(input: unknown) {
+  try {
+    checkServerAdminAuth();
+    const validated = updateReviewStatusSchema.parse(input);
+
+    const review = await db.review.findUnique({
+      where: { id: validated.reviewId },
+    });
+
+    if (!review) {
+      return { success: false, error: 'Review not found.' };
+    }
+
+    if (!isValidReviewStatusTransition(review.status, validated.status)) {
+      return {
+        success: false,
+        error: `This review cannot be moved to status '${validated.status}'.`,
+      };
+    }
+
+    const isPublished = validated.status === 'APPROVED';
+
+    const updated = await db.review.update({
+      where: { id: validated.reviewId },
+      data: {
+        status: validated.status,
+        isPublished,
+      },
+    });
+
+    // Sync therapist aggregate rating & reviewCount
+    if (review.therapistId) {
+      await syncTherapistRating(review.therapistId);
+    }
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/reviews');
+    safeRevalidatePath(`/admin/reviews/${validated.reviewId}`);
+    if (review.therapistId) {
+      safeRevalidatePath(`/therapists/${review.therapistId}`);
+    }
+
+    return { success: true, review: updated };
+  } catch (err: unknown) {
+    console.error('Error in updateReviewStatusAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Unable to update review status. Please try again.',
     };
   }
 }
