@@ -6,6 +6,5 @@ export const metadata = {
 };
 
 export default function AddTherapistPage() {
-  const apiKey = process.env.MASSAF_ADMIN_API_KEY || '';
-  return <AddTherapistForm apiKey={apiKey} />;
+  return <AddTherapistForm />;
 }

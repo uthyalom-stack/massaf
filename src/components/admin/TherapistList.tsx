@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { toggleTherapistActiveAction } from '@/app/admin/actions';
 
 export interface AdminTherapistItem {
   id: string;
@@ -25,10 +26,9 @@ export interface AdminTherapistItem {
 
 interface TherapistListProps {
   initialTherapists: AdminTherapistItem[];
-  apiKey: string;
 }
 
-export function TherapistList({ initialTherapists, apiKey }: TherapistListProps) {
+export function TherapistList({ initialTherapists }: TherapistListProps) {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -59,18 +59,10 @@ export function TherapistList({ initialTherapists, apiKey }: TherapistListProps)
   const handleToggleActive = async (id: string, currentStatus: boolean) => {
     try {
       setTogglingId(id);
-      const res = await fetch(`/api/admin/therapists/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-api-key': apiKey,
-        },
-        body: JSON.stringify({ isActive: !currentStatus }),
-      });
+      const res = await toggleTherapistActiveAction(id, !currentStatus);
 
-      if (!res.ok) {
-        const errorData = await res.json();
-        alert(errorData.error || 'Failed to update therapist status');
+      if (!res.success) {
+        alert(res.error || 'Failed to update therapist status');
         return;
       }
 

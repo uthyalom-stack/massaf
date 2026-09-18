@@ -4,7 +4,10 @@ import { db } from '@/lib/db';
 import { therapistBaseSchema } from '@/lib/validations/admin-therapist';
 import { verifyAdminApiKey } from '@/lib/admin-guard';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const authError = verifyAdminApiKey(request);
+  if (authError) return authError;
+
   try {
     const therapists = await db.therapist.findMany({
       orderBy: { createdAt: 'desc' },
@@ -36,7 +39,6 @@ export async function POST(request: Request) {
     const body = await request.json();
     const validated = therapistBaseSchema.parse(body);
 
-    // Check for duplicate email if email is provided
     if (validated.email) {
       const existing = await db.therapist.findUnique({
         where: { email: validated.email },

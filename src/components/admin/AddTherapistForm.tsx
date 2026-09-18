@@ -3,12 +3,9 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { createTherapistAction } from '@/app/admin/actions';
 
-interface AddTherapistFormProps {
-  apiKey: string;
-}
-
-export function AddTherapistForm({ apiKey }: AddTherapistFormProps) {
+export function AddTherapistForm() {
   const router = useRouter();
   const [formData, setFormData] = useState({
     name: '',
@@ -36,34 +33,27 @@ export function AddTherapistForm({ apiKey }: AddTherapistFormProps) {
 
     try {
       setSubmitting(true);
-      const res = await fetch('/api/admin/therapists', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          name: formData.name.trim(),
-          email: formData.email.trim() || undefined,
-          phone: formData.phone.trim() || undefined,
-          profileImage: formData.profileImage.trim() || undefined,
-          bio: formData.bio.trim() || undefined,
-          isActive: formData.isActive,
-          isFeatured: formData.isFeatured,
-          offersStudio: formData.offersStudio,
-          offersInHome: formData.offersInHome,
-        }),
+      const res = await createTherapistAction({
+        name: formData.name.trim(),
+        email: formData.email.trim() || undefined,
+        phone: formData.phone.trim() || undefined,
+        profileImage: formData.profileImage.trim() || undefined,
+        bio: formData.bio.trim() || undefined,
+        isActive: formData.isActive,
+        isFeatured: formData.isFeatured,
+        offersStudio: formData.offersStudio,
+        offersInHome: formData.offersInHome,
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setErrorMessage(data.error || 'Failed to create therapist profile.');
+      if (!res.success) {
+        setErrorMessage(res.error || 'Failed to create therapist profile.');
         return;
       }
 
       // Redirect to edit page of newly created therapist
-      router.push(`/admin/therapists/${data.therapist.id}?created=true`);
+      if (res.therapist?.id) {
+        router.push(`/admin/therapists/${res.therapist.id}?created=true`);
+      }
     } catch (err) {
       console.error('Error submitting form:', err);
       setErrorMessage('An unexpected network error occurred.');

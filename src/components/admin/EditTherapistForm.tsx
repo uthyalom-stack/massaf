@@ -3,6 +3,19 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import {
+  updateTherapistAction,
+  addTherapistPhotoAction,
+  updateTherapistPhotoOrderAction,
+  removeTherapistPhotoAction,
+  assignTherapistServiceAction,
+  removeTherapistServiceAction,
+  addServiceAreaAction,
+  removeServiceAreaAction,
+  addTherapistAvailabilityAction,
+  updateTherapistAvailabilityAction,
+  removeTherapistAvailabilityAction,
+} from '@/app/admin/actions';
 
 export interface PhotoData {
   id: string;
@@ -68,7 +81,6 @@ interface EditTherapistProps {
     durationMinutes: number;
     price: number;
   }>;
-  apiKey: string;
 }
 
 const DAYS_OF_WEEK = [
@@ -84,7 +96,6 @@ const DAYS_OF_WEEK = [
 export function EditTherapistForm({
   initialTherapist,
   availableGlobalServices,
-  apiKey,
 }: EditTherapistProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<
@@ -150,32 +161,26 @@ export function EditTherapistForm({
     setBasicMsg(null);
 
     try {
-      const res = await fetch(`/api/admin/therapists/${therapist.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          name: basicForm.name.trim(),
-          email: basicForm.email.trim() || undefined,
-          phone: basicForm.phone.trim() || undefined,
-          profileImage: basicForm.profileImage.trim() || undefined,
-          bio: basicForm.bio.trim() || undefined,
-          isActive: basicForm.isActive,
-          isFeatured: basicForm.isFeatured,
-          offersStudio: basicForm.offersStudio,
-          offersInHome: basicForm.offersInHome,
-        }),
+      const res = await updateTherapistAction(therapist.id, {
+        name: basicForm.name.trim(),
+        email: basicForm.email.trim() || undefined,
+        phone: basicForm.phone.trim() || undefined,
+        profileImage: basicForm.profileImage.trim() || undefined,
+        bio: basicForm.bio.trim() || undefined,
+        isActive: basicForm.isActive,
+        isFeatured: basicForm.isFeatured,
+        offersStudio: basicForm.offersStudio,
+        offersInHome: basicForm.offersInHome,
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        setBasicMsg({ type: 'error', text: data.error || 'Failed to update therapist' });
+      if (!res.success) {
+        setBasicMsg({ type: 'error', text: res.error || 'Failed to update therapist' });
         return;
       }
 
-      setTherapist((prev) => ({ ...prev, ...data.therapist }));
+      if (res.therapist) {
+        setTherapist((prev) => ({ ...prev, ...res.therapist }));
+      }
       setBasicMsg({ type: 'success', text: 'Basic details updated successfully!' });
       router.refresh();
     } catch (err) {
@@ -195,29 +200,29 @@ export function EditTherapistForm({
     setPhotoMsg(null);
 
     try {
-      const res = await fetch(`/api/admin/therapists/${therapist.id}/photos`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          url: newPhotoUrl.trim(),
-          altText: newPhotoAlt.trim() || undefined,
-          sortOrder: therapist.photos.length,
-        }),
+      const res = await addTherapistPhotoAction(therapist.id, {
+        url: newPhotoUrl.trim(),
+        altText: newPhotoAlt.trim() || undefined,
+        sortOrder: therapist.photos.length,
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        setPhotoMsg({ type: 'error', text: data.error || 'Failed to add photo' });
+      if (!res.success) {
+        setPhotoMsg({ type: 'error', text: res.error || 'Failed to add photo' });
         return;
       }
 
-      setTherapist((prev) => ({
-        ...prev,
-        photos: [...prev.photos, data.photo].sort((a, b) => a.sortOrder - b.sortOrder),
-      }));
+      if (res.photo) {
+        const addedPhoto: PhotoData = {
+          id: res.photo.id,
+          url: res.photo.url,
+          altText: res.photo.altText,
+          sortOrder: res.photo.sortOrder,
+        };
+        setTherapist((prev) => ({
+          ...prev,
+          photos: [...prev.photos, addedPhoto].sort((a, b) => a.sortOrder - b.sortOrder),
+        }));
+      }
 
       setNewPhotoUrl('');
       setNewPhotoAlt('');
@@ -234,27 +239,22 @@ export function EditTherapistForm({
   // Update Photo Sort Order
   const handleUpdatePhotoOrder = async (photoId: string, sortOrder: number) => {
     try {
-      const res = await fetch(`/api/admin/therapists/${therapist.id}/photos`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-api-key': apiKey,
-        },
-        body: JSON.stringify({ photoId, sortOrder }),
-      });
+      const res = await updateTherapistPhotoOrderAction(therapist.id, { photoId, sortOrder });
 
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to update photo order');
+      if (!res.success) {
+        alert(res.error || 'Failed to update photo order');
         return;
       }
 
-      setTherapist((prev) => ({
-        ...prev,
-        photos: prev.photos
-          .map((p) => (p.id === photoId ? { ...p, sortOrder: data.photo.sortOrder } : p))
-          .sort((a, b) => a.sortOrder - b.sortOrder),
-      }));
+      if (res.photo) {
+        const updatedSortOrder = res.photo.sortOrder;
+        setTherapist((prev) => ({
+          ...prev,
+          photos: prev.photos
+            .map((p) => (p.id === photoId ? { ...p, sortOrder: updatedSortOrder } : p))
+            .sort((a, b) => a.sortOrder - b.sortOrder),
+        }));
+      }
 
       setEditingPhotoId(null);
       router.refresh();
@@ -266,19 +266,10 @@ export function EditTherapistForm({
   // Remove Photo
   const handleRemovePhoto = async (photoId: string) => {
     try {
-      const res = await fetch(
-        `/api/admin/therapists/${therapist.id}/photos?photoId=${photoId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'x-admin-api-key': apiKey,
-          },
-        }
-      );
+      const res = await removeTherapistPhotoAction(therapist.id, photoId);
 
-      if (!res.ok) {
-        const data = await res.json();
-        alert(data.error || 'Failed to delete photo');
+      if (!res.success) {
+        alert(res.error || 'Failed to delete photo');
         return;
       }
 
@@ -301,32 +292,39 @@ export function EditTherapistForm({
     setServiceMsg(null);
 
     try {
-      const res = await fetch(`/api/admin/therapists/${therapist.id}/services`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          serviceId: selectedServiceId,
-          customPrice: customPrice ? parseFloat(customPrice) : undefined,
-          isActive: true,
-        }),
+      const res = await assignTherapistServiceAction(therapist.id, {
+        serviceId: selectedServiceId,
+        customPrice: customPrice ? parseFloat(customPrice) : undefined,
+        isActive: true,
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        setServiceMsg({ type: 'error', text: data.error || 'Failed to assign service' });
+      if (!res.success) {
+        setServiceMsg({ type: 'error', text: res.error || 'Failed to assign service' });
         return;
       }
 
-      setTherapist((prev) => {
-        const filtered = prev.services.filter((s) => s.serviceId !== selectedServiceId);
-        return {
-          ...prev,
-          services: [...filtered, data.therapistService],
+      if (res.therapistService) {
+        const ts: ServiceData = {
+          id: res.therapistService.id,
+          serviceId: res.therapistService.serviceId,
+          customPrice: res.therapistService.customPrice,
+          customDurationMinutes: res.therapistService.customDurationMinutes,
+          isActive: res.therapistService.isActive,
+          service: {
+            id: res.therapistService.service.id,
+            name: res.therapistService.service.name,
+            durationMinutes: res.therapistService.service.durationMinutes,
+            price: res.therapistService.service.price,
+          },
         };
-      });
+        setTherapist((prev) => {
+          const filtered = prev.services.filter((s) => s.serviceId !== selectedServiceId);
+          return {
+            ...prev,
+            services: [...filtered, ts],
+          };
+        });
+      }
 
       setSelectedServiceId('');
       setCustomPrice('');
@@ -343,19 +341,10 @@ export function EditTherapistForm({
   // Remove Service Assignment
   const handleRemoveService = async (serviceId: string) => {
     try {
-      const res = await fetch(
-        `/api/admin/therapists/${therapist.id}/services?serviceId=${serviceId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'x-admin-api-key': apiKey,
-          },
-        }
-      );
+      const res = await removeTherapistServiceAction(therapist.id, serviceId);
 
-      if (!res.ok) {
-        const data = await res.json();
-        alert(data.error || 'Failed to remove service');
+      if (!res.success) {
+        alert(res.error || 'Failed to remove service');
         return;
       }
 
@@ -378,29 +367,29 @@ export function EditTherapistForm({
     setAreaMsg(null);
 
     try {
-      const res = await fetch(`/api/admin/therapists/${therapist.id}/service-areas`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          cityName: cityName.trim(),
-          state: stateCode.trim().toUpperCase(),
-          zipCode: zipCode.trim(),
-        }),
+      const res = await addServiceAreaAction(therapist.id, {
+        cityName: cityName.trim(),
+        state: stateCode.trim().toUpperCase(),
+        zipCode: zipCode.trim(),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        setAreaMsg({ type: 'error', text: data.error || 'Failed to add service area' });
+      if (!res.success) {
+        setAreaMsg({ type: 'error', text: res.error || 'Failed to add service area' });
         return;
       }
 
-      setTherapist((prev) => ({
-        ...prev,
-        serviceAreas: [...prev.serviceAreas, data.serviceArea],
-      }));
+      if (res.serviceArea) {
+        const sa: ServiceAreaData = {
+          id: res.serviceArea.id,
+          cityName: res.serviceArea.cityName,
+          state: res.serviceArea.state,
+          zipCode: res.serviceArea.zipCode,
+        };
+        setTherapist((prev) => ({
+          ...prev,
+          serviceAreas: [...prev.serviceAreas, sa],
+        }));
+      }
 
       setCityName('');
       setStateCode('');
@@ -418,19 +407,10 @@ export function EditTherapistForm({
   // Remove Service Area
   const handleRemoveArea = async (areaId: string) => {
     try {
-      const res = await fetch(
-        `/api/admin/therapists/${therapist.id}/service-areas?areaId=${areaId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'x-admin-api-key': apiKey,
-          },
-        }
-      );
+      const res = await removeServiceAreaAction(therapist.id, areaId);
 
-      if (!res.ok) {
-        const data = await res.json();
-        alert(data.error || 'Failed to remove area');
+      if (!res.success) {
+        alert(res.error || 'Failed to remove area');
         return;
       }
 
@@ -456,30 +436,32 @@ export function EditTherapistForm({
     setAvailabilityMsg(null);
 
     try {
-      const res = await fetch(`/api/admin/therapists/${therapist.id}/availability`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          dayOfWeek: Number(dayOfWeek),
-          startTime,
-          endTime,
-          isUnavailable: false,
-        }),
+      const res = await addTherapistAvailabilityAction(therapist.id, {
+        dayOfWeek: Number(dayOfWeek),
+        startTime,
+        endTime,
+        isUnavailable: false,
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        setAvailabilityMsg({ type: 'error', text: data.error || 'Failed to add availability' });
+      if (!res.success) {
+        setAvailabilityMsg({ type: 'error', text: res.error || 'Failed to add availability' });
         return;
       }
 
-      setTherapist((prev) => ({
-        ...prev,
-        availabilities: [...prev.availabilities, data.availability],
-      }));
+      if (res.availability) {
+        const av: AvailabilityData = {
+          id: res.availability.id,
+          dayOfWeek: res.availability.dayOfWeek,
+          specificDate: res.availability.specificDate ? res.availability.specificDate.toISOString() : null,
+          startTime: res.availability.startTime,
+          endTime: res.availability.endTime,
+          isUnavailable: res.availability.isUnavailable,
+        };
+        setTherapist((prev) => ({
+          ...prev,
+          availabilities: [...prev.availabilities, av],
+        }));
+      }
 
       setAvailabilityMsg({ type: 'success', text: 'Availability rule added!' });
       router.refresh();
@@ -505,35 +487,37 @@ export function EditTherapistForm({
     setAvailabilityMsg(null);
 
     try {
-      const res = await fetch(`/api/admin/therapists/${therapist.id}/availability`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          availabilityId: editingAvailability.id,
-          dayOfWeek: editingAvailability.dayOfWeek !== null && editingAvailability.dayOfWeek !== undefined
-            ? Number(editingAvailability.dayOfWeek)
-            : null,
-          startTime: editingAvailability.startTime,
-          endTime: editingAvailability.endTime,
-          isUnavailable: editingAvailability.isUnavailable,
-        }),
+      const res = await updateTherapistAvailabilityAction(therapist.id, {
+        availabilityId: editingAvailability.id,
+        dayOfWeek: editingAvailability.dayOfWeek !== null && editingAvailability.dayOfWeek !== undefined
+          ? Number(editingAvailability.dayOfWeek)
+          : null,
+        startTime: editingAvailability.startTime,
+        endTime: editingAvailability.endTime,
+        isUnavailable: editingAvailability.isUnavailable,
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        setAvailabilityMsg({ type: 'error', text: data.error || 'Failed to update availability entry' });
+      if (!res.success) {
+        setAvailabilityMsg({ type: 'error', text: res.error || 'Failed to update availability entry' });
         return;
       }
 
-      setTherapist((prev) => ({
-        ...prev,
-        availabilities: prev.availabilities.map((a) =>
-          a.id === editingAvailability.id ? data.availability : a
-        ),
-      }));
+      if (res.availability) {
+        const updatedAv: AvailabilityData = {
+          id: res.availability.id,
+          dayOfWeek: res.availability.dayOfWeek,
+          specificDate: res.availability.specificDate ? res.availability.specificDate.toISOString() : null,
+          startTime: res.availability.startTime,
+          endTime: res.availability.endTime,
+          isUnavailable: res.availability.isUnavailable,
+        };
+        setTherapist((prev) => ({
+          ...prev,
+          availabilities: prev.availabilities.map((a) =>
+            a.id === editingAvailability.id ? updatedAv : a
+          ),
+        }));
+      }
 
       setEditingAvailability(null);
       setAvailabilityMsg({ type: 'success', text: 'Availability rule updated!' });
@@ -549,19 +533,10 @@ export function EditTherapistForm({
   // Remove Availability
   const handleRemoveAvailability = async (availabilityId: string) => {
     try {
-      const res = await fetch(
-        `/api/admin/therapists/${therapist.id}/availability?availabilityId=${availabilityId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'x-admin-api-key': apiKey,
-          },
-        }
-      );
+      const res = await removeTherapistAvailabilityAction(therapist.id, availabilityId);
 
-      if (!res.ok) {
-        const data = await res.json();
-        alert(data.error || 'Failed to remove schedule entry');
+      if (!res.success) {
+        alert(res.error || 'Failed to remove schedule entry');
         return;
       }
 

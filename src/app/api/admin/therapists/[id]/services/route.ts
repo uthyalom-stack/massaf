@@ -4,7 +4,10 @@ import { db } from '@/lib/db';
 import { therapistServiceSchema } from '@/lib/validations/admin-therapist';
 import { verifyAdminApiKey } from '@/lib/admin-guard';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const authError = verifyAdminApiKey(request);
+  if (authError) return authError;
+
   try {
     const services = await db.service.findMany({
       where: { isActive: true },
