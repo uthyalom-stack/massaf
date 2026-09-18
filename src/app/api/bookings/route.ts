@@ -268,6 +268,19 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     console.error('Error creating booking:', error);
+
+    // Explicitly catch transaction write conflicts / busy lock exceptions from SQLite/libSQL/Prisma (e.g., P2034)
+    const errorMsg = error instanceof Error ? error.message.toLowerCase() : '';
+    const isPrismaConflict = typeof error === 'object' && error !== null && 'code' in error && (error as { code: string }).code === 'P2034';
+    const isSqliteBusy = errorMsg.includes('sqlite_busy') || errorMsg.includes('busy') || errorMsg.includes('locked') || errorMsg.includes('write conflict') || errorMsg.includes('transaction failed');
+
+    if (isPrismaConflict || isSqliteBusy) {
+      return NextResponse.json(
+        { error: 'That appointment time is no longer available. Please choose another time.' },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json(
       { error: 'An unexpected error occurred while processing your booking. Please try again.' },
       { status: 500 }
