@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { db } from '@/lib/db';
-import { photoSchema } from '@/lib/validations/admin-therapist';
+import { photoSchema, photoUpdateSchema } from '@/lib/validations/admin-therapist';
 
 export async function POST(
   request: Request,
@@ -41,6 +41,63 @@ export async function POST(
     console.error('Error adding therapist photo API:', error);
     return NextResponse.json(
       { success: false, error: 'Failed to add photo' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+
+  try {
+    const therapist = await db.therapist.findUnique({ where: { id } });
+    if (!therapist) {
+      return NextResponse.json(
+        { success: false, error: 'Therapist not found' },
+        { status: 404 }
+      );
+    }
+
+    const body = await request.json();
+    const validated = photoUpdateSchema.parse(body);
+
+    const existingPhoto = await db.therapistPhoto.findFirst({
+      where: {
+        id: validated.photoId,
+        therapistId: id,
+      },
+    });
+
+    if (!existingPhoto) {
+      return NextResponse.json(
+        { success: false, error: 'Photo not found for this therapist' },
+        { status: 404 }
+      );
+    }
+
+    const updated = await db.therapistPhoto.update({
+      where: { id: validated.photoId },
+      data: {
+        sortOrder: validated.sortOrder !== undefined ? validated.sortOrder : existingPhoto.sortOrder,
+        altText: validated.altText !== undefined ? (validated.altText || null) : existingPhoto.altText,
+        url: validated.url !== undefined ? validated.url : existingPhoto.url,
+      },
+    });
+
+    return NextResponse.json({ success: true, photo: updated });
+  } catch (error: unknown) {
+    if (error instanceof ZodError) {
+      return NextResponse.json(
+        { success: false, error: 'Validation failed', details: error.issues },
+        { status: 400 }
+      );
+    }
+    console.error('Error updating therapist photo API:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to update photo' },
       { status: 500 }
     );
   }

@@ -22,6 +22,15 @@ export const photoSchema = z.object({
 
 export type PhotoInput = z.infer<typeof photoSchema>;
 
+export const photoUpdateSchema = z.object({
+  photoId: z.string().min(1, 'photoId is required'),
+  url: z.string().url('Must be a valid photo URL').optional(),
+  altText: z.string().optional().nullable(),
+  sortOrder: z.number().int().optional(),
+});
+
+export type PhotoUpdateInput = z.infer<typeof photoUpdateSchema>;
+
 export const therapistServiceSchema = z.object({
   serviceId: z.string().min(1, 'Service selection is required'),
   customPrice: z.number().positive('Price must be positive').optional().nullable(),
@@ -58,3 +67,22 @@ export const availabilitySchema = z.object({
 });
 
 export type AvailabilityInput = z.infer<typeof availabilitySchema>;
+
+export const availabilityUpdateSchema = z.object({
+  availabilityId: z.string().min(1, 'availabilityId is required'),
+  dayOfWeek: z.number().int().min(0).max(6).optional().nullable(),
+  specificDate: z.string().optional().nullable(),
+  startTime: z.string().regex(timeFormatRegex, 'Start time must be in HH:mm format (e.g. 09:00)'),
+  endTime: z.string().regex(timeFormatRegex, 'End time must be in HH:mm format (e.g. 17:00)'),
+  isUnavailable: z.boolean().default(false),
+}).refine((data) => {
+  if (data.startTime && data.endTime) {
+    return data.startTime < data.endTime;
+  }
+  return true;
+}, {
+  message: 'Start time must be strictly before end time',
+  path: ['endTime'],
+});
+
+export type AvailabilityUpdateInput = z.infer<typeof availabilityUpdateSchema>;

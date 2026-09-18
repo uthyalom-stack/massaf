@@ -21,6 +21,22 @@ export async function POST(
     const body = await request.json();
     const validated = serviceAreaSchema.parse(body);
 
+    const existingArea = await db.serviceArea.findFirst({
+      where: {
+        therapistId: id,
+        cityName: { equals: validated.cityName },
+        state: { equals: validated.state },
+        zipCode: { equals: validated.zipCode },
+      },
+    });
+
+    if (existingArea) {
+      return NextResponse.json(
+        { success: false, error: 'Service coverage area already exists for this therapist' },
+        { status: 409 }
+      );
+    }
+
     const serviceArea = await db.serviceArea.create({
       data: {
         therapistId: id,

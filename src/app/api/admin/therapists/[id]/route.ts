@@ -105,11 +105,33 @@ export async function DELETE(
   const { id } = await params;
 
   try {
-    const therapist = await db.therapist.findUnique({ where: { id } });
+    const therapist = await db.therapist.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            bookings: true,
+            reviews: true,
+          },
+        },
+      },
+    });
+
     if (!therapist) {
       return NextResponse.json(
         { success: false, error: 'Therapist not found' },
         { status: 404 }
+      );
+    }
+
+    // Safety check: Prevent deletion if therapist has associated bookings or reviews
+    if (therapist._count.bookings > 0 || therapist._count.reviews > 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Cannot delete therapist with active records (${therapist._count.bookings} booking(s), ${therapist._count.reviews} review(s)). Consider deactivating instead.`,
+        },
+        { status: 400 }
       );
     }
 

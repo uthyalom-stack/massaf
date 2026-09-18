@@ -112,6 +112,10 @@ export function EditTherapistForm({
   const [photoSaving, setPhotoSaving] = useState(false);
   const [photoMsg, setPhotoMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // State for Editing Photo Order
+  const [editingPhotoId, setEditingPhotoId] = useState<string | null>(null);
+  const [editingPhotoSortOrder, setEditingPhotoAltSortOrder] = useState<number>(0);
+
   // State for Service Assignment
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const [customPrice, setCustomPrice] = useState('');
@@ -125,12 +129,15 @@ export function EditTherapistForm({
   const [areaSaving, setAreaSaving] = useState(false);
   const [areaMsg, setAreaMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // State for Availability
+  // State for Availability Add
   const [dayOfWeek, setDayOfWeek] = useState<number>(1); // Monday default
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('17:00');
   const [availabilitySaving, setAvailabilitySaving] = useState(false);
   const [availabilityMsg, setAvailabilityMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // State for Editing Availability
+  const [editingAvailability, setEditingAvailability] = useState<AvailabilityData | null>(null);
 
   // --- Handlers --- //
 
@@ -201,7 +208,7 @@ export function EditTherapistForm({
 
       setTherapist((prev) => ({
         ...prev,
-        photos: [...prev.photos, data.photo],
+        photos: [...prev.photos, data.photo].sort((a, b) => a.sortOrder - b.sortOrder),
       }));
 
       setNewPhotoUrl('');
@@ -213,6 +220,35 @@ export function EditTherapistForm({
       setPhotoMsg({ type: 'error', text: 'An unexpected error occurred.' });
     } finally {
       setPhotoSaving(false);
+    }
+  };
+
+  // Update Photo Sort Order
+  const handleUpdatePhotoOrder = async (photoId: string, sortOrder: number) => {
+    try {
+      const res = await fetch(`/api/admin/therapists/${therapist.id}/photos`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photoId, sortOrder }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to update photo order');
+        return;
+      }
+
+      setTherapist((prev) => ({
+        ...prev,
+        photos: prev.photos
+          .map((p) => (p.id === photoId ? { ...p, sortOrder: data.photo.sortOrder } : p))
+          .sort((a, b) => a.sortOrder - b.sortOrder),
+      }));
+
+      setEditingPhotoId(null);
+      router.refresh();
+    } catch (err) {
+      console.error('Error updating photo order:', err);
     }
   };
 
@@ -414,6 +450,58 @@ export function EditTherapistForm({
       router.refresh();
     } catch (err) {
       console.error('Error adding availability:', err);
+      setAvailabilityMsg({ type: 'error', text: 'An unexpected error occurred.' });
+    } finally {
+      setAvailabilitySaving(false);
+    }
+  };
+
+  // Save Edited Availability
+  const handleSaveAvailabilityEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAvailability) return;
+
+    if (editingAvailability.startTime >= editingAvailability.endTime) {
+      setAvailabilityMsg({ type: 'error', text: 'Start time must be strictly before end time.' });
+      return;
+    }
+
+    setAvailabilitySaving(true);
+    setAvailabilityMsg(null);
+
+    try {
+      const res = await fetch(`/api/admin/therapists/${therapist.id}/availability`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          availabilityId: editingAvailability.id,
+          dayOfWeek: editingAvailability.dayOfWeek !== null && editingAvailability.dayOfWeek !== undefined
+            ? Number(editingAvailability.dayOfWeek)
+            : null,
+          startTime: editingAvailability.startTime,
+          endTime: editingAvailability.endTime,
+          isUnavailable: editingAvailability.isUnavailable,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setAvailabilityMsg({ type: 'error', text: data.error || 'Failed to update availability entry' });
+        return;
+      }
+
+      setTherapist((prev) => ({
+        ...prev,
+        availabilities: prev.availabilities.map((a) =>
+          a.id === editingAvailability.id ? data.availability : a
+        ),
+      }));
+
+      setEditingAvailability(null);
+      setAvailabilityMsg({ type: 'success', text: 'Availability rule updated!' });
+      router.refresh();
+    } catch (err) {
+      console.error('Error editing availability:', err);
       setAvailabilityMsg({ type: 'error', text: 'An unexpected error occurred.' });
     } finally {
       setAvailabilitySaving(false);
@@ -746,15 +834,60 @@ export function EditTherapistForm({
             {therapist.photos.length > 0 ? (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                 {therapist.photos.map((photo) => (
-                  <div key={photo.id} className="relative group rounded-xl border border-slate-200 overflow-hidden bg-slate-100">
-                    <img
-                      src={photo.url}
-                      alt={photo.altText || 'Therapist photo'}
-                      className="w-full h-36 object-cover"
-                    />
-                    <div className="p-2 bg-white text-xs truncate border-t border-slate-100">
-                      {photo.altText || 'No caption'}
+                  <div key={photo.id} className="relative group rounded-xl border border-slate-200 overflow-hidden bg-slate-100 flex flex-col justify-between">
+                    <div>
+                      <img
+                        src={photo.url}
+                        alt={photo.altText || 'Therapist photo'}
+                        className="w-full h-36 object-cover"
+                      />
+                      <div className="p-2 bg-white text-xs truncate border-t border-slate-100">
+                        {photo.altText || 'No caption'}
+                      </div>
                     </div>
+
+                    {/* Photo Sort Order Controls */}
+                    <div className="p-2 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
+                      {editingPhotoId === photo.id ? (
+                        <div className="flex items-center gap-1 w-full">
+                          <input
+                            type="number"
+                            value={editingPhotoSortOrder}
+                            onChange={(e) => setEditingPhotoAltSortOrder(Number(e.target.value))}
+                            className="w-16 px-1.5 py-0.5 border border-slate-300 rounded text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleUpdatePhotoOrder(photo.id, editingPhotoSortOrder)}
+                            className="px-2 py-0.5 rounded bg-emerald-700 text-white font-bold text-[10px]"
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingPhotoId(null)}
+                            className="px-1.5 py-0.5 text-slate-500 hover:text-slate-800 text-[10px]"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="text-slate-500 font-medium">Order: {photo.sortOrder}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingPhotoId(photo.id);
+                              setEditingPhotoAltSortOrder(photo.sortOrder);
+                            }}
+                            className="text-emerald-700 hover:underline font-bold text-[11px]"
+                          >
+                            Edit Order
+                          </button>
+                        </>
+                      )}
+                    </div>
+
                     <button
                       type="button"
                       onClick={() => handleRemovePhoto(photo.id)}
@@ -994,7 +1127,9 @@ export function EditTherapistForm({
       {activeTab === 'availability' && (
         <div className="space-y-6 max-w-3xl">
           <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-            <h2 className="text-lg font-bold text-slate-900">Add Working Hours Rule</h2>
+            <h2 className="text-lg font-bold text-slate-900">
+              {editingAvailability ? 'Edit Working Hours Rule' : 'Add Working Hours Rule'}
+            </h2>
 
             {availabilityMsg && (
               <div
@@ -1008,60 +1143,139 @@ export function EditTherapistForm({
               </div>
             )}
 
-            <form onSubmit={handleAddAvailability} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Day of Week
-                </label>
-                <select
-                  value={dayOfWeek}
-                  onChange={(e) => setDayOfWeek(Number(e.target.value))}
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                >
-                  {DAYS_OF_WEEK.map((day, idx) => (
-                    <option key={idx} value={idx}>
-                      {day}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            {editingAvailability ? (
+              <form onSubmit={handleSaveAvailabilityEdit} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Day of Week
+                  </label>
+                  <select
+                    value={editingAvailability.dayOfWeek ?? 0}
+                    onChange={(e) =>
+                      setEditingAvailability({
+                        ...editingAvailability,
+                        dayOfWeek: Number(e.target.value),
+                      })
+                    }
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                  >
+                    {DAYS_OF_WEEK.map((day, idx) => (
+                      <option key={idx} value={idx}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Start Time
-                </label>
-                <input
-                  type="time"
-                  required
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Start Time
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={editingAvailability.startTime}
+                    onChange={(e) =>
+                      setEditingAvailability({
+                        ...editingAvailability,
+                        startTime: e.target.value,
+                      })
+                    }
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  End Time
-                </label>
-                <input
-                  type="time"
-                  required
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    End Time
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={editingAvailability.endTime}
+                    onChange={(e) =>
+                      setEditingAvailability({
+                        ...editingAvailability,
+                        endTime: e.target.value,
+                      })
+                    }
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                  />
+                </div>
 
-              <div className="sm:col-span-3 flex justify-end pt-2">
-                <button
-                  type="submit"
-                  disabled={availabilitySaving}
-                  className="px-5 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
-                >
-                  {availabilitySaving ? 'Adding...' : 'Add Schedule Rule'}
-                </button>
-              </div>
-            </form>
+                <div className="sm:col-span-3 flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingAvailability(null)}
+                    className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={availabilitySaving}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
+                  >
+                    {availabilitySaving ? 'Saving...' : 'Update Schedule Rule'}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleAddAvailability} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Day of Week
+                  </label>
+                  <select
+                    value={dayOfWeek}
+                    onChange={(e) => setDayOfWeek(Number(e.target.value))}
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                  >
+                    {DAYS_OF_WEEK.map((day, idx) => (
+                      <option key={idx} value={idx}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Start Time
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    End Time
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                  />
+                </div>
+
+                <div className="sm:col-span-3 flex justify-end pt-2">
+                  <button
+                    type="submit"
+                    disabled={availabilitySaving}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
+                  >
+                    {availabilitySaving ? 'Adding...' : 'Add Schedule Rule'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
@@ -1084,16 +1298,26 @@ export function EditTherapistForm({
                       </span>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveAvailability(av.id)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-                      title="Remove Schedule Rule"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditingAvailability(av)}
+                        className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                      >
+                        Edit
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveAvailability(av.id)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                        title="Remove Schedule Rule"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
