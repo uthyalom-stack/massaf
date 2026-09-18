@@ -16,6 +16,7 @@ import {
   cancelBookingSchema,
 } from '@/lib/validations/admin-booking';
 import { updateReviewStatusSchema } from '@/lib/validations/admin-review';
+import { createMarketingLinkSchema, updateMarketingLinkSchema } from '@/lib/validations/admin-marketing';
 import { BookingStatus, ReviewStatus } from '@prisma/client';
 import { revalidatePath } from 'next/cache';
 
@@ -74,6 +75,98 @@ export async function createTherapistAction(input: unknown) {
       error: err instanceof Error ? err.message : 'Failed to create therapist record.',
     };
   }
+}
+
+// --- Marketing Links ---
+
+export async function createMarketingLinkAction(input: unknown) {
+  try {
+    checkServerAdminAuth();
+    const validated = createMarketingLinkSchema.parse(input);
+
+    // Enforce code uniqueness server-side
+    const existing = await db.marketingLink.findUnique({
+      where: { code: validated.code },
+    });
+
+    if (existing) {
+      return {
+        success: false,
+        error: `A marketing link with code '${validated.code}' already exists. Please choose a unique code.`,
+      };
+    }
+
+    const marketingLink = await db.marketingLink.create({
+      data: {
+        name: validated.name,
+        code: validated.code,
+        destinationUrl: validated.destinationUrl || '/',
+        isActive: validated.isActive ?? true,
+      },
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/marketing-links');
+    return { success: true, marketingLink };
+  } catch (err: unknown) {
+    console.error('Error in createMarketingLinkAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to create marketing link.',
+    };
+  }
+}
+
+export async function updateMarketingLinkAction(input: unknown) {
+  try {
+    checkServerAdminAuth();
+    const validated = updateMarketingLinkSchema.parse(input);
+
+    const existing = await db.marketingLink.findUnique({
+      where: { id: validated.id },
+    });
+
+    if (!existing) {
+      return { success: false, error: 'Marketing link not found.' };
+    }
+
+    if (validated.code && validated.code !== existing.code) {
+      const codeConflict = await db.marketingLink.findUnique({
+        where: { code: validated.code },
+      });
+      if (codeConflict) {
+        return {
+          success: false,
+          error: `A marketing link with code '${validated.code}' already exists. Please choose a unique code.`,
+        };
+      }
+    }
+
+    const updated = await db.marketingLink.update({
+      where: { id: validated.id },
+      data: {
+        ...(validated.name !== undefined && { name: validated.name }),
+        ...(validated.code !== undefined && { code: validated.code }),
+        ...(validated.destinationUrl !== undefined && { destinationUrl: validated.destinationUrl }),
+        ...(validated.isActive !== undefined && { isActive: validated.isActive }),
+      },
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/marketing-links');
+    safeRevalidatePath(`/admin/marketing-links/${validated.id}`);
+    return { success: true, marketingLink: updated };
+  } catch (err: unknown) {
+    console.error('Error in updateMarketingLinkAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to update marketing link.',
+    };
+  }
+}
+
+export async function toggleMarketingLinkActiveAction(id: string, isActive: boolean) {
+  return updateMarketingLinkAction({ id, isActive });
 }
 
 // --- Reviews Moderation ---
