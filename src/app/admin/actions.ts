@@ -16,7 +16,6 @@ import {
   cancelBookingSchema,
 } from '@/lib/validations/admin-booking';
 import { BookingStatus } from '@prisma/client';
-import { MOCK_THERAPISTS } from '@/lib/mock-data';
 import { revalidatePath } from 'next/cache';
 
 /**
@@ -133,12 +132,6 @@ export async function updateBookingStatusAction(input: unknown) {
     safeRevalidatePath('/admin');
     safeRevalidatePath('/admin/bookings');
     safeRevalidatePath(`/admin/bookings/${validated.bookingId}`);
-    safeRevalidatePath('/admin');
-    safeRevalidatePath('/admin/bookings');
-    safeRevalidatePath(`/admin/bookings/${validated.bookingId}`);
-    safeRevalidatePath('/admin');
-    safeRevalidatePath('/admin/bookings');
-    safeRevalidatePath(`/admin/bookings/${validated.bookingId}`);
     return { success: true, booking: updated };
   } catch (err: unknown) {
     console.error('Error in updateBookingStatusAction:', err);
@@ -172,7 +165,7 @@ export async function assignBookingTherapistAction(input: unknown) {
       };
     }
 
-    // Check therapist existence & eligibility
+    // Check therapist existence & eligibility in database
     const therapist = await db.therapist.findUnique({
       where: { id: validated.therapistId },
       include: {
@@ -181,44 +174,32 @@ export async function assignBookingTherapistAction(input: unknown) {
       },
     });
 
-    const mockTherapist = MOCK_THERAPISTS.find((t) => t.id === validated.therapistId);
-
-    if (!therapist && !mockTherapist) {
+    if (!therapist) {
       return { success: false, error: 'This therapist cannot be assigned to this booking.' };
     }
 
-    const isActive = therapist ? therapist.isActive : (mockTherapist ? true : false);
-    if (!isActive) {
+    if (!therapist.isActive) {
       return { success: false, error: 'This therapist cannot be assigned to this booking.' };
     }
 
-    const offersStudio = therapist ? therapist.offersStudio : (mockTherapist?.offersStudio ?? true);
-    const offersInHome = therapist ? therapist.offersInHome : (mockTherapist?.offersInHome ?? true);
-
-    if (booking.locationType === 'STUDIO' && !offersStudio) {
+    if (booking.locationType === 'STUDIO' && !therapist.offersStudio) {
       return {
         success: false,
         error: 'This therapist cannot be assigned to this booking.',
       };
     }
 
-    if (booking.locationType === 'IN_HOME' && !offersInHome) {
+    if (booking.locationType === 'IN_HOME' && !therapist.offersInHome) {
       return {
         success: false,
         error: 'This therapist cannot be assigned to this booking.',
       };
     }
 
-    // Check service compatibility
-    let offersService = false;
-    if (therapist && therapist.services.length > 0) {
-      offersService = therapist.services.some((ts) => ts.serviceId === booking.serviceId && ts.isActive);
-    } else if (mockTherapist) {
-      offersService = mockTherapist.services.some((s) => s.id === booking.serviceId);
-    } else {
-      // Therapist exists in DB without specific therapistService records linked
-      offersService = true;
-    }
+    // Check service compatibility strictly against active TherapistService DB records
+    const offersService = therapist.services.some(
+      (ts) => ts.serviceId === booking.serviceId && ts.isActive
+    );
 
     if (!offersService) {
       return {
@@ -228,7 +209,7 @@ export async function assignBookingTherapistAction(input: unknown) {
     }
 
     // Check service area for IN_HOME bookings if therapist has serviceAreas configured
-    if (booking.locationType === 'IN_HOME' && booking.zipCode && therapist && therapist.serviceAreas.length > 0) {
+    if (booking.locationType === 'IN_HOME' && booking.zipCode && therapist.serviceAreas.length > 0) {
       const coversZip = therapist.serviceAreas.some(
         (sa) => sa.zipCode.trim() === booking.zipCode?.trim()
       );
@@ -238,25 +219,6 @@ export async function assignBookingTherapistAction(input: unknown) {
           error: 'This therapist cannot be assigned to this booking.',
         };
       }
-    }
-
-    // Ensure therapist record exists in DB if taken from mock data
-    if (!therapist && mockTherapist) {
-      await db.therapist.upsert({
-        where: { id: mockTherapist.id },
-        update: {},
-        create: {
-          id: mockTherapist.id,
-          name: mockTherapist.name,
-          bio: mockTherapist.bio,
-          profileImage: mockTherapist.image,
-          rating: mockTherapist.rating,
-          reviewCount: mockTherapist.reviewCount,
-          offersStudio: mockTherapist.offersStudio,
-          offersInHome: mockTherapist.offersInHome,
-          isFeatured: mockTherapist.isFeatured ?? false,
-        },
-      });
     }
 
     const newStatus = booking.status === 'PENDING' ? 'ASSIGNED' : booking.status;

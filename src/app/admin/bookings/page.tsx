@@ -2,7 +2,6 @@ import React from 'react';
 import { db } from '@/lib/db';
 import BookingList, { AdminBookingListItem } from '@/components/admin/BookingList';
 import { BookingStatus, Prisma } from '@prisma/client';
-import { MOCK_THERAPISTS } from '@/lib/mock-data';
 
 export const metadata = {
   title: 'Bookings Management | MASSAF Admin',
@@ -93,11 +92,8 @@ export default async function AdminBookingsPage({ searchParams }: BookingsPagePr
     });
 
     bookings = rawBookings.map((b) => {
-      const mockTherapist = MOCK_THERAPISTS.find((t) => t.id === b.therapistId);
-      const mockService = mockTherapist?.services.find((s) => s.id === b.serviceId);
-
-      const therapistName = b.therapist?.name || mockTherapist?.name || 'Unassigned';
-      const serviceName = b.service?.name || mockService?.name || 'Massage Session';
+      const therapistName = b.therapist?.name || 'Unassigned';
+      const serviceName = b.service?.name || 'Unspecified Service';
 
       return {
         id: b.id,

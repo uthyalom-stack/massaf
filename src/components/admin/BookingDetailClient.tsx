@@ -428,20 +428,26 @@ export default function BookingDetailClient({
                 <label htmlFor="therapist-select" className="block text-xs font-semibold text-slate-700 mb-1">
                   Select Active Therapist
                 </label>
-                <select
-                  id="therapist-select"
-                  value={selectedTherapistId}
-                  onChange={(e) => setSelectedTherapistId(e.target.value)}
-                  disabled={isPending || !isCancellable}
-                  className="w-full text-xs font-medium px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600 text-slate-900 disabled:opacity-60"
-                >
-                  <option value="">-- Choose Therapist --</option>
-                  {availableTherapists.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} {!t.isActive ? '(Inactive)' : ''}
-                    </option>
-                  ))}
-                </select>
+                {availableTherapists.length === 0 ? (
+                  <p className="text-xs text-amber-700 font-semibold bg-amber-50 p-2.5 rounded-xl border border-amber-200/80">
+                    No active therapists available for assignment.
+                  </p>
+                ) : (
+                  <select
+                    id="therapist-select"
+                    value={selectedTherapistId}
+                    onChange={(e) => setSelectedTherapistId(e.target.value)}
+                    disabled={isPending || !isCancellable}
+                    className="w-full text-xs font-medium px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600 text-slate-900 disabled:opacity-60"
+                  >
+                    <option value="">-- Choose Therapist --</option>
+                    {availableTherapists.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} {!t.isActive ? '(Inactive)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               <button

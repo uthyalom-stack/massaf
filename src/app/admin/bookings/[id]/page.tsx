@@ -5,7 +5,6 @@ import BookingDetailClient, {
   BookingDetailData,
   BookingDetailTherapistOption,
 } from '@/components/admin/BookingDetailClient';
-import { MOCK_THERAPISTS } from '@/lib/mock-data';
 
 export const metadata = {
   title: 'Booking Details | MASSAF Admin',
@@ -42,46 +41,24 @@ export default async function AdminBookingDetailPage({ params }: BookingDetailPa
       notFound();
     }
 
-    // Fetch all available therapists for therapist selection
+    // Fetch active therapists from DB for assignment selector
     const dbTherapists = await db.therapist.findMany({
+      where: { isActive: true },
       orderBy: { name: 'asc' },
     });
 
-    // Combine DB therapists with mock therapists for full roster coverage
-    const therapistMap = new Map<string, BookingDetailTherapistOption>();
+    availableTherapists = dbTherapists.map((t) => ({
+      id: t.id,
+      name: t.name,
+      isActive: t.isActive,
+      offersStudio: t.offersStudio,
+      offersInHome: t.offersInHome,
+    }));
 
-    dbTherapists.forEach((t) => {
-      therapistMap.set(t.id, {
-        id: t.id,
-        name: t.name,
-        isActive: t.isActive,
-        offersStudio: t.offersStudio,
-        offersInHome: t.offersInHome,
-      });
-    });
-
-    MOCK_THERAPISTS.forEach((mt) => {
-      if (!therapistMap.has(mt.id)) {
-        therapistMap.set(mt.id, {
-          id: mt.id,
-          name: mt.name,
-          isActive: true,
-          offersStudio: mt.offersStudio,
-          offersInHome: mt.offersInHome,
-        });
-      }
-    });
-
-    availableTherapists = Array.from(therapistMap.values());
-
-    // Resolve therapist and service details with mock fallbacks if needed
-    const mockTherapist = MOCK_THERAPISTS.find((t) => t.id === booking.therapistId);
-    const mockService = mockTherapist?.services.find((s) => s.id === booking.serviceId);
-
-    const therapistName = booking.therapist?.name || mockTherapist?.name || 'Unassigned';
-    const serviceName = booking.service?.name || mockService?.name || 'Massage Session';
-    const serviceDescription = booking.service?.description || mockService?.description || null;
-    const servicePrice = booking.service?.price || mockService?.price || booking.amount;
+    const therapistName = booking.therapist?.name || 'Unassigned';
+    const serviceName = booking.service?.name || 'Unspecified Service';
+    const serviceDescription = booking.service?.description || null;
+    const servicePrice = booking.service?.price || booking.amount;
 
     bookingData = {
       id: booking.id,
