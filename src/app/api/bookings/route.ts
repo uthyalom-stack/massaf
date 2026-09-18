@@ -134,65 +134,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 6b. Booking Conflict Protection (prevent double-booking overlapping active bookings)
-    const requestedStart = appointmentDateTime.getTime();
-    const requestedEnd = requestedStart + durationMinutes * 60 * 1000;
-
-    const existingBookings = await db.booking.findMany({
-      where: {
-        therapistId: therapist.id,
-        status: {
-          notIn: ['CANCELLED', 'REFUNDED'],
-        },
-        appointmentDateTime: {
-          lt: new Date(requestedEnd),
-        },
-      },
-      select: {
-        id: true,
-        appointmentDateTime: true,
-        durationMinutes: true,
-      },
-    });
-
-    const hasConflict = existingBookings.some((existing) => {
-      const existingStart = existing.appointmentDateTime.getTime();
-      const existingEnd = existingStart + existing.durationMinutes * 60 * 1000;
-      return existingStart < requestedEnd && existingEnd > requestedStart;
-    });
-
-    if (hasConflict) {
-      return NextResponse.json(
-        { error: 'That appointment time is no longer available. Please choose another time.' },
-        { status: 400 }
-      );
-    }
-
-    // 7. Find or create customer by email
-    const customerName = `${data.firstName} ${data.lastName}`.trim();
-    let customer = await db.customer.findUnique({
-      where: { email: data.email.toLowerCase() },
-    });
-
-    if (!customer) {
-      customer = await db.customer.create({
-        data: {
-          name: customerName,
-          email: data.email.toLowerCase(),
-          phone: data.phone,
-        },
-      });
-    } else {
-      customer = await db.customer.update({
-        where: { id: customer.id },
-        data: {
-          name: customerName,
-          phone: data.phone,
-        },
-      });
-    }
-
-    // 8. Server-side Marketing Link Resolution from trusted first-party cookie
+    // 6b. Server-side Marketing Link Resolution from trusted first-party cookie
     let marketingLinkId: string | null = null;
     try {
       const cookieStore = await cookies();
@@ -209,43 +151,110 @@ export async function POST(request: Request) {
       // Ignore attribution lookup failures to ensure customer booking flow never fails
     }
 
-    // 9. Generate unique booking number
+    // 7. Atomic Database Transaction: Customer creation/update, Conflict Check, and Booking Creation
+    const requestedStart = appointmentDateTime.getTime();
+    const requestedEnd = requestedStart + durationMinutes * 60 * 1000;
+    const customerName = `${data.firstName} ${data.lastName}`.trim();
     const bookingNumber = `MSF-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
 
-    // 10. Persist Booking in Prisma DB
-    const booking = await db.booking.create({
-      data: {
-        bookingNumber,
-        customerId: customer.id,
-        therapistId: therapist.id,
-        serviceId: service.id,
-        marketingLinkId,
-        appointmentDateTime,
-        durationMinutes,
-        locationType: data.locationType,
-        addressLine1: data.locationType === 'IN_HOME' ? data.addressLine1 : null,
-        addressLine2: data.locationType === 'IN_HOME' ? data.addressLine2 : null,
-        city: data.locationType === 'IN_HOME' ? data.city : null,
-        state: data.locationType === 'IN_HOME' ? data.state : null,
-        zipCode: data.locationType === 'IN_HOME' ? data.zipCode : null,
-        notes: data.notes || null,
-        amount: authoritativePrice,
-        status: 'PENDING',
-        paymentStatus: 'UNPAID',
-      },
+    const bookingResult = await db.$transaction(async (tx) => {
+      // Check for overlapping active bookings inside atomic transaction
+      const existingBookings = await tx.booking.findMany({
+        where: {
+          therapistId: therapist.id,
+          status: {
+            notIn: ['CANCELLED', 'REFUNDED'],
+          },
+          appointmentDateTime: {
+            lt: new Date(requestedEnd),
+          },
+        },
+        select: {
+          id: true,
+          appointmentDateTime: true,
+          durationMinutes: true,
+        },
+      });
+
+      const hasConflict = existingBookings.some((existing) => {
+        const existingStart = existing.appointmentDateTime.getTime();
+        const existingEnd = existingStart + existing.durationMinutes * 60 * 1000;
+        return existingStart < requestedEnd && existingEnd > requestedStart;
+      });
+
+      if (hasConflict) {
+        return { conflict: true };
+      }
+
+      // Find or create customer inside transaction
+      let customer = await tx.customer.findUnique({
+        where: { email: data.email.toLowerCase() },
+      });
+
+      if (!customer) {
+        customer = await tx.customer.create({
+          data: {
+            name: customerName,
+            email: data.email.toLowerCase(),
+            phone: data.phone,
+          },
+        });
+      } else {
+        customer = await tx.customer.update({
+          where: { id: customer.id },
+          data: {
+            name: customerName,
+            phone: data.phone,
+          },
+        });
+      }
+
+      // Create booking inside transaction
+      const createdBooking = await tx.booking.create({
+        data: {
+          bookingNumber,
+          customerId: customer.id,
+          therapistId: therapist.id,
+          serviceId: service.id,
+          marketingLinkId,
+          appointmentDateTime,
+          durationMinutes,
+          locationType: data.locationType,
+          addressLine1: data.locationType === 'IN_HOME' ? data.addressLine1 : null,
+          addressLine2: data.locationType === 'IN_HOME' ? data.addressLine2 : null,
+          city: data.locationType === 'IN_HOME' ? data.city : null,
+          state: data.locationType === 'IN_HOME' ? data.state : null,
+          zipCode: data.locationType === 'IN_HOME' ? data.zipCode : null,
+          notes: data.notes || null,
+          amount: authoritativePrice,
+          status: 'PENDING',
+          paymentStatus: 'UNPAID',
+        },
+      });
+
+      return { booking: createdBooking };
     });
+
+    if (!('booking' in bookingResult) || !bookingResult.booking) {
+      return NextResponse.json(
+        { error: 'That appointment time is no longer available. Please choose another time.' },
+        { status: 400 }
+      );
+    }
+
+    const createdBooking = bookingResult.booking;
 
     return NextResponse.json(
       {
         message: 'Booking created successfully',
         booking: {
-          id: booking.id,
-          bookingNumber: booking.bookingNumber,
-          status: booking.status,
-          paymentStatus: booking.paymentStatus,
-          amount: booking.amount,
-          appointmentDateTime: booking.appointmentDateTime.toISOString(),
-          locationType: booking.locationType,
+          id: createdBooking.id,
+          bookingNumber: createdBooking.bookingNumber,
+          status: createdBooking.status,
+          paymentStatus: createdBooking.paymentStatus,
+          amount: createdBooking.amount,
+          appointmentDateTime: createdBooking.appointmentDateTime.toISOString(),
+          locationType: createdBooking.locationType,
           therapistName: therapist.name,
           serviceName: service.name,
           durationMinutes,
