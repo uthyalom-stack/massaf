@@ -1,0 +1,143 @@
+import React from 'react';
+import Link from 'next/link';
+
+export const metadata = {
+  title: 'Admin Portal | MASSAF',
+  description: 'MASSAF Massage Therapy Platform Administration',
+};
+
+export default function AdminLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900">
+      {/* Auth Pending Banner */}
+      <div className="bg-amber-500 text-slate-950 px-4 py-2 text-xs font-semibold text-center border-b border-amber-600 flex items-center justify-center gap-2">
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+        <span>
+          <strong>Admin Access Notice:</strong> Authentication & Authorization layer is pending (Phase 7 internal admin preview).
+        </span>
+      </div>
+
+      {/* Main Admin Header / Nav */}
+      <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            {/* Logo / Brand */}
+            <div className="flex items-center gap-6">
+              <Link href="/admin" className="flex items-center gap-2.5 group">
+                <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-black text-lg group-hover:bg-emerald-500 transition-colors">
+                  M
+                </div>
+                <div className="flex flex-col">
+                  <span className="font-extrabold text-white text-lg tracking-tight leading-none">
+                    MASSAF
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-semibold tracking-wider uppercase leading-tight">
+                    Admin Portal
+                  </span>
+                </div>
+              </Link>
+
+              {/* Desktop Nav */}
+              <nav className="hidden md:flex items-center space-x-1 pl-6 border-l border-slate-800">
+                <Link
+                  href="/admin"
+                  className="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
+                >
+                  Dashboard
+                </Link>
+                <Link
+                  href="/admin/therapists"
+                  className="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
+                >
+                  Therapists
+                </Link>
+                <Link
+                  href="/admin/bookings"
+                  className="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
+                >
+                  Bookings
+                </Link>
+                <Link
+                  href="/admin/reviews"
+                  className="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
+                >
+                  Reviews
+                </Link>
+                <Link
+                  href="/admin/settings"
+                  className="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
+                >
+                  Settings
+                </Link>
+              </nav>
+            </div>
+
+            {/* Quick Actions / Link back to site */}
+            <div className="flex items-center gap-3">
+              <Link
+                href="/"
+                target="_blank"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors border border-slate-700"
+              >
+                <span>View Live Site</span>
+                <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        {/* Mobile Navigation Bar */}
+        <div className="md:hidden border-t border-slate-800 px-4 py-2 flex items-center space-x-2 overflow-x-auto text-xs">
+          <Link
+            href="/admin"
+            className="px-3 py-1.5 rounded-md font-medium text-slate-200 hover:bg-slate-800 shrink-0"
+          >
+            Dashboard
+          </Link>
+          <Link
+            href="/admin/therapists"
+            className="px-3 py-1.5 rounded-md font-medium text-slate-200 hover:bg-slate-800 shrink-0"
+          >
+            Therapists
+          </Link>
+          <Link
+            href="/admin/bookings"
+            className="px-3 py-1.5 rounded-md font-medium text-slate-200 hover:bg-slate-800 shrink-0"
+          >
+            Bookings
+          </Link>
+          <Link
+            href="/admin/reviews"
+            className="px-3 py-1.5 rounded-md font-medium text-slate-200 hover:bg-slate-800 shrink-0"
+          >
+            Reviews
+          </Link>
+          <Link
+            href="/admin/settings"
+            className="px-3 py-1.5 rounded-md font-medium text-slate-200 hover:bg-slate-800 shrink-0"
+          >
+            Settings
+          </Link>
+        </div>
+      </header>
+
+      {/* Admin Body Content */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+        {children}
+      </main>
+
+      {/* Admin Footer */}
+      <footer className="bg-slate-900 text-slate-400 border-t border-slate-800 text-xs py-4 px-6 text-center">
+        MASSAF Admin Console &bull; Phase 7 Implementation
+      </footer>
+    </div>
+  );
+}
