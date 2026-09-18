@@ -8,10 +8,8 @@ import { SectionHeading } from '@/components/ui/SectionHeading';
 import { getActiveTherapists } from '@/lib/db-therapists';
 import { db } from '@/lib/db';
 import { formatUtcDateString } from '@/lib/timezone';
-import {
-  MOCK_TESTIMONIALS,
-  MOCK_THERAPIST_REVIEWS,
-} from '@/lib/mock-data';
+import { MOCK_TESTIMONIALS } from '@/lib/mock-data';
+import { MockReview } from '@/types/customer';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +24,7 @@ export default async function CustomerHomePage() {
   );
 
   // Fetch recent approved & published database reviews for homepage showcase
-  let dbReviewsFormatted = MOCK_THERAPIST_REVIEWS;
+  let dbReviewsFormatted: MockReview[] = [];
   try {
     const dbReviews = await db.review.findMany({
       where: {
@@ -58,13 +56,13 @@ export default async function CustomerHomePage() {
         return {
           id: rev.id,
           therapistId: rev.therapistId,
-          therapistName: rev.therapist?.name || 'Licensed Practitioner',
+          therapistName: rev.therapist?.name || 'Practitioner',
           customerName: formattedName,
           customerLocation: 'United States',
           rating: rev.rating,
           date: formatUtcDateString(rev.createdAt.toISOString()),
           comment: rev.comment || '',
-          serviceType: rev.booking?.service?.name || 'Massage Session',
+          serviceType: rev.booking?.service?.name || '',
         };
       });
     }

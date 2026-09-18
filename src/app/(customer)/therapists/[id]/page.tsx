@@ -24,9 +24,12 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     };
   }
 
+  const titleText = therapist.title ? ` - ${therapist.title}` : '';
+  const bioExcerpt = therapist.bio ? `${therapist.bio.slice(0, 150)}...` : '';
+
   return {
     title: `${therapist.name} | MASSAF Massage Therapy`,
-    description: `${therapist.name} - ${therapist.title} in ${therapist.location}. ${therapist.bio.slice(0, 150)}...`,
+    description: `${therapist.name}${titleText} in ${therapist.location}. ${bioExcerpt}`,
   };
 }
 
@@ -46,51 +49,46 @@ export default async function TherapistProfilePage({ params }: PageProps) {
     rating: number;
     date: string;
     comment: string;
-    serviceType: string;
+    serviceType?: string;
   }> = [];
 
-  try {
-    const dbReviews = await db.review.findMany({
-      where: {
-        therapistId: therapist.id,
-        status: 'APPROVED',
-        isPublished: true,
-      },
-      include: {
-        customer: true,
-        booking: {
-          include: {
-            service: true,
-          },
+  const dbReviews = await db.review.findMany({
+    where: {
+      therapistId: therapist.id,
+      status: 'APPROVED',
+      isPublished: true,
+    },
+    include: {
+      customer: true,
+      booking: {
+        include: {
+          service: true,
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  });
 
-    dbReviewsFormatted = dbReviews.map((rev) => {
-      // Obfuscate customer name for privacy (e.g. "Jane D.")
-      const rawName = rev.customer?.name || 'Verified Client';
-      const nameParts = rawName.trim().split(' ');
-      const formattedName =
-        nameParts.length > 1
-          ? `${nameParts[0]} ${nameParts[nameParts.length - 1][0]}.`
-          : rawName;
+  dbReviewsFormatted = dbReviews.map((rev) => {
+    const rawName = rev.customer?.name || 'Verified Client';
+    const nameParts = rawName.trim().split(' ');
+    const formattedName =
+      nameParts.length > 1
+        ? `${nameParts[0]} ${nameParts[nameParts.length - 1][0]}.`
+        : rawName;
 
-      return {
-        id: rev.id,
-        customerName: formattedName,
-        customerLocation: therapist.location,
-        rating: rev.rating,
-        date: formatUtcDateString(rev.createdAt.toISOString()),
-        comment: rev.comment || '',
-        serviceType: rev.booking?.service?.name || 'Massage Therapy Session',
-      };
-    });
-  } catch (err) {
-    console.error('Error fetching database reviews for therapist:', err);
-  }
+    return {
+      id: rev.id,
+      customerName: formattedName,
+      customerLocation: therapist.location,
+      rating: rev.rating,
+      date: formatUtcDateString(rev.createdAt.toISOString()),
+      comment: rev.comment || '',
+      serviceType: rev.booking?.service?.name || undefined,
+    };
+  });
 
   return (
     <div className="min-h-screen bg-slate-50 py-8 sm:py-12">
@@ -153,9 +151,11 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                   <h1 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
                     {therapist.name}
                   </h1>
-                  <p className="text-base sm:text-lg font-medium text-slate-600 mt-1">
-                    {therapist.title}
-                  </p>
+                  {therapist.title && (
+                    <p className="text-base sm:text-lg font-medium text-slate-600 mt-1">
+                      {therapist.title}
+                    </p>
+                  )}
                 </div>
 
                 {/* Rating & Location */}
@@ -172,21 +172,23 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                 </div>
 
                 {/* Specialties list summary */}
-                <div className="pt-2">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
-                    Primary Specialties
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {therapist.specialties.map((spec) => (
-                      <span
-                        key={spec}
-                        className="inline-flex items-center px-3 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-800 border border-slate-200/60"
-                      >
-                        {spec}
-                      </span>
-                    ))}
+                {therapist.specialties && therapist.specialties.length > 0 && (
+                  <div className="pt-2">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                      Primary Specialties
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {therapist.specialties.map((spec) => (
+                        <span
+                          key={spec}
+                          className="inline-flex items-center px-3 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-800 border border-slate-200/60"
+                        >
+                          {spec}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {/* Pricing & Call To Action */}
@@ -205,7 +207,7 @@ export default async function TherapistProfilePage({ params }: PageProps) {
 
                 <Link
                   href={`/booking?therapist=${therapist.id}`}
-                  className="inline-flex items-center justify-center px-8 py-3.5 text-base font-bold rounded-xl bg-emerald-700 text-white hover:bg-emerald-800 transition-all shadow-sm hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 cursor-pointer text-center"
+                  className="inline-flex items-center justify-center px-8 py-3.5 text-base font-bold rounded-xl bg-emerald-700 text-white hover:bg-emerald-800 transition-all shadow-xs hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 cursor-pointer text-center"
                 >
                   Book Now
                 </Link>
@@ -232,19 +234,23 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                   <p>{therapist.bio || 'No biography details provided.'}</p>
                 </div>
 
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-1">
-                    Experience & Background
-                  </h3>
-                  <p>{therapist.experience}</p>
-                </div>
+                {therapist.experience && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-1">
+                      Experience & Background
+                    </h3>
+                    <p>{therapist.experience}</p>
+                  </div>
+                )}
 
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-1">
-                    Therapeutic Approach
-                  </h3>
-                  <p>{therapist.approach}</p>
-                </div>
+                {therapist.approach && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-1">
+                      Therapeutic Approach
+                    </h3>
+                    <p>{therapist.approach}</p>
+                  </div>
+                )}
               </div>
             </section>
 
@@ -379,21 +385,23 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                   </div>
                 </div>
 
-                <div className="pt-3 border-t border-slate-100">
-                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                    Service Areas & Neighborhoods
-                  </h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {therapist.serviceAreas.map((area) => (
-                      <span
-                        key={area}
-                        className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-700"
-                      >
-                        {area}
-                      </span>
-                    ))}
+                {therapist.serviceAreas && therapist.serviceAreas.length > 0 && (
+                  <div className="pt-3 border-t border-slate-100">
+                    <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                      Service Areas & Neighborhoods
+                    </h4>
+                    <div className="flex flex-wrap gap-1.5">
+                      {therapist.serviceAreas.map((area) => (
+                        <span
+                          key={area}
+                          className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-700"
+                        >
+                          {area}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
 

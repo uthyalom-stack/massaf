@@ -19,7 +19,6 @@ export function formatDaysRange(dayIndices: number[]): string {
   if (dayIndices.length === 0) return '';
   const sorted = Array.from(new Set(dayIndices)).sort((a, b) => a - b);
 
-  // Check if consecutive
   let isConsecutive = true;
   for (let i = 1; i < sorted.length; i++) {
     if (sorted[i] !== sorted[i - 1] + 1) {
@@ -59,7 +58,6 @@ export function formatAvailabilitiesToSchedule(
     return [{ days: 'By Appointment', hours: 'Flexible schedule' }];
   }
 
-  // Group by time range
   const timeGroups: Record<string, number[]> = {};
 
   for (const item of recurring) {
@@ -135,7 +133,6 @@ export interface RawTherapistData {
 export function formatDbTherapistToPublic(therapist: RawTherapistData): MockTherapist {
   const photos = (therapist.photos || []).sort((a, b) => a.sortOrder - b.sortOrder);
 
-  // Fallback image handling
   const fallbackAvatar = '/images/default-avatar.svg';
   const mainImage = therapist.profileImage || (photos.length > 0 ? photos[0].url : fallbackAvatar);
 
@@ -151,7 +148,6 @@ export function formatDbTherapistToPublic(therapist: RawTherapistData): MockTher
 
   const location = uniqueCities.length > 0 ? uniqueCities[0] : 'United States';
 
-  // Active services
   const activeServices = (therapist.services || []).filter(
     (ts) => ts.isActive && ts.service && ts.service.isActive
   );
@@ -167,17 +163,6 @@ export function formatDbTherapistToPublic(therapist: RawTherapistData): MockTher
   const prices = formattedServices.map((s) => s.price);
   const startingPrice = prices.length > 0 ? Math.min(...prices) : 0;
 
-  // Derive specialties from service names
-  const specialtiesSet = new Set<string>();
-  activeServices.forEach((ts) => {
-    if (ts.service?.name) {
-      specialtiesSet.add(ts.service.name);
-    }
-  });
-  if (specialtiesSet.size === 0) {
-    specialtiesSet.add('Therapeutic Massage');
-  }
-
   const schedule = formatAvailabilitiesToSchedule(therapist.availabilities || []);
 
   const availabilityText = (therapist.availabilities || []).length > 0
@@ -187,22 +172,22 @@ export function formatDbTherapistToPublic(therapist: RawTherapistData): MockTher
   return {
     id: therapist.id,
     name: therapist.name,
-    title: 'Licensed Massage Therapist',
+    title: '',
     image: mainImage,
     galleryImages,
     rating: therapist.rating,
     reviewCount: therapist.reviewCount,
     location,
-    serviceAreas: uniqueCities.length > 0 ? uniqueCities : ['Local Area'],
+    serviceAreas: uniqueCities,
     zipCodes,
     startingPrice,
     availability: availabilityText,
     offersStudio: therapist.offersStudio,
     offersInHome: therapist.offersInHome,
-    specialties: Array.from(specialtiesSet),
+    specialties: [],
     bio: therapist.bio || '',
-    experience: 'Licensed & background-checked massage practitioner.',
-    approach: 'Tailored therapeutic bodywork customized to client wellness goals.',
+    experience: '',
+    approach: '',
     services: formattedServices,
     schedule,
     isFeatured: therapist.isFeatured,
@@ -211,71 +196,62 @@ export function formatDbTherapistToPublic(therapist: RawTherapistData): MockTher
 }
 
 export async function getActiveTherapists(): Promise<MockTherapist[]> {
-  try {
-    const dbTherapists = await db.therapist.findMany({
-      where: {
-        isActive: true,
+  const dbTherapists = await db.therapist.findMany({
+    where: {
+      isActive: true,
+    },
+    include: {
+      photos: {
+        orderBy: { sortOrder: 'asc' },
       },
-      include: {
-        photos: {
-          orderBy: { sortOrder: 'asc' },
+      services: {
+        where: {
+          isActive: true,
+          service: { isActive: true },
         },
-        services: {
-          where: {
-            isActive: true,
-            service: { isActive: true },
-          },
-          include: {
-            service: true,
-          },
+        include: {
+          service: true,
         },
-        serviceAreas: true,
-        availabilities: true,
       },
-      orderBy: [
-        { isFeatured: 'desc' },
-        { rating: 'desc' },
-        { createdAt: 'desc' },
-      ],
-    });
+      serviceAreas: true,
+      availabilities: true,
+    },
+    orderBy: [
+      { isFeatured: 'desc' },
+      { rating: 'desc' },
+      { createdAt: 'desc' },
+    ],
+  });
 
-    return dbTherapists.map((t) => formatDbTherapistToPublic(t));
-  } catch (error) {
-    console.error('Error in getActiveTherapists:', error);
-    return [];
-  }
+  return dbTherapists.map((t) => formatDbTherapistToPublic(t));
 }
 
 export async function getActiveTherapistById(id: string): Promise<MockTherapist | null> {
   if (!id) return null;
-  try {
-    const therapist = await db.therapist.findFirst({
-      where: {
-        id,
-        isActive: true,
-      },
-      include: {
-        photos: {
-          orderBy: { sortOrder: 'asc' },
-        },
-        services: {
-          where: {
-            isActive: true,
-            service: { isActive: true },
-          },
-          include: {
-            service: true,
-          },
-        },
-        serviceAreas: true,
-        availabilities: true,
-      },
-    });
 
-    if (!therapist) return null;
-    return formatDbTherapistToPublic(therapist);
-  } catch (error) {
-    console.error('Error in getActiveTherapistById:', error);
-    return null;
-  }
+  const therapist = await db.therapist.findFirst({
+    where: {
+      id,
+      isActive: true,
+    },
+    include: {
+      photos: {
+        orderBy: { sortOrder: 'asc' },
+      },
+      services: {
+        where: {
+          isActive: true,
+          service: { isActive: true },
+        },
+        include: {
+          service: true,
+        },
+      },
+      serviceAreas: true,
+      availabilities: true,
+    },
+  });
+
+  if (!therapist) return null;
+  return formatDbTherapistToPublic(therapist);
 }
