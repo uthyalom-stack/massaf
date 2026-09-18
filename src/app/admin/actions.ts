@@ -10,6 +10,13 @@ import {
   availabilitySchema,
   availabilityUpdateSchema,
 } from '@/lib/validations/admin-therapist';
+import {
+  updateBookingStatusSchema,
+  assignBookingTherapistSchema,
+  cancelBookingSchema,
+} from '@/lib/validations/admin-booking';
+import { BookingStatus } from '@prisma/client';
+import { MOCK_THERAPISTS } from '@/lib/mock-data';
 import { revalidatePath } from 'next/cache';
 
 /**
@@ -19,6 +26,14 @@ function checkServerAdminAuth() {
   const adminKey = process.env.MASSAF_ADMIN_API_KEY;
   if (!adminKey) {
     throw new Error('Server authorization configuration error: MASSAF_ADMIN_API_KEY is not configured.');
+  }
+}
+
+function safeRevalidatePath(path: string) {
+  try {
+    revalidatePath(path);
+  } catch {
+    // revalidatePath throws when invoked outside of a Next.js server action request context (e.g., during testing)
   }
 }
 
@@ -57,6 +72,257 @@ export async function createTherapistAction(input: unknown) {
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to create therapist record.',
+    };
+  }
+}
+
+// --- Bookings ---
+
+/**
+ * Validates whether a transition from currentStatus to newStatus is permissible.
+ */
+function isValidStatusTransition(currentStatus: BookingStatus, newStatus: BookingStatus): boolean {
+  if (currentStatus === newStatus) return true;
+
+  switch (currentStatus) {
+    case 'PENDING':
+      return ['CONFIRMED', 'ASSIGNED', 'CANCELLED', 'NO_SHOW'].includes(newStatus);
+    case 'CONFIRMED':
+      return ['ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(newStatus);
+    case 'ASSIGNED':
+      return ['CONFIRMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(newStatus);
+    case 'IN_PROGRESS':
+      return ['COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(newStatus);
+    case 'COMPLETED':
+      return ['REFUNDED'].includes(newStatus);
+    case 'NO_SHOW':
+      return ['CANCELLED'].includes(newStatus);
+    case 'CANCELLED':
+    case 'REFUNDED':
+      return false;
+    default:
+      return false;
+  }
+}
+
+export async function updateBookingStatusAction(input: unknown) {
+  try {
+    checkServerAdminAuth();
+    const validated = updateBookingStatusSchema.parse(input);
+
+    const booking = await db.booking.findUnique({
+      where: { id: validated.bookingId },
+    });
+
+    if (!booking) {
+      return { success: false, error: 'Booking not found.' };
+    }
+
+    if (!isValidStatusTransition(booking.status, validated.status)) {
+      return {
+        success: false,
+        error: `This booking cannot be moved to that status. Transitioning from ${booking.status} to ${validated.status} is not allowed.`,
+      };
+    }
+
+    const updated = await db.booking.update({
+      where: { id: validated.bookingId },
+      data: { status: validated.status },
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/bookings');
+    safeRevalidatePath(`/admin/bookings/${validated.bookingId}`);
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/bookings');
+    safeRevalidatePath(`/admin/bookings/${validated.bookingId}`);
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/bookings');
+    safeRevalidatePath(`/admin/bookings/${validated.bookingId}`);
+    return { success: true, booking: updated };
+  } catch (err: unknown) {
+    console.error('Error in updateBookingStatusAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Unable to update booking status. Please try again.',
+    };
+  }
+}
+
+export async function assignBookingTherapistAction(input: unknown) {
+  try {
+    checkServerAdminAuth();
+    const validated = assignBookingTherapistSchema.parse(input);
+
+    const booking = await db.booking.findUnique({
+      where: { id: validated.bookingId },
+      include: {
+        service: true,
+      },
+    });
+
+    if (!booking) {
+      return { success: false, error: 'Booking not found.' };
+    }
+
+    if (booking.status === 'CANCELLED' || booking.status === 'COMPLETED' || booking.status === 'REFUNDED') {
+      return {
+        success: false,
+        error: `Cannot assign therapist to a booking with status '${booking.status}'.`,
+      };
+    }
+
+    // Check therapist existence & eligibility
+    const therapist = await db.therapist.findUnique({
+      where: { id: validated.therapistId },
+      include: {
+        services: true,
+        serviceAreas: true,
+      },
+    });
+
+    const mockTherapist = MOCK_THERAPISTS.find((t) => t.id === validated.therapistId);
+
+    if (!therapist && !mockTherapist) {
+      return { success: false, error: 'This therapist cannot be assigned to this booking.' };
+    }
+
+    const isActive = therapist ? therapist.isActive : (mockTherapist ? true : false);
+    if (!isActive) {
+      return { success: false, error: 'This therapist cannot be assigned to this booking.' };
+    }
+
+    const offersStudio = therapist ? therapist.offersStudio : (mockTherapist?.offersStudio ?? true);
+    const offersInHome = therapist ? therapist.offersInHome : (mockTherapist?.offersInHome ?? true);
+
+    if (booking.locationType === 'STUDIO' && !offersStudio) {
+      return {
+        success: false,
+        error: 'This therapist cannot be assigned to this booking.',
+      };
+    }
+
+    if (booking.locationType === 'IN_HOME' && !offersInHome) {
+      return {
+        success: false,
+        error: 'This therapist cannot be assigned to this booking.',
+      };
+    }
+
+    // Check service compatibility
+    let offersService = false;
+    if (therapist && therapist.services.length > 0) {
+      offersService = therapist.services.some((ts) => ts.serviceId === booking.serviceId && ts.isActive);
+    } else if (mockTherapist) {
+      offersService = mockTherapist.services.some((s) => s.id === booking.serviceId);
+    } else {
+      // Therapist exists in DB without specific therapistService records linked
+      offersService = true;
+    }
+
+    if (!offersService) {
+      return {
+        success: false,
+        error: 'This therapist cannot be assigned to this booking.',
+      };
+    }
+
+    // Check service area for IN_HOME bookings if therapist has serviceAreas configured
+    if (booking.locationType === 'IN_HOME' && booking.zipCode && therapist && therapist.serviceAreas.length > 0) {
+      const coversZip = therapist.serviceAreas.some(
+        (sa) => sa.zipCode.trim() === booking.zipCode?.trim()
+      );
+      if (!coversZip) {
+        return {
+          success: false,
+          error: 'This therapist cannot be assigned to this booking.',
+        };
+      }
+    }
+
+    // Ensure therapist record exists in DB if taken from mock data
+    if (!therapist && mockTherapist) {
+      await db.therapist.upsert({
+        where: { id: mockTherapist.id },
+        update: {},
+        create: {
+          id: mockTherapist.id,
+          name: mockTherapist.name,
+          bio: mockTherapist.bio,
+          profileImage: mockTherapist.image,
+          rating: mockTherapist.rating,
+          reviewCount: mockTherapist.reviewCount,
+          offersStudio: mockTherapist.offersStudio,
+          offersInHome: mockTherapist.offersInHome,
+          isFeatured: mockTherapist.isFeatured ?? false,
+        },
+      });
+    }
+
+    const newStatus = booking.status === 'PENDING' ? 'ASSIGNED' : booking.status;
+
+    const updated = await db.booking.update({
+      where: { id: validated.bookingId },
+      data: {
+        therapistId: validated.therapistId,
+        status: newStatus,
+      },
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/bookings');
+    safeRevalidatePath(`/admin/bookings/${validated.bookingId}`);
+    return { success: true, booking: updated };
+  } catch (err: unknown) {
+    console.error('Error in assignBookingTherapistAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Unable to assign therapist to booking. Please try again.',
+    };
+  }
+}
+
+export async function cancelBookingAction(input: unknown) {
+  try {
+    checkServerAdminAuth();
+    const validated = cancelBookingSchema.parse(input);
+
+    const booking = await db.booking.findUnique({
+      where: { id: validated.bookingId },
+    });
+
+    if (!booking) {
+      return { success: false, error: 'Booking not found.' };
+    }
+
+    if (booking.status === 'CANCELLED') {
+      return { success: false, error: 'This booking is already cancelled.' };
+    }
+
+    if (booking.status === 'COMPLETED') {
+      return { success: false, error: 'This booking cannot be cancelled because it is already completed.' };
+    }
+
+    if (booking.status === 'REFUNDED') {
+      return { success: false, error: 'This booking is already refunded and cannot be cancelled.' };
+    }
+
+    const updated = await db.booking.update({
+      where: { id: validated.bookingId },
+      data: {
+        status: 'CANCELLED',
+      },
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/bookings');
+    safeRevalidatePath(`/admin/bookings/${validated.bookingId}`);
+    return { success: true, booking: updated };
+  } catch (err: unknown) {
+    console.error('Error in cancelBookingAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Unable to cancel booking. Please try again.',
     };
   }
 }
