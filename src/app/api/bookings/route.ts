@@ -84,26 +84,30 @@ export async function POST(request: Request) {
         );
       }
 
-      // Validate customer location against therapist's ServiceAreas if therapist has configured service areas
-      if (therapist.serviceAreas.length > 0) {
-        const reqZip = data.zipCode?.trim().toLowerCase();
-        const reqCity = data.city?.trim().toLowerCase();
-        const reqState = data.state?.trim().toLowerCase();
+      if (therapist.serviceAreas.length === 0) {
+        return NextResponse.json(
+          { error: 'This therapist is not currently accepting in-home appointments in your area.' },
+          { status: 400 }
+        );
+      }
 
-        const isSupportedArea = therapist.serviceAreas.some((sa) => {
-          const zipMatch = sa.zipCode.trim().toLowerCase() === reqZip;
-          const cityMatch =
-            sa.cityName.trim().toLowerCase() === reqCity &&
-            sa.state.trim().toLowerCase() === reqState;
-          return zipMatch || cityMatch;
-        });
+      const reqZip = data.zipCode?.trim().toLowerCase();
+      const reqCity = data.city?.trim().toLowerCase();
+      const reqState = data.state?.trim().toLowerCase();
 
-        if (!isSupportedArea) {
-          return NextResponse.json(
-            { error: "This location is outside this therapist's service area." },
-            { status: 400 }
-          );
-        }
+      const isSupportedArea = therapist.serviceAreas.some((sa) => {
+        const zipMatch = sa.zipCode.trim().toLowerCase() === reqZip;
+        const cityMatch =
+          sa.cityName.trim().toLowerCase() === reqCity &&
+          sa.state.trim().toLowerCase() === reqState;
+        return zipMatch || cityMatch;
+      });
+
+      if (!isSupportedArea) {
+        return NextResponse.json(
+          { error: "This location is outside this therapist's service area." },
+          { status: 400 }
+        );
       }
     }
 
