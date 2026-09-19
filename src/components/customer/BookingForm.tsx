@@ -62,7 +62,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
   });
 
   // Active step in checkout workflow:
-  // 1: Therapist & Service, 2: Location, 3: Date & Time, 4: Customer Details, 5: Review
+  // 1: Therapist & Service, 2: Location, 3: Date & Time, 4: Customer Details, 5: Review & Pay
   const [activeStep, setActiveStep] = useState<number>(1);
 
   // Date and Time state
@@ -261,6 +261,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     setIsSubmitting(true);
 
     try {
+      // 1. Create Booking
       const response = await fetch('/api/bookings', {
         method: 'POST',
         headers: {
@@ -286,11 +287,33 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
         return;
       }
 
-      // Success! Redirect to booking confirmation / success page
-      router.push(`/booking/success?id=${resData.booking.id}`);
+      const createdBooking = resData.booking;
+
+      // 2. Initiate PayLio Payment Session
+      const payResponse = await fetch('/api/payments/paylio/create', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bookingId: createdBooking.id,
+          bookingNumber: createdBooking.bookingNumber,
+        }),
+      });
+
+      const payData = await payResponse.json();
+
+      if (payResponse.ok && payData.checkoutUrl) {
+        // Redirect to PayLio Hosted Checkout
+        window.location.href = payData.checkoutUrl;
+      } else {
+        // Fallback to success page with retry option if PayLio setup encounters an issue
+        console.error('PayLio checkout setup error:', payData.error);
+        router.push(`/booking/success?id=${createdBooking.id}&pay_error=1`);
+      }
     } catch (err) {
       console.error('Booking submission error:', err);
-      setServerError('An unexpected error occurred. Please try again.');
+      setServerError('An unexpected error occurred while processing your request. Please try again.');
       setIsSubmitting(false);
     }
   };
@@ -361,7 +384,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
             { id: 2, label: 'Location' },
             { id: 3, label: 'Date & Time' },
             { id: 4, label: 'Customer Details' },
-            { id: 5, label: 'Review' },
+            { id: 5, label: 'Review & Pay' },
           ].map((s) => (
             <button
               key={s.id}
@@ -896,14 +919,14 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
           </section>
         )}
 
-        {/* Step 5: Complete Booking Review */}
+        {/* Step 5: Complete Booking Review & Pay */}
         {activeStep === 5 && (
           <section className="bg-white rounded-3xl border border-emerald-600 ring-2 ring-emerald-600/10 p-6 sm:p-8 shadow-xs transition-all space-y-6">
             <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
               <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold text-sm flex items-center justify-center">
                 5
               </span>
-              <h2 className="text-xl font-bold text-slate-900">Review Booking Details</h2>
+              <h2 className="text-xl font-bold text-slate-900">Review & Complete Payment</h2>
             </div>
 
             <div className="space-y-4 text-sm divide-y divide-slate-100">
@@ -1005,21 +1028,21 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
             </div>
 
             <div className="pt-4 border-t border-slate-200 flex justify-between items-center">
-              <span className="text-base font-bold text-slate-900">Calculated Booking Total</span>
+              <span className="text-base font-bold text-slate-900">Total Booking Amount</span>
               <span className="text-3xl font-extrabold text-emerald-800">
                 ${selectedService ? selectedService.price : 0}
               </span>
             </div>
 
-            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200/80 text-amber-900 space-y-1">
+            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200/80 text-emerald-900 space-y-1">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider">Payment Placeholder</span>
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
-                  Payment Pending
+                <span className="text-xs font-bold uppercase tracking-wider">PayLio Hosted Checkout</span>
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  Card & Crypto
                 </span>
               </div>
-              <p className="text-xs text-amber-800 leading-relaxed">
-                Booking details confirmed. Payment will be completed in the next step. No charge will be made right now.
+              <p className="text-xs text-emerald-800 leading-relaxed">
+                Clicking <strong>&quot;Proceed to Payment&quot;</strong> will safely redirect you to PayLio&apos;s hosted checkout portal. MASSAF never handles or stores raw payment card numbers.
               </p>
             </div>
 
@@ -1046,10 +1069,10 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                     </svg>
-                    <span>Processing Request...</span>
+                    <span>Redirecting to PayLio...</span>
                   </>
                 ) : (
-                  <span>Continue to Payment</span>
+                  <span>Proceed to Payment →</span>
                 )}
               </button>
             </div>
@@ -1161,16 +1184,16 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
               </span>
             </div>
 
-            {/* Payment Placeholder Banner */}
-            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200/80 text-amber-900 space-y-1">
+            {/* Payment Method Info Banner */}
+            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200/80 text-emerald-900 space-y-1">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider">Payment Step</span>
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
-                  Payment Pending
+                <span className="text-xs font-bold uppercase tracking-wider">PayLio Integration</span>
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  Hosted Checkout
                 </span>
               </div>
-              <p className="text-xs text-amber-800 leading-relaxed">
-                Booking details confirmed. Payment will be completed in the next step. No charge will be made right now.
+              <p className="text-xs text-emerald-800 leading-relaxed">
+                Supports credit/debit card & Polygon crypto settlement via PayLio hosted payment page.
               </p>
             </div>
           </div>
