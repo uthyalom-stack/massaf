@@ -1,0 +1,110 @@
+import { NextResponse } from 'next/server';
+import { db } from '@/lib/db';
+import { paylioClient } from '@/lib/paylio';
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    const { bookingId, bookingNumber } = body;
+
+    if (!bookingId && !bookingNumber) {
+      return NextResponse.json(
+        { error: 'Booking identifier is required.' },
+        { status: 400 }
+      );
+    }
+
+    // 1. Fetch booking strictly from database using server authority
+    const booking = await db.booking.findFirst({
+      where: bookingId
+        ? { id: bookingId }
+        : { bookingNumber: bookingNumber },
+      include: {
+        service: true,
+        customer: true,
+      },
+    });
+
+    if (!booking) {
+      return NextResponse.json(
+        { error: 'Booking record not found.' },
+        { status: 404 }
+      );
+    }
+
+    // 2. Validate eligibility
+    if (['CANCELLED', 'REFUNDED'].includes(booking.status)) {
+      return NextResponse.json(
+        { error: 'This booking has been cancelled or refunded and cannot be paid.' },
+        { status: 400 }
+      );
+    }
+
+    if (booking.paymentStatus === 'PAID') {
+      return NextResponse.json(
+        { error: 'This booking has already been paid.' },
+        { status: 400 }
+      );
+    }
+
+    if (!booking.amount || booking.amount <= 0) {
+      return NextResponse.json(
+        { error: 'Invalid booking payment amount.' },
+        { status: 400 }
+      );
+    }
+
+    // 3. Construct application return/cancel URLs
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const returnUrl = `${baseUrl}/booking/success?id=${booking.id}`;
+    const cancelUrl = `${baseUrl}/checkout?bookingId=${booking.id}`;
+
+    // 4. Create or reuse PayLio checkout session
+    let paymentRef = booking.paymentReference;
+    let checkoutUrl = '';
+
+    try {
+      const checkoutSession = await paylioClient.createCheckoutSession({
+        bookingId: booking.id,
+        bookingNumber: booking.bookingNumber,
+        amount: booking.amount, // Derived strictly from server database record
+        description: `MASSAF Massage Booking ${booking.bookingNumber} (${booking.service.name})`,
+        returnUrl,
+        cancelUrl,
+      });
+
+      paymentRef = checkoutSession.paymentReference;
+      checkoutUrl = checkoutSession.checkoutUrl;
+
+      // 5. Update DB with payment reference and paymentStatus PENDING if unpaid
+      await db.booking.update({
+        where: { id: booking.id },
+        data: {
+          paymentReference: paymentRef,
+          paymentStatus: 'PENDING',
+          paymentMethod: 'CARD', // Default hosted checkout option (supports CARD / CRYPTO through PayLio)
+        },
+      });
+    } catch (err) {
+      console.error('Error initiating PayLio payment:', err);
+      return NextResponse.json(
+        { error: 'Failed to initiate checkout session with payment provider. Please try again.' },
+        { status: 502 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      checkoutUrl,
+      paymentReference: paymentRef,
+      bookingNumber: booking.bookingNumber,
+      bookingId: booking.id,
+    });
+  } catch (error) {
+    console.error('Unexpected error in PayLio create payment endpoint:', error);
+    return NextResponse.json(
+      { error: 'An unexpected error occurred while setting up payment.' },
+      { status: 500 }
+    );
+  }
+}
