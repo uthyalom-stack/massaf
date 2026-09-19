@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { paylioClient } from '@/lib/paylio';
+import { paylioClient, confirmVerifiedPayLioPayment } from '@/lib/paylio';
+import { BookingStatus, PaymentStatus } from '@prisma/client';
 
 export async function GET(request: Request) {
   try {
@@ -33,41 +34,24 @@ export async function GET(request: Request) {
       );
     }
 
-    // If payment status in DB is PENDING and paymentReference exists, check if PayLio status has changed
-    let currentPaymentStatus = booking.paymentStatus;
-    let currentBookingStatus = booking.status;
+    let currentPaymentStatus: PaymentStatus = booking.paymentStatus;
+    let currentBookingStatus: BookingStatus = booking.status;
 
+    // If payment status in DB is PENDING and paymentReference exists, re-check PayLio
     if (booking.paymentStatus === 'PENDING' && booking.paymentReference) {
       try {
         const paylioStatus = await paylioClient.getPaymentStatus(booking.paymentReference);
-        if (paylioStatus.status === 'PAID') {
-          // Perform server update if PayLio reflects payment success
-          const updatedBooking = await db.booking.update({
-            where: { id: booking.id },
-            data: {
-              paymentStatus: 'PAID',
-              status: booking.status === 'PENDING' ? 'CONFIRMED' : booking.status,
-            },
-            select: {
-              status: true,
-              paymentStatus: true,
-            },
+        if (paylioStatus.status !== 'PENDING' && paylioStatus.status !== 'UNKNOWN') {
+          const transitionResult = await confirmVerifiedPayLioPayment({
+            bookingId: booking.id,
+            paymentReference: booking.paymentReference,
+            providerStatus: paylioStatus.status,
+            providerAmount: paylioStatus.amount,
+            providerCurrency: paylioStatus.currency,
+            providerMethod: paylioStatus.paymentMethod,
           });
-          currentPaymentStatus = updatedBooking.paymentStatus;
-          currentBookingStatus = updatedBooking.status;
-        } else if (paylioStatus.status === 'FAILED' || paylioStatus.status === 'EXPIRED') {
-          const updatedBooking = await db.booking.update({
-            where: { id: booking.id },
-            data: {
-              paymentStatus: 'FAILED',
-            },
-            select: {
-              status: true,
-              paymentStatus: true,
-            },
-          });
-          currentPaymentStatus = updatedBooking.paymentStatus;
-          currentBookingStatus = updatedBooking.status;
+          currentPaymentStatus = transitionResult.paymentStatus as PaymentStatus;
+          currentBookingStatus = transitionResult.bookingStatus as BookingStatus;
         }
       } catch (checkErr) {
         console.error('Error re-checking PayLio payment status in GET /api/payments/status:', checkErr);
@@ -78,6 +62,7 @@ export async function GET(request: Request) {
       !['CANCELLED', 'REFUNDED'].includes(currentBookingStatus) &&
       currentPaymentStatus !== 'PAID';
 
+    // Strictly limit returned fields to safe customer information
     return NextResponse.json({
       bookingNumber: booking.bookingNumber,
       bookingId: booking.id,

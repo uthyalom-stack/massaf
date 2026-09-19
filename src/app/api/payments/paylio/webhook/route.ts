@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { paylioClient } from '@/lib/paylio';
+import { paylioClient, confirmVerifiedPayLioPayment, PayLioPaymentStatusResult } from '@/lib/paylio';
 
 export async function POST(request: Request) {
   try {
@@ -8,7 +8,6 @@ export async function POST(request: Request) {
     const signature = request.headers.get('x-paylio-signature') || request.headers.get('paylio-signature');
 
     // 1. HMAC Webhook Signature Verification
-    // Skip verification only in test environment if configured
     const skipVerification = process.env.NODE_ENV === 'test' && process.env.PAYLIO_SKIP_SIGNATURE_VERIFY === 'true';
     if (!skipVerification && !paylioClient.verifyWebhookSignature(rawBody, signature)) {
       console.warn('Invalid PayLio webhook signature received');
@@ -29,7 +28,7 @@ export async function POST(request: Request) {
     }
 
     // Extract identifiers from webhook event
-    const paymentRef = (payload.payment_id || payload.paymentId || payload.id || payload.paymentReference) as string | undefined;
+    const paymentRef = (payload.payment_id || payload.id || payload.paymentReference) as string | undefined;
     const bookingNumber = (payload.reference || payload.booking_number || payload.bookingNumber) as string | undefined;
     const bookingId = (payload.booking_id || payload.bookingId) as string | undefined;
 
@@ -72,62 +71,48 @@ export async function POST(request: Request) {
 
     // 4. Server-Side Direct PayLio Status Re-check (Zero Trust in Raw Webhook Body)
     const lookupRef = paymentRef || booking.paymentReference;
-    let verifiedPaymentStatus = 'PENDING';
-    let paymentMethodDetected: 'CARD' | 'CRYPTO' = 'CARD';
+    let providerStatus: PayLioPaymentStatusResult['status'] = 'PENDING';
+    let providerAmount: number | undefined;
+    let providerCurrency: string | undefined;
+    let providerMethod: 'CARD' | 'CRYPTO' | undefined;
 
     if (lookupRef) {
       const paylioStatus = await paylioClient.getPaymentStatus(lookupRef);
-      verifiedPaymentStatus = paylioStatus.status;
-      if (paylioStatus.transactionHash) {
-        paymentMethodDetected = 'CRYPTO';
-      }
+      providerStatus = paylioStatus.status;
+      providerAmount = paylioStatus.amount;
+      providerCurrency = paylioStatus.currency;
+      providerMethod = paylioStatus.paymentMethod;
     } else {
-      // Fallback to payload status mapping if lookupRef unavailable
       const rawPayloadStatus = String(payload.status || payload.event || '').toLowerCase();
       if (['paid', 'completed', 'succeeded', 'payment.succeeded'].includes(rawPayloadStatus)) {
-        verifiedPaymentStatus = 'PAID';
+        providerStatus = 'PAID';
       } else if (['failed', 'declined', 'payment.failed'].includes(rawPayloadStatus)) {
-        verifiedPaymentStatus = 'FAILED';
+        providerStatus = 'FAILED';
       }
     }
 
-    // 5. Update Database State Idempotently
-    if (verifiedPaymentStatus === 'PAID') {
-      await db.booking.update({
-        where: { id: booking.id },
-        data: {
-          paymentStatus: 'PAID',
-          paymentMethod: paymentMethodDetected,
-          paymentReference: lookupRef || booking.paymentReference,
-          status: booking.status === 'PENDING' ? 'CONFIRMED' : booking.status,
-        },
-      });
+    // 5. Centralized Payment Transition Function
+    const transitionResult = await confirmVerifiedPayLioPayment({
+      bookingId: booking.id,
+      paymentReference: lookupRef || booking.paymentReference || '',
+      providerStatus,
+      providerAmount,
+      providerCurrency,
+      providerMethod,
+    });
 
-      return NextResponse.json({
-        message: 'Payment verified and booking updated to PAID/CONFIRMED',
-        bookingNumber: booking.bookingNumber,
-        paymentStatus: 'PAID',
-      });
-    } else if (verifiedPaymentStatus === 'FAILED' || verifiedPaymentStatus === 'EXPIRED') {
-      await db.booking.update({
-        where: { id: booking.id },
-        data: {
-          paymentStatus: 'FAILED',
-          paymentReference: lookupRef || booking.paymentReference,
-        },
-      });
-
-      return NextResponse.json({
-        message: `Payment status updated to ${verifiedPaymentStatus}`,
-        bookingNumber: booking.bookingNumber,
-        paymentStatus: 'FAILED',
-      });
+    if (!transitionResult.success && providerStatus !== 'FAILED') {
+      return NextResponse.json(
+        { error: transitionResult.message },
+        { status: 400 }
+      );
     }
 
     return NextResponse.json({
-      message: 'Webhook received. Payment status remains pending.',
+      message: transitionResult.message,
       bookingNumber: booking.bookingNumber,
-      paymentStatus: booking.paymentStatus,
+      status: transitionResult.bookingStatus,
+      paymentStatus: transitionResult.paymentStatus,
     });
   } catch (error) {
     console.error('Error processing PayLio webhook:', error);

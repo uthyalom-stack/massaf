@@ -59,12 +59,12 @@ export async function POST(request: Request) {
     const returnUrl = `${baseUrl}/booking/success?id=${booking.id}`;
     const cancelUrl = `${baseUrl}/checkout?bookingId=${booking.id}`;
 
-    // 4. Create or reuse PayLio checkout session
+    // 4. Create PayLio payment session
     let paymentRef = booking.paymentReference;
     let checkoutUrl = '';
 
     try {
-      const checkoutSession = await paylioClient.createCheckoutSession({
+      const checkoutSession = await paylioClient.createPayment({
         bookingId: booking.id,
         bookingNumber: booking.bookingNumber,
         amount: booking.amount, // Derived strictly from server database record
@@ -77,12 +77,12 @@ export async function POST(request: Request) {
       checkoutUrl = checkoutSession.checkoutUrl;
 
       // 5. Update DB with payment reference and paymentStatus PENDING if unpaid
+      // NOTE: Do NOT set paymentMethod here; preserve null or current method until provider confirms actual method paid
       await db.booking.update({
         where: { id: booking.id },
         data: {
           paymentReference: paymentRef,
           paymentStatus: 'PENDING',
-          paymentMethod: 'CARD', // Default hosted checkout option (supports CARD / CRYPTO through PayLio)
         },
       });
     } catch (err) {

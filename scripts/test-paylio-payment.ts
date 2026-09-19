@@ -4,6 +4,13 @@ import { db } from '../src/lib/db';
 async function testPayLioPaymentFlow() {
   console.log('--- STARTING AUTOMATED PAYLIO PAYMENT FLOW TESTS ---');
 
+  // Safety Guard: Require explicitly designated test environment / test database
+  const dbUrl = process.env.TURSO_DATABASE_URL || '';
+  if (!dbUrl.includes('dev.db') && !process.env.ALLOW_TEST_DB) {
+    console.error('❌ SAFETY GUARD TRIGGERED: test:paylio can only run against a local dev.db or test database.');
+    process.exit(1);
+  }
+
   const webhookSecret = process.env.PAYLIO_WEBHOOK_SECRET || 'test_webhook_secret_key_123';
 
   let testTherapistId = '';
@@ -321,11 +328,13 @@ async function testPayLioPaymentFlow() {
     process.exit(1);
   } finally {
     console.log('Cleaning up test records...');
-    if (testBookingId) {
-      await db.booking.deleteMany({ where: { customerId } });
-    }
-    if (customerId) {
-      await db.customer.deleteMany({ where: { id: customerId } });
+    try {
+      if (customerId) {
+        await db.booking.deleteMany({ where: { customerId } });
+        await db.customer.deleteMany({ where: { id: customerId } });
+      }
+    } catch (cleanupErr) {
+      console.error('Cleanup error:', cleanupErr);
     }
     await db.$disconnect();
   }
