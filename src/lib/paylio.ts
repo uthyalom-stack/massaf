@@ -70,7 +70,7 @@ export class PayLioClient {
    */
   async createWalletPayment(params: CreatePayLioWalletParams): Promise<CreatePayLioWalletResult> {
     if (this.isMockModeAllowed()) {
-      const mockToken = `paylio_ipn_${params.bookingNumber}_${Date.now()}`;
+      const mockToken = `paylio_ipn_created_${params.bookingNumber}_${Date.now()}`;
       return {
         paymentId: `paylio_id_${Date.now()}`,
         ipnToken: mockToken,
@@ -139,7 +139,7 @@ export class PayLioClient {
    */
   async getPaymentStatus(ipnToken: string): Promise<PayLioPaymentStatusResult> {
     if (this.isMockModeAllowed()) {
-      if (ipnToken.includes('mock_failed')) {
+      if (ipnToken.includes('mock_failed') || ipnToken.includes('paylio_ipn_failed')) {
         return {
           ipnToken,
           status: 'FAILED',
@@ -149,7 +149,7 @@ export class PayLioClient {
           currency: 'USD',
         };
       }
-      if (ipnToken.includes('mock_paid') || ipnToken.includes('paylio_ipn_')) {
+      if (ipnToken.includes('mock_paid') || ipnToken.includes('paylio_ipn_paid')) {
         return {
           ipnToken,
           status: 'PAID',
