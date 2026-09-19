@@ -6,7 +6,7 @@ import { paylioClient, confirmVerifiedPayLioPayment } from '@/lib/paylio';
  * PayLio GET Callback Route
  * PayLio performs a GET request to this callback URL after a payment attempt.
  * Parameters from query string are UNTRUSTED and verified server-to-server.
- * Returns HTTP 200/400/500 JSON response to PayLio provider request.
+ * Returns HTTP 200/400/500 JSON response directly to PayLio provider request.
  */
 export async function GET(request: Request) {
   try {
@@ -14,51 +14,47 @@ export async function GET(request: Request) {
     const bookingIdParam = searchParams.get('bookingId');
     const ipnTokenParam = searchParams.get('ipn_token') || searchParams.get('token');
 
-    if (!bookingIdParam && !ipnTokenParam) {
+    // 1. Require PayLio ipn_token parameter
+    if (!ipnTokenParam || ipnTokenParam.trim().length === 0) {
+      console.warn('[SECURITY WARNING] PayLio callback received without required ipn_token parameter');
       return NextResponse.json(
-        { error: 'Missing bookingId or ipn_token parameter in callback' },
+        { error: 'Missing required ipn_token parameter in callback' },
         { status: 400 }
       );
     }
 
-    // 1. Identify booking
-    const orConditions: Array<{ id?: string; paymentReference?: string }> = [];
-    if (bookingIdParam) orConditions.push({ id: bookingIdParam });
-    if (ipnTokenParam) orConditions.push({ paymentReference: ipnTokenParam });
+    const suppliedToken = ipnTokenParam.trim();
 
-    const booking = await db.booking.findFirst({
-      where: {
-        OR: orConditions,
-      },
-    });
+    // 2. Identify booking
+    let booking = null;
+    if (bookingIdParam) {
+      booking = await db.booking.findUnique({
+        where: { id: bookingIdParam },
+      });
+    } else {
+      booking = await db.booking.findFirst({
+        where: { paymentReference: suppliedToken },
+      });
+    }
 
     if (!booking) {
-      console.warn('PayLio callback received for non-existent booking:', { bookingIdParam, ipnTokenParam });
+      console.warn('PayLio callback received for non-existent booking:', { bookingIdParam, suppliedToken });
       return NextResponse.json(
         { error: 'Booking record not found' },
         { status: 404 }
       );
     }
 
-    const targetToken = ipnTokenParam || booking.paymentReference;
-
-    if (!targetToken) {
-      return NextResponse.json(
-        { error: 'No ipn_token associated with this booking' },
-        { status: 400 }
-      );
-    }
-
-    // 2. Token Ownership Enforcement
-    if (booking.paymentReference && booking.paymentReference !== targetToken) {
-      console.warn(`[SECURITY WARNING] PayLio callback token mismatch for booking ${booking.bookingNumber}. Stored: "${booking.paymentReference}", Supplied: "${targetToken}"`);
+    // 3. Strict Token Ownership Guard: booking.paymentReference MUST equal supplied ipn_token
+    if (!booking.paymentReference || booking.paymentReference !== suppliedToken) {
+      console.warn(`[SECURITY WARNING] Token ownership mismatch in callback for booking ${booking.bookingNumber}. Stored token: "${booking.paymentReference}", Supplied token: "${suppliedToken}"`);
       return NextResponse.json(
         { error: 'Supplied ipn_token does not match payment reference stored on booking' },
         { status: 400 }
       );
     }
 
-    // 3. Idempotency Check
+    // 4. Idempotency Check: If already marked PAID, return 200 OK immediately
     if (booking.paymentStatus === 'PAID') {
       return NextResponse.json({
         message: 'Callback processed idempotently (booking already PAID)',
@@ -68,8 +64,8 @@ export async function GET(request: Request) {
       });
     }
 
-    // 4. Server-to-Server PayLio Status Verification
-    const paylioStatus = await paylioClient.getPaymentStatus(targetToken);
+    // 5. Server-to-Server PayLio Status Verification (Zero Trust in Callback Query String)
+    const paylioStatus = await paylioClient.getPaymentStatus(suppliedToken);
 
     if (paylioStatus.status === 'UNKNOWN') {
       return NextResponse.json(
@@ -78,10 +74,10 @@ export async function GET(request: Request) {
       );
     }
 
-    // 5. Centralized Payment Transition
+    // 6. Centralized Payment Transition Function
     const transitionResult = await confirmVerifiedPayLioPayment({
       bookingId: booking.id,
-      ipnToken: targetToken,
+      ipnToken: suppliedToken,
       providerStatus: paylioStatus.status,
       providerOriginalAmount: paylioStatus.originalAmount,
       providerCurrency: paylioStatus.currency,
