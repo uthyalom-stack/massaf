@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { paylioClient, confirmVerifiedPayLioPayment } from '@/lib/paylio';
-import { BookingStatus, PaymentStatus } from '@prisma/client';
 
 export async function GET(request: Request) {
   try {
@@ -34,15 +33,14 @@ export async function GET(request: Request) {
       );
     }
 
-    let currentPaymentStatus: PaymentStatus = booking.paymentStatus;
-    let currentBookingStatus: BookingStatus = booking.status;
+    let updatedBooking = booking;
 
     // If payment status in DB is PENDING and paymentReference (ipn_token) exists, re-check PayLio status
     if (booking.paymentStatus === 'PENDING' && booking.paymentReference) {
       try {
         const paylioStatus = await paylioClient.getPaymentStatus(booking.paymentReference);
         if (paylioStatus.status !== 'PENDING' && paylioStatus.status !== 'UNKNOWN') {
-          const transitionResult = await confirmVerifiedPayLioPayment({
+          await confirmVerifiedPayLioPayment({
             bookingId: booking.id,
             ipnToken: booking.paymentReference,
             providerStatus: paylioStatus.status,
@@ -50,8 +48,15 @@ export async function GET(request: Request) {
             providerCurrency: paylioStatus.currency,
             providerMethod: paylioStatus.paymentMethod,
           });
-          currentPaymentStatus = transitionResult.paymentStatus as PaymentStatus;
-          currentBookingStatus = transitionResult.bookingStatus as BookingStatus;
+
+          // Reload booking from DB to ensure fresh paymentStatus, status, and paymentMethod
+          const reloaded = await db.booking.findUnique({
+            where: { id: booking.id },
+            include: { service: true },
+          });
+          if (reloaded) {
+            updatedBooking = reloaded;
+          }
         }
       } catch (checkErr) {
         console.error('Error re-checking PayLio payment status in GET /api/payments/status:', checkErr);
@@ -59,18 +64,18 @@ export async function GET(request: Request) {
     }
 
     const isPayable =
-      !['CANCELLED', 'REFUNDED'].includes(currentBookingStatus) &&
-      currentPaymentStatus !== 'PAID';
+      !['CANCELLED', 'REFUNDED'].includes(updatedBooking.status) &&
+      updatedBooking.paymentStatus !== 'PAID';
 
     // Strictly limit returned fields to safe customer information
     return NextResponse.json({
-      bookingNumber: booking.bookingNumber,
-      bookingId: booking.id,
-      status: currentBookingStatus,
-      paymentStatus: currentPaymentStatus,
-      paymentMethod: booking.paymentMethod,
-      amount: booking.amount,
-      serviceName: booking.service.name,
+      bookingNumber: updatedBooking.bookingNumber,
+      bookingId: updatedBooking.id,
+      status: updatedBooking.status,
+      paymentStatus: updatedBooking.paymentStatus,
+      paymentMethod: updatedBooking.paymentMethod,
+      amount: updatedBooking.amount,
+      serviceName: updatedBooking.service.name,
       isPayable,
     });
   } catch (error) {

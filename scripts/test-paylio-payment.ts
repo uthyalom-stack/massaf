@@ -271,6 +271,42 @@ async function testPayLioPaymentFlow() {
     }
     console.log('✓ TEST 9 PASSED: Already-paid booking payment creation blocked.');
 
+    // TEST 10: Provider PAID response with missing originalAmount cannot mark payment PAID -> 400
+    console.log('\nTEST 10: Provider PAID response with missing originalAmount rejected...');
+    const mockMissingAmountToken = `mock_missing_amount_${Date.now()}`;
+    await db.booking.update({
+      where: { id: testBookingIdB },
+      data: { paymentReference: mockMissingAmountToken, paymentStatus: 'PENDING' },
+    });
+
+    const missingAmountRes = await fetch(`${BASE_URL}/api/payments/paylio/callback?bookingId=${testBookingIdB}&ipn_token=${mockMissingAmountToken}`);
+    if (missingAmountRes.status !== 400) {
+      throw new Error(`Expected HTTP 400 when provider original_amount is missing, got ${missingAmountRes.status}`);
+    }
+    const missingAmountBookingInDb = await db.booking.findUniqueOrThrow({ where: { id: testBookingIdB } });
+    if (missingAmountBookingInDb.paymentStatus === 'PAID') {
+      throw new Error('Booking marked PAID despite missing provider original_amount!');
+    }
+    console.log('✓ TEST 10 PASSED: Provider response missing original_amount rejected with HTTP 400.');
+
+    // TEST 11: Provider PAID response with missing currency cannot mark payment PAID -> 400
+    console.log('\nTEST 11: Provider PAID response with missing currency rejected...');
+    const mockMissingCurrencyToken = `mock_missing_currency_${Date.now()}`;
+    await db.booking.update({
+      where: { id: testBookingIdB },
+      data: { paymentReference: mockMissingCurrencyToken, paymentStatus: 'PENDING' },
+    });
+
+    const missingCurrencyRes = await fetch(`${BASE_URL}/api/payments/paylio/callback?bookingId=${testBookingIdB}&ipn_token=${mockMissingCurrencyToken}`);
+    if (missingCurrencyRes.status !== 400) {
+      throw new Error(`Expected HTTP 400 when provider currency is missing, got ${missingCurrencyRes.status}`);
+    }
+    const missingCurrencyBookingInDb = await db.booking.findUniqueOrThrow({ where: { id: testBookingIdB } });
+    if (missingCurrencyBookingInDb.paymentStatus === 'PAID') {
+      throw new Error('Booking marked PAID despite missing provider currency!');
+    }
+    console.log('✓ TEST 11 PASSED: Provider response missing currency rejected with HTTP 400.');
+
     // TEST 12: Unpaid provider status does not become PAID
     console.log('\nTEST 12: Unpaid provider status does not become PAID...');
     const statusUnpaidRes = await fetch(`${BASE_URL}/api/payments/status?bookingId=${testBookingIdB}`);
@@ -324,8 +360,8 @@ async function testPayLioPaymentFlow() {
     console.log('\nTEST 16 & 17: Production Mock Mode Guard Safety Check...');
     const origEnv = process.env.NODE_ENV;
     try {
-      (process.env as Record<string, string>).NODE_ENV = 'production';
-      (process.env as Record<string, string>).PAYLIO_MOCK_MODE = 'true';
+      (process.env as unknown as Record<string, string>).NODE_ENV = 'production';
+      (process.env as unknown as Record<string, string>).PAYLIO_MOCK_MODE = 'true';
 
       const prodClient = new PayLioClient();
       let prodMockErrorThrown = false;
@@ -347,7 +383,7 @@ async function testPayLioPaymentFlow() {
 
       console.log('✓ TEST 16 & 17 PASSED: PayLioClient production guard strictly blocked mock mode in NODE_ENV=production.');
     } finally {
-      (process.env as Record<string, string>).NODE_ENV = origEnv;
+      (process.env as unknown as Record<string, string>).NODE_ENV = origEnv;
     }
 
     console.log('\n======================================================');

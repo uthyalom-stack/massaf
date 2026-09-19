@@ -149,6 +149,24 @@ export class PayLioClient {
           currency: 'USD',
         };
       }
+      if (ipnToken.includes('mock_missing_amount')) {
+        return {
+          ipnToken,
+          status: 'PAID',
+          rawStatus: 'paid',
+          forwardStatus: 'completed',
+          currency: 'USD',
+        };
+      }
+      if (ipnToken.includes('mock_missing_currency')) {
+        return {
+          ipnToken,
+          status: 'PAID',
+          rawStatus: 'paid',
+          forwardStatus: 'completed',
+          originalAmount: 150.0,
+        };
+      }
       if (ipnToken.includes('mock_paid') || ipnToken.includes('paylio_ipn_paid')) {
         return {
           ipnToken,
@@ -212,9 +230,9 @@ export class PayLioClient {
       status: mappedStatus,
       rawStatus,
       forwardStatus,
-      originalAmount: data.original_amount ? Number(data.original_amount) : data.amount ? Number(data.amount) : undefined,
+      originalAmount: typeof data.original_amount !== 'undefined' && data.original_amount !== null ? Number(data.original_amount) : typeof data.amount !== 'undefined' && data.amount !== null ? Number(data.amount) : undefined,
       amount: data.amount ? Number(data.amount) : undefined,
-      currency: data.currency ? String(data.currency).toUpperCase() : 'USD',
+      currency: data.currency ? String(data.currency).toUpperCase() : undefined,
       paymentMethod: data.payment_type === 'crypto' || data.tx_hash ? 'CRYPTO' : 'CARD',
       transactionHash: data.tx_hash || undefined,
     };
@@ -245,8 +263,8 @@ export interface ConfirmPaymentResult {
  * 1. Booking existence
  * 2. Token ownership: booking.paymentReference MUST match supplied ipnToken
  * 3. Status === 'PAID'
- * 4. Currency === 'USD'
- * 5. Provider original_amount matches database booking amount
+ * 4. Currency === 'USD' (Strictly required for PAID status)
+ * 5. Provider original_amount matches database booking amount (Strictly required for PAID status)
  */
 export async function confirmVerifiedPayLioPayment(
   options: ConfirmPaymentOptions
@@ -320,29 +338,37 @@ export async function confirmVerifiedPayLioPayment(
     };
   }
 
-  // 5. Currency Verification
-  if (options.providerCurrency && options.providerCurrency.toUpperCase() !== 'USD') {
-    console.error(`PayLio currency mismatch for booking ${booking.bookingNumber}: expected USD, got ${options.providerCurrency}`);
+  // 5. Currency Verification: Required for PAID status
+  if (!options.providerCurrency || options.providerCurrency.toUpperCase() !== 'USD') {
+    console.error(`PayLio currency verification failed for booking ${booking.bookingNumber}: currency="${options.providerCurrency}". Expected USD.`);
     return {
       success: false,
-      message: `Unexpected payment currency: ${options.providerCurrency}. Expected USD.`,
+      message: `Payment currency missing or invalid (${options.providerCurrency}). Expected USD.`,
       bookingStatus: booking.status,
       paymentStatus: booking.paymentStatus,
     };
   }
 
-  // 6. Amount Verification: DB booking amount vs provider original_amount
-  if (typeof options.providerOriginalAmount === 'number') {
-    const diff = Math.abs(options.providerOriginalAmount - booking.amount);
-    if (diff > 0.01) {
-      console.error(`PayLio amount mismatch for booking ${booking.bookingNumber}: DB authoritative amount $${booking.amount}, provider original_amount $${options.providerOriginalAmount}`);
-      return {
-        success: false,
-        message: `Payment original_amount $${options.providerOriginalAmount} does not match expected booking amount $${booking.amount}.`,
-        bookingStatus: booking.status,
-        paymentStatus: booking.paymentStatus,
-      };
-    }
+  // 6. Amount Verification: provider original_amount must exist and match DB booking amount
+  if (typeof options.providerOriginalAmount !== 'number') {
+    console.error(`PayLio amount verification failed for booking ${booking.bookingNumber}: provider original_amount is missing.`);
+    return {
+      success: false,
+      message: 'Provider payment original_amount is missing in verification response.',
+      bookingStatus: booking.status,
+      paymentStatus: booking.paymentStatus,
+    };
+  }
+
+  const diff = Math.abs(options.providerOriginalAmount - booking.amount);
+  if (diff > 0.01) {
+    console.error(`PayLio amount mismatch for booking ${booking.bookingNumber}: DB authoritative amount $${booking.amount}, provider original_amount $${options.providerOriginalAmount}`);
+    return {
+      success: false,
+      message: `Payment original_amount $${options.providerOriginalAmount} does not match expected booking amount $${booking.amount}.`,
+      bookingStatus: booking.status,
+      paymentStatus: booking.paymentStatus,
+    };
   }
 
   // 7. Execute atomic state transition to PAID and CONFIRMED
