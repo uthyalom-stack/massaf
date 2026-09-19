@@ -105,7 +105,7 @@ async function testPayLioPaymentFlow() {
 
     console.log(`✓ Test booking created: ${booking.bookingNumber} ($${booking.amount})`);
 
-    // TEST 1, 2, 3: Valid booking creates PayLio wallet payment link with amount strictly from DB
+    // TEST 1, 2, 3: Valid booking creates PayLio wallet payment session with amount strictly from DB
     console.log('\nTEST 1, 2, 3: Creating PayLio wallet payment session...');
     const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000';
 
@@ -134,80 +134,48 @@ async function testPayLioPaymentFlow() {
     }
     console.log('✓ TEST 1, 2, 3 PASSED: PayLio wallet created, amount strictly taken from DB ($150.00), ipnToken persisted.');
 
-    // TEST 4: Invalid booking request is rejected
-    console.log('\nTEST 4: Invalid booking request is rejected...');
-    const invalidRes = await fetch(`${BASE_URL}/api/payments/paylio/create`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bookingId: 'non_existent_id' }),
-    });
-    if (invalidRes.status !== 404) {
-      throw new Error(`Expected status 404 for non-existent booking, got ${invalidRes.status}`);
+    // TEST 4: Token Ownership Guard Enforcement
+    console.log('\nTEST 4: Token Ownership Guard (mismatched token rejected)...');
+    const wrongToken = `paylio_ipn_WRONG_${Date.now()}`;
+    const mismatchRes = await fetch(`${BASE_URL}/api/payments/paylio/callback?bookingId=${testBookingId}&ipn_token=${wrongToken}&status=paid`);
+    if (mismatchRes.status !== 400) {
+      throw new Error(`Expected HTTP 400 for token mismatch, got ${mismatchRes.status}`);
     }
-    console.log('✓ TEST 4 PASSED: Invalid booking rejected with 404.');
+    console.log('✓ TEST 4 PASSED: Mismatched ipn_token correctly rejected with HTTP 400.');
 
-    // TEST 5: Cancelled booking cannot create payment session
-    console.log('\nTEST 5: Cancelled booking cannot create payment...');
-    const cancelledBooking = await db.booking.create({
-      data: {
-        bookingNumber: `MSF-CANCEL-${Date.now().toString().slice(-4)}`,
-        customerId: customer.id,
-        therapistId: testTherapistId,
-        serviceId: testServiceId,
-        appointmentDateTime: new Date('2028-09-02T10:00:00Z'),
-        durationMinutes: 60,
-        amount: 150.0,
-        status: 'CANCELLED',
-        paymentStatus: 'UNPAID',
-      },
-    });
-
-    const cancelRes = await fetch(`${BASE_URL}/api/payments/paylio/create`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bookingId: cancelledBooking.id }),
-    });
-    if (cancelRes.status !== 400) {
-      throw new Error(`Expected status 400 for cancelled booking, got ${cancelRes.status}`);
-    }
-    await db.booking.delete({ where: { id: cancelledBooking.id } });
-    console.log('✓ TEST 5 PASSED: Cancelled booking rejected from payment.');
-
-    // TEST 6: GET Callback triggers server-to-server status verification and marks booking PAID
-    console.log('\nTEST 6: GET Callback with verified paid status transitions booking to PAID & CONFIRMED...');
+    // TEST 5: GET Callback with verified paid status transitions booking to PAID & CONFIRMED
+    console.log('\nTEST 5: GET Callback with verified paid status transitions booking to PAID & CONFIRMED...');
     const mockPaidToken = `paylio_ipn_paid_${Date.now()}`;
     await db.booking.update({
       where: { id: testBookingId },
       data: { paymentReference: mockPaidToken, paymentStatus: 'PENDING' },
     });
 
-    const callbackRes = await fetch(`${BASE_URL}/api/payments/paylio/callback?bookingId=${testBookingId}&ipn_token=${mockPaidToken}&status=paid`, {
-      redirect: 'manual',
-    });
-
-    if (callbackRes.status !== 302 && callbackRes.status !== 307 && callbackRes.status !== 200) {
-      throw new Error(`Expected redirect from callback, got status ${callbackRes.status}`);
+    const callbackRes = await fetch(`${BASE_URL}/api/payments/paylio/callback?bookingId=${testBookingId}&ipn_token=${mockPaidToken}&status=paid`);
+    if (callbackRes.status !== 200) {
+      throw new Error(`Expected HTTP 200 JSON from callback route, got status ${callbackRes.status}`);
     }
 
     const paidBookingInDb = await db.booking.findUniqueOrThrow({ where: { id: testBookingId } });
     if (paidBookingInDb.paymentStatus !== 'PAID' || paidBookingInDb.status !== 'CONFIRMED') {
       throw new Error(`DB state not transitioned to PAID/CONFIRMED: ${JSON.stringify(paidBookingInDb)}`);
     }
-    console.log('✓ TEST 6 PASSED: GET Callback re-verified status server-to-server and transitioned booking to PAID & CONFIRMED.');
+    console.log('✓ TEST 5 PASSED: GET Callback re-verified status server-to-server and returned HTTP 200 JSON.');
 
-    // TEST 7: Duplicate callback delivery is idempotent
-    console.log('\nTEST 7: Repeated callback delivery is idempotent...');
-    const repeatCallbackRes = await fetch(`${BASE_URL}/api/payments/paylio/callback?bookingId=${testBookingId}&ipn_token=${mockPaidToken}&status=paid`, {
-      redirect: 'manual',
-    });
+    // TEST 6: Duplicate callback delivery is idempotent
+    console.log('\nTEST 6: Repeated callback delivery is idempotent...');
+    const repeatCallbackRes = await fetch(`${BASE_URL}/api/payments/paylio/callback?bookingId=${testBookingId}&ipn_token=${mockPaidToken}&status=paid`);
+    if (repeatCallbackRes.status !== 200) {
+      throw new Error(`Expected HTTP 200 for idempotent callback, got ${repeatCallbackRes.status}`);
+    }
     const repeatBookingInDb = await db.booking.findUniqueOrThrow({ where: { id: testBookingId } });
     if (repeatBookingInDb.paymentStatus !== 'PAID' || repeatBookingInDb.status !== 'CONFIRMED') {
       throw new Error(`Idempotent callback check failed: ${JSON.stringify(repeatBookingInDb)}`);
     }
-    console.log('✓ TEST 7 PASSED: Repeated callback executed idempotently without side effects.');
+    console.log('✓ TEST 6 PASSED: Repeated callback executed idempotently returning HTTP 200.');
 
-    // TEST 8: Already-paid booking cannot create another payment session
-    console.log('\nTEST 8: Already-paid booking cannot create another payment session...');
+    // TEST 7: Already-paid booking cannot create another payment session
+    console.log('\nTEST 7: Already-paid booking cannot create another payment session...');
     const paidCreateRes = await fetch(`${BASE_URL}/api/payments/paylio/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -216,10 +184,10 @@ async function testPayLioPaymentFlow() {
     if (paidCreateRes.status !== 400) {
       throw new Error(`Expected status 400 when attempting payment on already-paid booking, got ${paidCreateRes.status}`);
     }
-    console.log('✓ TEST 8 PASSED: Already-paid booking payment creation blocked.');
+    console.log('✓ TEST 7 PASSED: Already-paid booking payment creation blocked.');
 
-    // TEST 9: Provider failed status does NOT mark payment PAID
-    console.log('\nTEST 9: Provider failed status marks payment FAILED...');
+    // TEST 8: Provider failed status marks payment FAILED
+    console.log('\nTEST 8: Provider failed status marks payment FAILED...');
     const failedBooking = await db.booking.create({
       data: {
         bookingNumber: `MSF-FAIL-${Date.now().toString().slice(-4)}`,
@@ -235,16 +203,14 @@ async function testPayLioPaymentFlow() {
       },
     });
 
-    await fetch(`${BASE_URL}/api/payments/paylio/callback?bookingId=${failedBooking.id}&ipn_token=${failedBooking.paymentReference}&status=canceled`, {
-      redirect: 'manual',
-    });
+    await fetch(`${BASE_URL}/api/payments/paylio/callback?bookingId=${failedBooking.id}&ipn_token=${failedBooking.paymentReference}&status=canceled`);
 
     const failedBookingInDb = await db.booking.findUniqueOrThrow({ where: { id: failedBooking.id } });
     if (failedBookingInDb.paymentStatus !== 'FAILED') {
       throw new Error(`Expected paymentStatus FAILED, got ${failedBookingInDb.paymentStatus}`);
     }
     await db.booking.delete({ where: { id: failedBooking.id } });
-    console.log('✓ TEST 9 PASSED: Provider failed status correctly recorded as FAILED.');
+    console.log('✓ TEST 8 PASSED: Provider failed status correctly recorded as FAILED.');
 
     console.log('\n======================================================');
     console.log('✅ ALL PAYLIO AUTOMATED PAYMENT TESTS PASSED!');

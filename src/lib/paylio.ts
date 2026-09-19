@@ -55,15 +55,26 @@ export class PayLioClient {
   }
 
   /**
+   * Helper checking whether PayLio mock mode is allowed.
+   * Mock mode is STRICTLY prohibited in production environments.
+   */
+  private isMockModeAllowed(): boolean {
+    if (process.env.NODE_ENV === 'production') {
+      return false;
+    }
+    return process.env.NODE_ENV === 'test' || process.env.PAYLIO_MOCK_MODE === 'true';
+  }
+
+  /**
    * Creates a hosted PayLio card-funded wallet/checkout payment link
    */
   async createWalletPayment(params: CreatePayLioWalletParams): Promise<CreatePayLioWalletResult> {
-    if (process.env.NODE_ENV === 'test' || process.env.PAYLIO_MOCK_MODE === 'true') {
+    if (this.isMockModeAllowed()) {
       const mockToken = `paylio_ipn_${params.bookingNumber}_${Date.now()}`;
       return {
         paymentId: `paylio_id_${Date.now()}`,
         ipnToken: mockToken,
-        checkoutUrl: `${params.callbackUrl}?ipn_token=${mockToken}&status=paid`,
+        checkoutUrl: `${params.callbackUrl}&ipn_token=${mockToken}&status=paid`,
         status: 'unpaid',
         originalAmount: params.amount,
         amount: params.amount,
@@ -127,7 +138,7 @@ export class PayLioClient {
    * Re-queries PayLio server-side directly to verify payment status using ipn_token
    */
   async getPaymentStatus(ipnToken: string): Promise<PayLioPaymentStatusResult> {
-    if (process.env.NODE_ENV === 'test' || process.env.PAYLIO_MOCK_MODE === 'true') {
+    if (this.isMockModeAllowed()) {
       if (ipnToken.includes('mock_failed')) {
         return {
           ipnToken,
@@ -230,7 +241,12 @@ export interface ConfirmPaymentResult {
 
 /**
  * Centralized, authoritative server-side payment state transition function.
- * Verifies booking ID, token match, status, currency, and original_amount against database booking amount.
+ * Enforces:
+ * 1. Booking existence
+ * 2. Token ownership: booking.paymentReference MUST match supplied ipnToken
+ * 3. Status === 'PAID'
+ * 4. Currency === 'USD'
+ * 5. Provider original_amount matches database booking amount
  */
 export async function confirmVerifiedPayLioPayment(
   options: ConfirmPaymentOptions
@@ -248,7 +264,18 @@ export async function confirmVerifiedPayLioPayment(
     };
   }
 
-  // 1. Idempotency: If already PAID, safely return current state
+  // 1. Token Ownership Check: The PayLio ipn_token MUST match the stored booking.paymentReference
+  if (!booking.paymentReference || booking.paymentReference !== options.ipnToken) {
+    console.warn(`[SECURITY WARNING] Token ownership mismatch for booking ${booking.bookingNumber}. Stored token: "${booking.paymentReference}", supplied token: "${options.ipnToken}"`);
+    return {
+      success: false,
+      message: 'PayLio ipn_token does not match the payment reference stored on this booking.',
+      bookingStatus: booking.status,
+      paymentStatus: booking.paymentStatus,
+    };
+  }
+
+  // 2. Idempotency: If already PAID, safely return current state
   if (booking.paymentStatus === 'PAID') {
     return {
       success: true,
@@ -258,7 +285,7 @@ export async function confirmVerifiedPayLioPayment(
     };
   }
 
-  // 2. Reject if booking is cancelled or refunded
+  // 3. Reject if booking is cancelled or refunded
   if (['CANCELLED', 'REFUNDED'].includes(booking.status)) {
     return {
       success: false,
@@ -268,14 +295,13 @@ export async function confirmVerifiedPayLioPayment(
     };
   }
 
-  // 3. Status Check: Must be PAID
+  // 4. Status Check: Must be PAID
   if (options.providerStatus !== 'PAID') {
     if (['FAILED', 'EXPIRED', 'CANCELLED'].includes(options.providerStatus)) {
       await db.booking.update({
         where: { id: booking.id },
         data: {
           paymentStatus: 'FAILED',
-          paymentReference: options.ipnToken || booking.paymentReference,
         },
       });
       return {
@@ -294,7 +320,7 @@ export async function confirmVerifiedPayLioPayment(
     };
   }
 
-  // 4. Currency Verification
+  // 5. Currency Verification
   if (options.providerCurrency && options.providerCurrency.toUpperCase() !== 'USD') {
     console.error(`PayLio currency mismatch for booking ${booking.bookingNumber}: expected USD, got ${options.providerCurrency}`);
     return {
@@ -305,7 +331,7 @@ export async function confirmVerifiedPayLioPayment(
     };
   }
 
-  // 5. Amount Verification: DB booking amount vs provider original_amount
+  // 6. Amount Verification: DB booking amount vs provider original_amount
   if (typeof options.providerOriginalAmount === 'number') {
     const diff = Math.abs(options.providerOriginalAmount - booking.amount);
     if (diff > 0.01) {
@@ -319,13 +345,12 @@ export async function confirmVerifiedPayLioPayment(
     }
   }
 
-  // 6. Execute atomic state transition to PAID and CONFIRMED
+  // 7. Execute atomic state transition to PAID and CONFIRMED
   const updatedBooking = await db.booking.update({
     where: { id: booking.id },
     data: {
       paymentStatus: 'PAID',
       paymentMethod: options.providerMethod || 'CARD',
-      paymentReference: options.ipnToken || booking.paymentReference,
       status: booking.status === 'PENDING' ? 'CONFIRMED' : booking.status,
     },
   });
