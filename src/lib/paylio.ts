@@ -1,65 +1,72 @@
-import crypto from 'crypto';
 import { db } from '@/lib/db';
 
-export interface CreatePayLioPaymentParams {
+export interface CreatePayLioWalletParams {
   bookingId: string;
   bookingNumber: string;
   amount: number; // in USD
-  description: string;
-  returnUrl: string;
-  cancelUrl: string;
+  customerEmail?: string;
+  callbackUrl: string;
+  notes?: string;
 }
 
-export interface CreatePayLioPaymentResult {
-  paymentReference: string;
+export interface CreatePayLioWalletResult {
+  paymentId: string;
+  ipnToken: string;
   checkoutUrl: string;
   status: string;
+  originalAmount?: number;
+  amount?: number;
 }
 
 export interface PayLioPaymentStatusResult {
-  paymentReference: string;
+  paymentId?: string;
+  ipnToken: string;
   status: 'PAID' | 'PENDING' | 'FAILED' | 'EXPIRED' | 'CANCELLED' | 'UNKNOWN';
+  rawStatus?: string;
+  forwardStatus?: string;
+  originalAmount?: number;
   amount?: number;
   currency?: string;
   paymentMethod?: 'CARD' | 'CRYPTO';
   transactionHash?: string;
-  rawStatus?: string;
 }
 
 /**
  * Server-only PayLio API Client Utility
- * Implements standard PayLio REST API specs:
- * - Payment Link / Checkout creation: POST /v1/payments
- * - Status query: GET /v1/payments/{id}
- * - Webhook HMAC SHA-256 validation on raw body
+ * Implements official PayLio REST API specs:
+ * Base URL: https://paylio.org/api/v1
+ * Create hosted checkout / wallet: POST /api/v1/wallet
+ * Payment status check: GET /api/v1/payment-status?ipn_token=<TOKEN>
+ * PayLio GET callback workflow
  */
 export class PayLioClient {
   private apiKey: string;
   private apiUrl: string;
-  private webhookSecret: string;
   private settlementWallet: string;
 
   constructor() {
     this.apiKey = process.env.PAYLIO_API_KEY || '';
-    this.apiUrl = (process.env.PAYLIO_API_URL || 'https://api.paylio.io/v1').replace(/\/$/, '');
-    this.webhookSecret = process.env.PAYLIO_WEBHOOK_SECRET || '';
+    this.apiUrl = (process.env.PAYLIO_API_URL || 'https://paylio.org/api/v1').replace(/\/$/, '');
     this.settlementWallet = process.env.MASSAF_POLYGON_WALLET_ADDRESS || '';
   }
 
   public isConfigured(): boolean {
-    return Boolean(this.apiKey && this.apiUrl);
+    return Boolean(this.apiKey && this.apiUrl && this.settlementWallet);
   }
 
   /**
-   * Initiates a hosted payment session / link with PayLio
+   * Creates a hosted PayLio card-funded wallet/checkout payment link
    */
-  async createPayment(params: CreatePayLioPaymentParams): Promise<CreatePayLioPaymentResult> {
+  async createWalletPayment(params: CreatePayLioWalletParams): Promise<CreatePayLioWalletResult> {
     if (process.env.NODE_ENV === 'test' || process.env.PAYLIO_MOCK_MODE === 'true') {
-      const mockRef = `paylio_mock_${params.bookingNumber}_${Date.now()}`;
+      const mockToken = `paylio_ipn_${params.bookingNumber}_${Date.now()}`;
       return {
-        paymentReference: mockRef,
-        checkoutUrl: `${params.returnUrl}?payment_ref=${mockRef}&status=mock_pending`,
-        status: 'PENDING',
+        paymentId: `paylio_id_${Date.now()}`,
+        ipnToken: mockToken,
+        checkoutUrl: `${params.callbackUrl}?ipn_token=${mockToken}&status=paid`,
+        status: 'unpaid',
+        originalAmount: params.amount,
+        amount: params.amount,
       };
     }
 
@@ -67,20 +74,21 @@ export class PayLioClient {
       throw new Error('PAYLIO_API_KEY is not configured on the server.');
     }
 
+    if (!this.settlementWallet) {
+      throw new Error('MASSAF_POLYGON_WALLET_ADDRESS is not configured on the server.');
+    }
+
     const payload = {
-      reference: params.bookingNumber,
+      address: this.settlementWallet,
+      callback: params.callbackUrl,
       amount: params.amount,
       currency: 'USD',
-      description: params.description,
-      return_url: params.returnUrl,
-      cancel_url: params.cancelUrl,
-      settlement_wallet: this.settlementWallet || undefined,
-      settlement_network: 'polygon',
-      allow_card: true,
-      allow_crypto: true,
+      email: params.customerEmail || undefined,
+      note: params.notes || `Booking ${params.bookingNumber}`,
+      passFeeToCustomer: true,
     };
 
-    const response = await fetch(`${this.apiUrl}/payments`, {
+    const response = await fetch(`${this.apiUrl}/wallet`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -91,45 +99,71 @@ export class PayLioClient {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('PayLio createPayment failed:', response.status, errorText);
+      console.error('PayLio createWalletPayment failed:', response.status, errorText);
       throw new Error(`PayLio payment creation failed (${response.status})`);
     }
 
     const data = await response.json();
 
-    const paymentReference = data.id;
+    const paymentId = data.payment_id || data.id;
+    const ipnToken = data.ipn_token || data.token || paymentId;
     const checkoutUrl = data.checkout_url || data.payment_url || data.url;
 
-    if (!paymentReference || !checkoutUrl) {
-      throw new Error('PayLio response missing payment id or checkout URL');
+    if (!ipnToken || !checkoutUrl) {
+      throw new Error('PayLio response missing ipn_token or checkout URL');
     }
 
     return {
-      paymentReference,
+      paymentId,
+      ipnToken,
       checkoutUrl,
-      status: data.status || 'PENDING',
+      status: data.status || 'unpaid',
+      originalAmount: data.original_amount ? Number(data.original_amount) : params.amount,
+      amount: data.amount ? Number(data.amount) : params.amount,
     };
   }
 
   /**
-   * Re-queries PayLio server-side directly to verify payment status
+   * Re-queries PayLio server-side directly to verify payment status using ipn_token
    */
-  async getPaymentStatus(paymentReference: string): Promise<PayLioPaymentStatusResult> {
+  async getPaymentStatus(ipnToken: string): Promise<PayLioPaymentStatusResult> {
     if (process.env.NODE_ENV === 'test' || process.env.PAYLIO_MOCK_MODE === 'true') {
-      if (paymentReference.includes('mock_failed')) {
-        return { paymentReference, status: 'FAILED', rawStatus: 'failed', amount: 150.0, currency: 'USD' };
+      if (ipnToken.includes('mock_failed')) {
+        return {
+          ipnToken,
+          status: 'FAILED',
+          rawStatus: 'canceled',
+          forwardStatus: 'failed',
+          originalAmount: 150.0,
+          currency: 'USD',
+        };
       }
-      if (paymentReference.includes('mock_paid')) {
-        return { paymentReference, status: 'PAID', rawStatus: 'completed', amount: 150.0, currency: 'USD', paymentMethod: 'CARD' };
+      if (ipnToken.includes('mock_paid') || ipnToken.includes('paylio_ipn_')) {
+        return {
+          ipnToken,
+          status: 'PAID',
+          rawStatus: 'paid',
+          forwardStatus: 'completed',
+          originalAmount: 150.0,
+          currency: 'USD',
+          paymentMethod: 'CARD',
+        };
       }
-      return { paymentReference, status: 'PENDING', rawStatus: 'pending', amount: 150.0, currency: 'USD' };
+      return {
+        ipnToken,
+        status: 'PENDING',
+        rawStatus: 'unpaid',
+        forwardStatus: 'pending',
+        originalAmount: 150.0,
+        currency: 'USD',
+      };
     }
 
     if (!this.apiKey) {
       throw new Error('PAYLIO_API_KEY is not configured on the server.');
     }
 
-    const response = await fetch(`${this.apiUrl}/payments/${encodeURIComponent(paymentReference)}`, {
+    const response = await fetch(`${this.apiUrl}/payment-status?ipn_token=${encodeURIComponent(ipnToken)}`, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
@@ -139,73 +173,40 @@ export class PayLioClient {
     if (!response.ok) {
       console.error('PayLio getPaymentStatus failed:', response.status, await response.text());
       return {
-        paymentReference,
+        ipnToken,
         status: 'UNKNOWN',
       };
     }
 
     const data = await response.json();
     const rawStatus = String(data.status || '').toLowerCase();
+    const forwardStatus = String(data.forward_status || '').toLowerCase();
 
     let mappedStatus: PayLioPaymentStatusResult['status'] = 'PENDING';
-    if (['paid', 'completed', 'succeeded', 'success'].includes(rawStatus)) {
+    if (rawStatus === 'paid' || forwardStatus === 'completed') {
       mappedStatus = 'PAID';
-    } else if (['failed', 'declined', 'error'].includes(rawStatus)) {
+    } else if (rawStatus === 'canceled' || forwardStatus === 'failed') {
       mappedStatus = 'FAILED';
-    } else if (['expired', 'timeout'].includes(rawStatus)) {
+    } else if (rawStatus === 'expired') {
       mappedStatus = 'EXPIRED';
-    } else if (['cancelled', 'canceled'].includes(rawStatus)) {
-      mappedStatus = 'CANCELLED';
-    } else if (['pending', 'processing', 'unpaid'].includes(rawStatus)) {
+    } else if (rawStatus === 'unpaid' || forwardStatus === 'pending' || forwardStatus === 'processing') {
       mappedStatus = 'PENDING';
     } else {
       mappedStatus = 'UNKNOWN';
     }
 
-    const methodDetected = data.payment_method === 'crypto' || data.tx_hash ? 'CRYPTO' : 'CARD';
-
     return {
-      paymentReference,
+      paymentId: data.payment_id || undefined,
+      ipnToken,
       status: mappedStatus,
-      amount: data.amount ? Number(data.amount) : undefined,
-      currency: data.currency ? String(data.currency).toUpperCase() : undefined,
-      paymentMethod: methodDetected,
-      transactionHash: data.tx_hash || undefined,
       rawStatus,
+      forwardStatus,
+      originalAmount: data.original_amount ? Number(data.original_amount) : data.amount ? Number(data.amount) : undefined,
+      amount: data.amount ? Number(data.amount) : undefined,
+      currency: data.currency ? String(data.currency).toUpperCase() : 'USD',
+      paymentMethod: data.payment_type === 'crypto' || data.tx_hash ? 'CRYPTO' : 'CARD',
+      transactionHash: data.tx_hash || undefined,
     };
-  }
-
-  /**
-   * Validates HMAC SHA-256 webhook signature for PayLio webhooks
-   */
-  verifyWebhookSignature(rawBody: string, signatureHeader: string | null): boolean {
-    if (!signatureHeader || !this.webhookSecret) {
-      return false;
-    }
-
-    try {
-      let sig = signatureHeader.trim();
-      if (sig.includes('v1=')) {
-        const parts = sig.split(',');
-        const v1Part = parts.find((p) => p.trim().startsWith('v1='));
-        if (v1Part) {
-          sig = v1Part.split('=')[1].trim();
-        }
-      }
-
-      const expectedSignature = crypto
-        .createHmac('sha256', this.webhookSecret)
-        .update(rawBody, 'utf8')
-        .digest('hex');
-
-      return crypto.timingSafeEqual(
-        Buffer.from(sig.toLowerCase(), 'hex'),
-        Buffer.from(expectedSignature.toLowerCase(), 'hex')
-      );
-    } catch (err) {
-      console.error('Error verifying PayLio webhook signature:', err);
-      return false;
-    }
   }
 }
 
@@ -213,9 +214,9 @@ export const paylioClient = new PayLioClient();
 
 export interface ConfirmPaymentOptions {
   bookingId: string;
-  paymentReference: string;
+  ipnToken: string;
   providerStatus: PayLioPaymentStatusResult['status'];
-  providerAmount?: number;
+  providerOriginalAmount?: number;
   providerCurrency?: string;
   providerMethod?: 'CARD' | 'CRYPTO';
 }
@@ -229,7 +230,7 @@ export interface ConfirmPaymentResult {
 
 /**
  * Centralized, authoritative server-side payment state transition function.
- * Ensures strict verification of booking ID, payment reference, status, currency, and amount before transitioning to PAID.
+ * Verifies booking ID, token match, status, currency, and original_amount against database booking amount.
  */
 export async function confirmVerifiedPayLioPayment(
   options: ConfirmPaymentOptions
@@ -274,7 +275,7 @@ export async function confirmVerifiedPayLioPayment(
         where: { id: booking.id },
         data: {
           paymentStatus: 'FAILED',
-          paymentReference: options.paymentReference || booking.paymentReference,
+          paymentReference: options.ipnToken || booking.paymentReference,
         },
       });
       return {
@@ -293,7 +294,7 @@ export async function confirmVerifiedPayLioPayment(
     };
   }
 
-  // 4. Currency Verification (must be USD if provided)
+  // 4. Currency Verification
   if (options.providerCurrency && options.providerCurrency.toUpperCase() !== 'USD') {
     console.error(`PayLio currency mismatch for booking ${booking.bookingNumber}: expected USD, got ${options.providerCurrency}`);
     return {
@@ -304,14 +305,14 @@ export async function confirmVerifiedPayLioPayment(
     };
   }
 
-  // 5. Amount Verification: DB amount is authoritative
-  if (typeof options.providerAmount === 'number') {
-    const diff = Math.abs(options.providerAmount - booking.amount);
+  // 5. Amount Verification: DB booking amount vs provider original_amount
+  if (typeof options.providerOriginalAmount === 'number') {
+    const diff = Math.abs(options.providerOriginalAmount - booking.amount);
     if (diff > 0.01) {
-      console.error(`PayLio payment amount mismatch for booking ${booking.bookingNumber}: DB authoritative amount $${booking.amount}, provider paid $${options.providerAmount}`);
+      console.error(`PayLio amount mismatch for booking ${booking.bookingNumber}: DB authoritative amount $${booking.amount}, provider original_amount $${options.providerOriginalAmount}`);
       return {
         success: false,
-        message: `Payment amount $${options.providerAmount} does not match expected booking amount $${booking.amount}.`,
+        message: `Payment original_amount $${options.providerOriginalAmount} does not match expected booking amount $${booking.amount}.`,
         bookingStatus: booking.status,
         paymentStatus: booking.paymentStatus,
       };
@@ -324,7 +325,7 @@ export async function confirmVerifiedPayLioPayment(
     data: {
       paymentStatus: 'PAID',
       paymentMethod: options.providerMethod || 'CARD',
-      paymentReference: options.paymentReference || booking.paymentReference,
+      paymentReference: options.ipnToken || booking.paymentReference,
       status: booking.status === 'PENDING' ? 'CONFIRMED' : booking.status,
     },
   });

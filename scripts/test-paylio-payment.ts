@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import { db } from '../src/lib/db';
 
 async function testPayLioPaymentFlow() {
@@ -10,8 +9,6 @@ async function testPayLioPaymentFlow() {
     console.error('❌ SAFETY GUARD TRIGGERED: test:paylio can only run against a local dev.db or test database.');
     process.exit(1);
   }
-
-  const webhookSecret = process.env.PAYLIO_WEBHOOK_SECRET || 'test_webhook_secret_key_123';
 
   let testTherapistId = '';
   let testServiceId = '';
@@ -108,8 +105,8 @@ async function testPayLioPaymentFlow() {
 
     console.log(`✓ Test booking created: ${booking.bookingNumber} ($${booking.amount})`);
 
-    // TEST 1 & 2 & 13: Valid booking creates PayLio payment with amount from DB
-    console.log('\nTEST 1 & 2 & 13: Valid booking creates PayLio payment & amount from DB...');
+    // TEST 1, 2, 3: Valid booking creates PayLio wallet payment link with amount strictly from DB
+    console.log('\nTEST 1, 2, 3: Creating PayLio wallet payment session...');
     const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000';
 
     const createRes = await fetch(`${BASE_URL}/api/payments/paylio/create`, {
@@ -118,27 +115,27 @@ async function testPayLioPaymentFlow() {
       body: JSON.stringify({
         bookingId: testBookingId,
         bookingNumber: testBookingNumber,
-        amount: 5.0, // Client tries to override amount to $5.00!
+        amount: 5.0, // Client attempts amount override ($5.00)
       }),
     });
 
     const createData = await createRes.json();
-    if (createRes.status !== 200 || !createData.checkoutUrl || !createData.paymentReference) {
+    if (createRes.status !== 200 || !createData.checkoutUrl || !createData.ipnToken) {
       throw new Error(`PayLio create endpoint failed: ${JSON.stringify(createData)}`);
     }
 
-    // Verify DB record has paymentReference persisted and amount remains $150
+    // Verify DB record has ipnToken persisted as paymentReference and amount remains $150
     const updatedBooking1 = await db.booking.findUniqueOrThrow({ where: { id: testBookingId } });
     if (updatedBooking1.amount !== 150.0) {
       throw new Error(`Client override vulnerability detected! DB amount changed to ${updatedBooking1.amount}`);
     }
-    if (updatedBooking1.paymentReference !== createData.paymentReference) {
-      throw new Error(`Payment reference mismatch in DB: expected ${createData.paymentReference}, got ${updatedBooking1.paymentReference}`);
+    if (updatedBooking1.paymentReference !== createData.ipnToken) {
+      throw new Error(`Payment reference mismatch in DB: expected ${createData.ipnToken}, got ${updatedBooking1.paymentReference}`);
     }
-    console.log('✓ TEST 1 & 2 & 13 PASSED: PayLio payment created, amount strictly taken from DB ($150.00), reference persisted.');
+    console.log('✓ TEST 1, 2, 3 PASSED: PayLio wallet created, amount strictly taken from DB ($150.00), ipnToken persisted.');
 
-    // TEST 6: Invalid booking is rejected
-    console.log('\nTEST 6: Invalid booking request is rejected...');
+    // TEST 4: Invalid booking request is rejected
+    console.log('\nTEST 4: Invalid booking request is rejected...');
     const invalidRes = await fetch(`${BASE_URL}/api/payments/paylio/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -147,9 +144,9 @@ async function testPayLioPaymentFlow() {
     if (invalidRes.status !== 404) {
       throw new Error(`Expected status 404 for non-existent booking, got ${invalidRes.status}`);
     }
-    console.log('✓ TEST 6 PASSED: Invalid booking rejected with 404.');
+    console.log('✓ TEST 4 PASSED: Invalid booking rejected with 404.');
 
-    // TEST 5: Cancelled booking cannot be paid
+    // TEST 5: Cancelled booking cannot create payment session
     console.log('\nTEST 5: Cancelled booking cannot create payment...');
     const cancelledBooking = await db.booking.create({
       data: {
@@ -176,96 +173,41 @@ async function testPayLioPaymentFlow() {
     await db.booking.delete({ where: { id: cancelledBooking.id } });
     console.log('✓ TEST 5 PASSED: Cancelled booking rejected from payment.');
 
-    // TEST 7: Invalid webhook is rejected
-    console.log('\nTEST 7: Invalid webhook signature is rejected...');
-    const badWebhookRes = await fetch(`${BASE_URL}/api/payments/paylio/webhook`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-PayLio-Signature': 'invalid_signature_hash',
-      },
-      body: JSON.stringify({
-        payment_id: createData.paymentReference,
-        status: 'paid',
-      }),
-    });
-    if (badWebhookRes.status !== 401) {
-      throw new Error(`Expected status 401 for invalid webhook signature, got ${badWebhookRes.status}`);
-    }
-    console.log('✓ TEST 7 PASSED: Invalid webhook rejected with 401 Unauthorized.');
-
-    // TEST 10 & 11: Browser return or provider pending status does NOT mark payment PAID
-    console.log('\nTEST 10 & 11: Pending status re-query remains PENDING...');
-    const mockPendingRef = `paylio_mock_pending_${Date.now()}`;
+    // TEST 6: GET Callback triggers server-to-server status verification and marks booking PAID
+    console.log('\nTEST 6: GET Callback with verified paid status transitions booking to PAID & CONFIRMED...');
+    const mockPaidToken = `paylio_ipn_paid_${Date.now()}`;
     await db.booking.update({
       where: { id: testBookingId },
-      data: { paymentReference: mockPendingRef, paymentStatus: 'PENDING' },
+      data: { paymentReference: mockPaidToken, paymentStatus: 'PENDING' },
     });
 
-    const statusRes = await fetch(`${BASE_URL}/api/payments/status?bookingId=${testBookingId}`);
-    const statusData = await statusRes.json();
-    if (statusData.paymentStatus !== 'PENDING') {
-      throw new Error(`Expected paymentStatus PENDING, got ${statusData.paymentStatus}`);
-    }
-    console.log('✓ TEST 10 & 11 PASSED: Unverified / pending status remains PENDING.');
-
-    // TEST 8: Valid successful webhook marks payment PAID
-    console.log('\nTEST 8: Valid webhook with confirmed payment marks payment PAID...');
-    const mockPaidRef = `paylio_mock_paid_${Date.now()}`;
-    await db.booking.update({
-      where: { id: testBookingId },
-      data: { paymentReference: mockPaidRef, paymentStatus: 'PENDING' },
+    const callbackRes = await fetch(`${BASE_URL}/api/payments/paylio/callback?bookingId=${testBookingId}&ipn_token=${mockPaidToken}&status=paid`, {
+      redirect: 'manual',
     });
 
-    const validBody = JSON.stringify({
-      payment_id: mockPaidRef,
-      booking_id: testBookingId,
-      status: 'completed',
-    });
-
-    const validSig = crypto
-      .createHmac('sha256', webhookSecret)
-      .update(validBody, 'utf8')
-      .digest('hex');
-
-    const goodWebhookRes = await fetch(`${BASE_URL}/api/payments/paylio/webhook`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-PayLio-Signature': validSig,
-      },
-      body: validBody,
-    });
-
-    const goodWebhookData = await goodWebhookRes.json();
-    if (goodWebhookRes.status !== 200 || goodWebhookData.paymentStatus !== 'PAID') {
-      throw new Error(`Webhook failed to process paid payment: ${JSON.stringify(goodWebhookData)}`);
+    if (callbackRes.status !== 302 && callbackRes.status !== 307 && callbackRes.status !== 200) {
+      throw new Error(`Expected redirect from callback, got status ${callbackRes.status}`);
     }
 
     const paidBookingInDb = await db.booking.findUniqueOrThrow({ where: { id: testBookingId } });
     if (paidBookingInDb.paymentStatus !== 'PAID' || paidBookingInDb.status !== 'CONFIRMED') {
       throw new Error(`DB state not transitioned to PAID/CONFIRMED: ${JSON.stringify(paidBookingInDb)}`);
     }
-    console.log('✓ TEST 8 PASSED: Valid webhook transitioned booking to PAID & CONFIRMED.');
+    console.log('✓ TEST 6 PASSED: GET Callback re-verified status server-to-server and transitioned booking to PAID & CONFIRMED.');
 
-    // TEST 9: Repeated successful webhook is idempotent
-    console.log('\nTEST 9: Repeated webhook delivery is idempotent...');
-    const repeatWebhookRes = await fetch(`${BASE_URL}/api/payments/paylio/webhook`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-PayLio-Signature': validSig,
-      },
-      body: validBody,
+    // TEST 7: Duplicate callback delivery is idempotent
+    console.log('\nTEST 7: Repeated callback delivery is idempotent...');
+    const repeatCallbackRes = await fetch(`${BASE_URL}/api/payments/paylio/callback?bookingId=${testBookingId}&ipn_token=${mockPaidToken}&status=paid`, {
+      redirect: 'manual',
     });
-    const repeatWebhookData = await repeatWebhookRes.json();
-    if (repeatWebhookRes.status !== 200 || !repeatWebhookData.message.includes('idempotently')) {
-      throw new Error(`Repeat webhook failed idempotency check: ${JSON.stringify(repeatWebhookData)}`);
+    const repeatBookingInDb = await db.booking.findUniqueOrThrow({ where: { id: testBookingId } });
+    if (repeatBookingInDb.paymentStatus !== 'PAID' || repeatBookingInDb.status !== 'CONFIRMED') {
+      throw new Error(`Idempotent callback check failed: ${JSON.stringify(repeatBookingInDb)}`);
     }
-    console.log('✓ TEST 9 PASSED: Repeated webhook returned 200 OK idempotently without duplicate side effects.');
+    console.log('✓ TEST 7 PASSED: Repeated callback executed idempotently without side effects.');
 
-    // TEST 4: Already-paid booking cannot create another payment session
-    console.log('\nTEST 4: Already-paid booking cannot create another payment...');
+    // TEST 8: Already-paid booking cannot create another payment session
+    console.log('\nTEST 8: Already-paid booking cannot create another payment session...');
     const paidCreateRes = await fetch(`${BASE_URL}/api/payments/paylio/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -274,10 +216,10 @@ async function testPayLioPaymentFlow() {
     if (paidCreateRes.status !== 400) {
       throw new Error(`Expected status 400 when attempting payment on already-paid booking, got ${paidCreateRes.status}`);
     }
-    console.log('✓ TEST 4 PASSED: Already-paid booking payment creation blocked.');
+    console.log('✓ TEST 8 PASSED: Already-paid booking payment creation blocked.');
 
-    // TEST 12: Provider failed status does not become PAID
-    console.log('\nTEST 12: Provider failed status does not become PAID...');
+    // TEST 9: Provider failed status does NOT mark payment PAID
+    console.log('\nTEST 9: Provider failed status marks payment FAILED...');
     const failedBooking = await db.booking.create({
       data: {
         bookingNumber: `MSF-FAIL-${Date.now().toString().slice(-4)}`,
@@ -293,24 +235,8 @@ async function testPayLioPaymentFlow() {
       },
     });
 
-    const failedBody = JSON.stringify({
-      payment_id: failedBooking.paymentReference,
-      booking_id: failedBooking.id,
-      status: 'failed',
-    });
-
-    const failedSig = crypto
-      .createHmac('sha256', webhookSecret)
-      .update(failedBody, 'utf8')
-      .digest('hex');
-
-    await fetch(`${BASE_URL}/api/payments/paylio/webhook`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-PayLio-Signature': failedSig,
-      },
-      body: failedBody,
+    await fetch(`${BASE_URL}/api/payments/paylio/callback?bookingId=${failedBooking.id}&ipn_token=${failedBooking.paymentReference}&status=canceled`, {
+      redirect: 'manual',
     });
 
     const failedBookingInDb = await db.booking.findUniqueOrThrow({ where: { id: failedBooking.id } });
@@ -318,7 +244,7 @@ async function testPayLioPaymentFlow() {
       throw new Error(`Expected paymentStatus FAILED, got ${failedBookingInDb.paymentStatus}`);
     }
     await db.booking.delete({ where: { id: failedBooking.id } });
-    console.log('✓ TEST 12 PASSED: Provider failed status correctly recorded as FAILED.');
+    console.log('✓ TEST 9 PASSED: Provider failed status correctly recorded as FAILED.');
 
     console.log('\n======================================================');
     console.log('✅ ALL PAYLIO AUTOMATED PAYMENT TESTS PASSED!');

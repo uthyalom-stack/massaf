@@ -37,16 +37,16 @@ export async function GET(request: Request) {
     let currentPaymentStatus: PaymentStatus = booking.paymentStatus;
     let currentBookingStatus: BookingStatus = booking.status;
 
-    // If payment status in DB is PENDING and paymentReference exists, re-check PayLio
+    // If payment status in DB is PENDING and paymentReference (ipn_token) exists, re-check PayLio status
     if (booking.paymentStatus === 'PENDING' && booking.paymentReference) {
       try {
         const paylioStatus = await paylioClient.getPaymentStatus(booking.paymentReference);
         if (paylioStatus.status !== 'PENDING' && paylioStatus.status !== 'UNKNOWN') {
           const transitionResult = await confirmVerifiedPayLioPayment({
             bookingId: booking.id,
-            paymentReference: booking.paymentReference,
+            ipnToken: booking.paymentReference,
             providerStatus: paylioStatus.status,
-            providerAmount: paylioStatus.amount,
+            providerOriginalAmount: paylioStatus.originalAmount,
             providerCurrency: paylioStatus.currency,
             providerMethod: paylioStatus.paymentMethod,
           });

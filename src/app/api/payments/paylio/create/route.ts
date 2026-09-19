@@ -54,52 +54,45 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Construct application return/cancel URLs
+    // 3. Construct application PayLio callback URL
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const returnUrl = `${baseUrl}/booking/success?id=${booking.id}`;
-    const cancelUrl = `${baseUrl}/checkout?bookingId=${booking.id}`;
+    const callbackUrl = `${baseUrl}/api/payments/paylio/callback?bookingId=${booking.id}`;
 
-    // 4. Create PayLio payment session
-    let paymentRef = booking.paymentReference;
-    let checkoutUrl = '';
-
+    // 4. Create PayLio wallet checkout link
     try {
-      const checkoutSession = await paylioClient.createPayment({
+      const walletPayment = await paylioClient.createWalletPayment({
         bookingId: booking.id,
         bookingNumber: booking.bookingNumber,
         amount: booking.amount, // Derived strictly from server database record
-        description: `MASSAF Massage Booking ${booking.bookingNumber} (${booking.service.name})`,
-        returnUrl,
-        cancelUrl,
+        customerEmail: booking.customer.email,
+        callbackUrl,
+        notes: `MASSAF Booking ${booking.bookingNumber}`,
       });
 
-      paymentRef = checkoutSession.paymentReference;
-      checkoutUrl = checkoutSession.checkoutUrl;
-
-      // 5. Update DB with payment reference and paymentStatus PENDING if unpaid
-      // NOTE: Do NOT set paymentMethod here; preserve null or current method until provider confirms actual method paid
+      // 5. Store PayLio ipn_token as paymentReference in DB without setting premature paymentMethod
       await db.booking.update({
         where: { id: booking.id },
         data: {
-          paymentReference: paymentRef,
+          paymentReference: walletPayment.ipnToken,
           paymentStatus: 'PENDING',
         },
       });
+
+      return NextResponse.json({
+        success: true,
+        checkoutUrl: walletPayment.checkoutUrl,
+        ipnToken: walletPayment.ipnToken,
+        paymentReference: walletPayment.ipnToken,
+        bookingNumber: booking.bookingNumber,
+        bookingId: booking.id,
+      });
     } catch (err) {
-      console.error('Error initiating PayLio payment:', err);
+      console.error('Error initiating PayLio wallet checkout:', err);
       return NextResponse.json(
         { error: 'Failed to initiate checkout session with payment provider. Please try again.' },
         { status: 502 }
       );
     }
-
-    return NextResponse.json({
-      success: true,
-      checkoutUrl,
-      paymentReference: paymentRef,
-      bookingNumber: booking.bookingNumber,
-      bookingId: booking.id,
-    });
   } catch (error) {
     console.error('Unexpected error in PayLio create payment endpoint:', error);
     return NextResponse.json(
