@@ -9,7 +9,10 @@ export interface RateLimitResult {
 /**
  * Enforces persistent, atomic database-backed rate limiting for authentication endpoints.
  * FAILS CLOSED (`allowed: false`, `error: true`) if a database error occurs or if window limit is exceeded.
- * Uses atomic transaction conditional logic to eliminate race conditions under concurrent requests.
+ *
+ * Uses SQL-level conditional atomic updates (`UPDATE ... WHERE attempts < maxAttempts`)
+ * and P2002 unique constraint handling to guarantee that concurrent requests can never exceed
+ * the configured `maxAttempts` limit.
  *
  * @param identifier IP or user identifier string
  * @param action Specific authentication action (e.g., 'customer_verify' or 'therapist_token_request')
@@ -24,72 +27,116 @@ export async function checkRateLimit(
 ): Promise<RateLimitResult> {
   const cleanId = String(identifier).trim().toLowerCase();
   const cleanAction = String(action).trim().toLowerCase();
-  const now = new Date();
   const windowMs = windowMinutes * 60 * 1000;
 
   try {
-    return await db.$transaction(async (tx) => {
-      const existing = await tx.authRateLimit.findUnique({
+    const now = new Date();
+
+    // 1. Fetch existing record
+    let record = await db.authRateLimit.findUnique({
+      where: {
+        identifier_action: {
+          identifier: cleanId,
+          action: cleanAction,
+        },
+      },
+    });
+
+    // 2. First-Request Row Creation with P2002 race handling
+    if (!record) {
+      try {
+        await db.authRateLimit.create({
+          data: {
+            identifier: cleanId,
+            action: cleanAction,
+            attempts: 1,
+            windowStart: now,
+          },
+        });
+        return { allowed: true, remaining: maxAttempts - 1 };
+      } catch (createErr: unknown) {
+        // P2002: Unique constraint error when a concurrent request created the row first
+        const isP2002 =
+          typeof createErr === 'object' &&
+          createErr !== null &&
+          'code' in createErr &&
+          (createErr as { code: string }).code === 'P2002';
+
+        if (isP2002) {
+          record = await db.authRateLimit.findUnique({
+            where: {
+              identifier_action: {
+                identifier: cleanId,
+                action: cleanAction,
+              },
+            },
+          });
+        } else {
+          throw createErr;
+        }
+      }
+    }
+
+    if (!record) {
+      return { allowed: false, remaining: 0, error: true };
+    }
+
+    // 3. Evaluate window expiration
+    const elapsed = now.getTime() - record.windowStart.getTime();
+
+    if (elapsed > windowMs) {
+      // Window expired: Attempt atomic reset conditioned on exact old windowStart
+      const resetRes = await db.authRateLimit.updateMany({
         where: {
-          identifier_action: {
-            identifier: cleanId,
-            action: cleanAction,
-          },
+          id: record.id,
+          windowStart: record.windowStart,
         },
-      });
-
-      if (!existing) {
-        await tx.authRateLimit.create({
-          data: {
-            identifier: cleanId,
-            action: cleanAction,
-            attempts: 1,
-            windowStart: now,
-          },
-        });
-        return { allowed: true, remaining: maxAttempts - 1 };
-      }
-
-      const elapsed = now.getTime() - existing.windowStart.getTime();
-
-      // If current window expired, atomically reset window start and attempts count
-      if (elapsed > windowMs) {
-        await tx.authRateLimit.update({
-          where: { id: existing.id },
-          data: {
-            attempts: 1,
-            windowStart: now,
-          },
-        });
-        return { allowed: true, remaining: maxAttempts - 1 };
-      }
-
-      // If attempts already reached or exceeded max, reject immediately
-      if (existing.attempts >= maxAttempts) {
-        return { allowed: false, remaining: 0 };
-      }
-
-      // Atomic conditional update: increment attempts
-      const updated = await tx.authRateLimit.update({
-        where: { id: existing.id },
         data: {
-          attempts: { increment: 1 },
+          attempts: 1,
+          windowStart: now,
         },
       });
 
-      // Confirm incremented attempt count does not exceed max limit
-      if (updated.attempts > maxAttempts) {
-        return { allowed: false, remaining: 0 };
+      if (resetRes.count === 1) {
+        return { allowed: true, remaining: maxAttempts - 1 };
       }
 
+      // Reset race lost: re-fetch updated row created by winner
+      const reFetched = await db.authRateLimit.findUnique({
+        where: { id: record.id },
+      });
+      if (!reFetched) return { allowed: false, remaining: 0, error: true };
+      record = reFetched;
+    }
+
+    // 4. Atomic SQL Conditional Increment
+    // Update succeeds only if `attempts < maxAttempts` at the database level
+    const updateRes = await db.authRateLimit.updateMany({
+      where: {
+        id: record.id,
+        windowStart: record.windowStart,
+        attempts: { lt: maxAttempts },
+      },
+      data: {
+        attempts: { increment: 1 },
+      },
+    });
+
+    if (updateRes.count === 1) {
+      const updatedRecord = await db.authRateLimit.findUnique({
+        where: { id: record.id },
+      });
+      const currentAttempts = updatedRecord?.attempts ?? record.attempts + 1;
       return {
         allowed: true,
-        remaining: Math.max(0, maxAttempts - updated.attempts),
+        remaining: Math.max(0, maxAttempts - currentAttempts),
       };
-    });
+    }
+
+    // count === 0 indicates attempts was already >= maxAttempts in DB
+    return { allowed: false, remaining: 0 };
   } catch (error) {
-    console.error('[FAIL CLOSED] Auth rate limit database error:', error);
-    // FAIL CLOSED: Never allow un-rate-limited access during database or transient failures
+    console.error('[FAIL CLOSED] Auth rate limit error:', error);
     return { allowed: false, remaining: 0, error: true };
   }
 }

@@ -117,7 +117,7 @@ async function runAuthTests() {
     const expiredResult = await consumeVerificationToken(expiredToken, 'THERAPIST_LOGIN');
     assert(expiredResult === null, '10. Expired token rejected');
 
-    // 10. Rate Limiting Tests
+    // 10. Sequential Rate Limiting Test
     const testLimitId = `test_limit_${Date.now()}`;
     for (let i = 0; i < 5; i++) {
       await checkRateLimit(testLimitId, 'test_action', 5, 15);
@@ -125,25 +125,45 @@ async function runAuthTests() {
     const rateCheckOver = await checkRateLimit(testLimitId, 'test_action', 5, 15);
     assert(!rateCheckOver.allowed, '11. Rate limit exceeded allowed limit and rejected 6th attempt');
 
-    // 11. Atomic Concurrent Rate Limiting
-    const testConcurrentLimitId = `test_concurrent_limit_${Date.now()}`;
-    const concurrentRateLimitResults = await Promise.all([
-      checkRateLimit(testConcurrentLimitId, 'test_conc_action', 3, 15),
-      checkRateLimit(testConcurrentLimitId, 'test_conc_action', 3, 15),
-      checkRateLimit(testConcurrentLimitId, 'test_conc_action', 3, 15),
-      checkRateLimit(testConcurrentLimitId, 'test_conc_action', 3, 15),
-      checkRateLimit(testConcurrentLimitId, 'test_conc_action', 3, 15),
+    // 11. High-Concurrency DB-Level Atomic Rate Limiting (10 concurrent requests with maxAttempts = 3)
+    const testHighConcurrentLimitId = `test_high_conc_${Date.now()}`;
+    const highConcurrentRateLimitResults = await Promise.all([
+      checkRateLimit(testHighConcurrentLimitId, 'high_conc_action', 3, 15),
+      checkRateLimit(testHighConcurrentLimitId, 'high_conc_action', 3, 15),
+      checkRateLimit(testHighConcurrentLimitId, 'high_conc_action', 3, 15),
+      checkRateLimit(testHighConcurrentLimitId, 'high_conc_action', 3, 15),
+      checkRateLimit(testHighConcurrentLimitId, 'high_conc_action', 3, 15),
+      checkRateLimit(testHighConcurrentLimitId, 'high_conc_action', 3, 15),
+      checkRateLimit(testHighConcurrentLimitId, 'high_conc_action', 3, 15),
+      checkRateLimit(testHighConcurrentLimitId, 'high_conc_action', 3, 15),
+      checkRateLimit(testHighConcurrentLimitId, 'high_conc_action', 3, 15),
+      checkRateLimit(testHighConcurrentLimitId, 'high_conc_action', 3, 15),
     ]);
-    const allowedConcurrentCounts = concurrentRateLimitResults.filter((r) => r.allowed).length;
-    assert(allowedConcurrentCounts === 3, '12. Concurrent rate limit requests allowed exactly maxAttempts (3 out of 5)');
+    const allowedHighConcurrentCounts = highConcurrentRateLimitResults.filter((r) => r.allowed).length;
+    const rejectedHighConcurrentCounts = highConcurrentRateLimitResults.filter((r) => !r.allowed).length;
+    assert(
+      allowedHighConcurrentCounts === 3 && rejectedHighConcurrentCounts === 7,
+      '12. High-concurrency rate limit allowed exactly 3 and rejected 7 out of 10 concurrent requests'
+    );
 
-    // 12. Deactivated Therapist Session Revalidation Rejection
+    // 12. First-Request Creation Race Handling
+    const testCreationRaceId = `test_create_race_${Date.now()}`;
+    const creationRaceResults = await Promise.all([
+      checkRateLimit(testCreationRaceId, 'create_race_action', 2, 15),
+      checkRateLimit(testCreationRaceId, 'create_race_action', 2, 15),
+      checkRateLimit(testCreationRaceId, 'create_race_action', 2, 15),
+      checkRateLimit(testCreationRaceId, 'create_race_action', 2, 15),
+    ]);
+    const allowedCreationCounts = creationRaceResults.filter((r) => r.allowed).length;
+    assert(allowedCreationCounts === 2, '13. Concurrent first-time requests handled creation race safely and allowed exactly 2 out of 4');
+
+    // 13. Deactivated Therapist Session Revalidation Rejection
     const deactSessionToken = createSessionToken(deactivatedTherapist.id, deactivatedTherapist.email!, 'THERAPIST');
     const deactVerified = verifySessionToken(deactSessionToken, 'THERAPIST');
     const dbDeactCheck = await db.therapist.findFirst({
       where: { id: deactVerified?.entityId, isActive: true },
     });
-    assert(dbDeactCheck === null, '13. Session for deactivated therapist rejected on database revalidation');
+    assert(dbDeactCheck === null, '14. Session for deactivated therapist rejected on database revalidation');
 
   } finally {
     // Cleanup
