@@ -46,6 +46,7 @@ export default async function AdminEditTherapistPage({ params }: PageProps) {
       profileImage: dbTherapist.profileImage,
       email: dbTherapist.email,
       phone: dbTherapist.phone,
+      telegramChatId: dbTherapist.telegramChatId,
       rating: dbTherapist.rating,
       reviewCount: dbTherapist.reviewCount,
       isActive: dbTherapist.isActive,

@@ -6,6 +6,13 @@ export const therapistBaseSchema = z.object({
   profileImage: z.string().url('Invalid URL').optional().or(z.literal('')).nullable(),
   email: z.string().email('Invalid email address').optional().or(z.literal('')).nullable(),
   phone: z.string().optional().nullable(),
+  telegramChatId: z
+    .string()
+    .trim()
+    .regex(/^[0-9-]{3,30}$/, 'Telegram Chat ID must contain 3-30 numeric digits or hyphens')
+    .optional()
+    .or(z.literal(''))
+    .nullable(),
   isActive: z.boolean().default(true),
   isFeatured: z.boolean().default(false),
   offersStudio: z.boolean().default(true),

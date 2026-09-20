@@ -27,55 +27,53 @@ async function runTests() {
     }
   }
 
+  const runId = Date.now().toString().slice(-6);
+
+  // Track created entities for safe cleanup in finally block
+  const createdBookingIds: string[] = [];
+  const createdTherapistIds: string[] = [];
+  const createdServiceIds: string[] = [];
+  const createdCustomerIds: string[] = [];
+  const createdMarketingLinkIds: string[] = [];
+
   try {
-    // 0. Setup test entities
-    let therapist = await db.therapist.findFirst({ where: { isActive: true } });
-    if (!therapist) {
-      therapist = await db.therapist.create({
-        data: {
-          name: 'Test Notification Therapist',
-          email: 'therapist@test.com',
-          telegramChatId: '123456789',
-          rating: 4.8,
-          offersStudio: true,
-          offersInHome: true,
-        },
-      });
-    } else if (!therapist.telegramChatId) {
-      therapist = await db.therapist.update({
-        where: { id: therapist.id },
-        data: { telegramChatId: '123456789' },
-      });
-    }
+    // 0. Setup isolated test entities created strictly for this test run
+    const therapist = await db.therapist.create({
+      data: {
+        name: `Test Notification Therapist ${runId}`,
+        email: `therapist-p15-${runId}@test.com`,
+        telegramChatId: '123456789',
+        rating: 4.8,
+        offersStudio: true,
+        offersInHome: true,
+      },
+    });
+    createdTherapistIds.push(therapist.id);
 
-    let service = await db.service.findFirst({ where: { isActive: true } });
-    if (!service) {
-      service = await db.service.create({
-        data: {
-          name: 'Test Deep Tissue',
-          durationMinutes: 60,
-          price: 120,
-        },
-      });
-    }
+    const service = await db.service.create({
+      data: {
+        name: `Test Deep Tissue ${runId}`,
+        durationMinutes: 60,
+        price: 120,
+      },
+    });
+    createdServiceIds.push(service.id);
 
-    let customer = await db.customer.findFirst({ where: { email: 'testcustomer@massaf.com' } });
-    if (!customer) {
-      customer = await db.customer.create({
-        data: {
-          name: 'Test Customer',
-          email: 'testcustomer@massaf.com',
-          phone: '555-0199',
-        },
-      });
-    }
+    const customer = await db.customer.create({
+      data: {
+        name: `Test Customer ${runId}`,
+        email: `testcustomer-${runId}@massaf.com`,
+        phone: '555-0199',
+      },
+    });
+    createdCustomerIds.push(customer.id);
 
     const futureDate = new Date(Date.now() + 86400000 * 2);
 
     // Test 1 — Booking Creation State & Created Notification
     const test1Booking = await db.booking.create({
       data: {
-        bookingNumber: `MSF-TEST1-${Date.now().toString().slice(-4)}`,
+        bookingNumber: `MSF-TEST1-${runId}`,
         customerId: customer.id,
         therapistId: therapist.id,
         serviceId: service.id,
@@ -86,6 +84,7 @@ async function runTests() {
         paymentStatus: 'UNPAID',
       },
     });
+    createdBookingIds.push(test1Booking.id);
 
     assert(
       test1Booking.status === 'PENDING' && test1Booking.paymentStatus === 'UNPAID',
@@ -96,10 +95,10 @@ async function runTests() {
     assert(notifCreatedRes.success, 'Test 1b: notifyBookingCreated returns success result');
 
     // Test 2 — PayLio Payment Confirmation & Notification Dispatches
-    const test2Token = `paylio_ipn_paid_test2_${Date.now()}`;
+    const test2Token = `paylio_ipn_paid_test2_${runId}`;
     const test2Booking = await db.booking.create({
       data: {
-        bookingNumber: `MSF-TEST2-${Date.now().toString().slice(-4)}`,
+        bookingNumber: `MSF-TEST2-${runId}`,
         customerId: customer.id,
         therapistId: therapist.id,
         serviceId: service.id,
@@ -111,6 +110,7 @@ async function runTests() {
         paymentReference: test2Token,
       },
     });
+    createdBookingIds.push(test2Booking.id);
 
     const confirmResult = await confirmVerifiedPayLioPayment({
       bookingId: test2Booking.id,
@@ -128,10 +128,10 @@ async function runTests() {
     );
 
     // Test 3 — Failed Payment State Protection
-    const test3Token = `paylio_ipn_failed_test3_${Date.now()}`;
+    const test3Token = `paylio_ipn_failed_test3_${runId}`;
     const test3Booking = await db.booking.create({
       data: {
-        bookingNumber: `MSF-TEST3-${Date.now().toString().slice(-4)}`,
+        bookingNumber: `MSF-TEST3-${runId}`,
         customerId: customer.id,
         therapistId: therapist.id,
         serviceId: service.id,
@@ -143,6 +143,7 @@ async function runTests() {
         paymentReference: test3Token,
       },
     });
+    createdBookingIds.push(test3Booking.id);
 
     const failedConfirm = await confirmVerifiedPayLioPayment({
       bookingId: test3Booking.id,
@@ -163,7 +164,7 @@ async function runTests() {
 
     const expiredBooking = await db.booking.create({
       data: {
-        bookingNumber: `MSF-TEST4-${Date.now().toString().slice(-4)}`,
+        bookingNumber: `MSF-TEST4-${runId}`,
         customerId: customer.id,
         therapistId: therapist.id,
         serviceId: service.id,
@@ -175,6 +176,7 @@ async function runTests() {
         createdAt: oldDate,
       },
     });
+    createdBookingIds.push(expiredBooking.id);
 
     // Atomic update simulation (matching cron logic)
     const updateCount = await db.booking.updateMany({
@@ -198,7 +200,7 @@ async function runTests() {
     // Test 5 — Paid Booking Expiration Protection
     const paidOldBooking = await db.booking.create({
       data: {
-        bookingNumber: `MSF-TEST5-${Date.now().toString().slice(-4)}`,
+        bookingNumber: `MSF-TEST5-${runId}`,
         customerId: customer.id,
         therapistId: therapist.id,
         serviceId: service.id,
@@ -210,6 +212,7 @@ async function runTests() {
         createdAt: oldDate,
       },
     });
+    createdBookingIds.push(paidOldBooking.id);
 
     const paidUpdateCount = await db.booking.updateMany({
       where: {
@@ -251,7 +254,7 @@ async function runTests() {
     // Test 9 — Reminder Atomic Claim & Idempotency
     const reminder24hBooking = await db.booking.create({
       data: {
-        bookingNumber: `MSF-REM24-${Date.now().toString().slice(-4)}`,
+        bookingNumber: `MSF-REM24-${runId}`,
         customerId: customer.id,
         therapistId: therapist.id,
         serviceId: service.id,
@@ -262,6 +265,7 @@ async function runTests() {
         paymentStatus: 'PAID',
       },
     });
+    createdBookingIds.push(reminder24hBooking.id);
 
     // First Claim
     const claim1 = await db.booking.updateMany({
@@ -299,7 +303,7 @@ async function runTests() {
     // Test 10 — Reminder Retry On Failure Mechanics
     const retryTestBooking = await db.booking.create({
       data: {
-        bookingNumber: `MSF-RETRY-${Date.now().toString().slice(-4)}`,
+        bookingNumber: `MSF-RETRY-${runId}`,
         customerId: customer.id,
         therapistId: therapist.id,
         serviceId: service.id,
@@ -310,6 +314,7 @@ async function runTests() {
         paymentStatus: 'PAID',
       },
     });
+    createdBookingIds.push(retryTestBooking.id);
 
     // Claim
     await db.booking.updateMany({
@@ -355,20 +360,18 @@ async function runTests() {
     );
 
     // Test 12 — Marketing Attribution Preservation
-    let marketingLink = await db.marketingLink.findFirst({ where: { code: 'test-promo-p15' } });
-    if (!marketingLink) {
-      marketingLink = await db.marketingLink.create({
-        data: {
-          name: 'Promo P15',
-          code: 'test-promo-p15',
-          destinationUrl: '/',
-        },
-      });
-    }
+    const marketingLink = await db.marketingLink.create({
+      data: {
+        name: `Promo P15 Test ${runId}`,
+        code: `test-promo-${runId}`,
+        destinationUrl: '/',
+      },
+    });
+    createdMarketingLinkIds.push(marketingLink.id);
 
     const attributedBooking = await db.booking.create({
       data: {
-        bookingNumber: `MSF-ATTR-${Date.now().toString().slice(-4)}`,
+        bookingNumber: `MSF-ATTR-${runId}`,
         customerId: customer.id,
         therapistId: therapist.id,
         serviceId: service.id,
@@ -380,6 +383,7 @@ async function runTests() {
         paymentStatus: 'UNPAID',
       },
     });
+    createdBookingIds.push(attributedBooking.id);
 
     await db.booking.update({
       where: { id: attributedBooking.id },
@@ -409,6 +413,29 @@ async function runTests() {
   } catch (err) {
     console.error('Test execution exception:', err);
     failed++;
+  } finally {
+    // Isolated Cleanup: Delete created records in reverse dependency order
+    console.log('\nCleaning up created test records...');
+    try {
+      if (createdBookingIds.length > 0) {
+        await db.booking.deleteMany({ where: { id: { in: createdBookingIds } } });
+      }
+      if (createdMarketingLinkIds.length > 0) {
+        await db.marketingLink.deleteMany({ where: { id: { in: createdMarketingLinkIds } } });
+      }
+      if (createdCustomerIds.length > 0) {
+        await db.customer.deleteMany({ where: { id: { in: createdCustomerIds } } });
+      }
+      if (createdTherapistIds.length > 0) {
+        await db.therapist.deleteMany({ where: { id: { in: createdTherapistIds } } });
+      }
+      if (createdServiceIds.length > 0) {
+        await db.service.deleteMany({ where: { id: { in: createdServiceIds } } });
+      }
+      console.log('Cleanup completed successfully.');
+    } catch (cleanupErr) {
+      console.error('Error during test cleanup:', cleanupErr);
+    }
   }
 
   console.log('\n====================================================');

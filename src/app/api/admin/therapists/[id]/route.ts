@@ -82,6 +82,7 @@ export async function PUT(
         ...(validated.profileImage !== undefined && { profileImage: validated.profileImage }),
         ...(validated.email !== undefined && { email: validated.email }),
         ...(validated.phone !== undefined && { phone: validated.phone }),
+        ...(validated.telegramChatId !== undefined && { telegramChatId: validated.telegramChatId || null }),
         ...(validated.isActive !== undefined && { isActive: validated.isActive }),
         ...(validated.isFeatured !== undefined && { isFeatured: validated.isFeatured }),
         ...(validated.offersStudio !== undefined && { offersStudio: validated.offersStudio }),

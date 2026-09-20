@@ -11,6 +11,7 @@ export function AddTherapistForm() {
     name: '',
     email: '',
     phone: '',
+    telegramChatId: '',
     profileImage: '',
     bio: '',
     isActive: true,
@@ -37,6 +38,7 @@ export function AddTherapistForm() {
         name: formData.name.trim(),
         email: formData.email.trim() || undefined,
         phone: formData.phone.trim() || undefined,
+        telegramChatId: formData.telegramChatId.trim() || undefined,
         profileImage: formData.profileImage.trim() || undefined,
         bio: formData.bio.trim() || undefined,
         isActive: formData.isActive,
@@ -120,8 +122,8 @@ export function AddTherapistForm() {
             </div>
           </div>
 
-          {/* Phone & Profile Image */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Phone, Telegram Chat ID, Profile Image */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                 Phone Number
@@ -131,6 +133,19 @@ export function AddTherapistForm() {
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                 placeholder="(310) 555-0192"
+                className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                Telegram Chat ID
+              </label>
+              <input
+                type="text"
+                value={formData.telegramChatId}
+                onChange={(e) => setFormData({ ...formData, telegramChatId: e.target.value })}
+                placeholder="e.g. 123456789"
                 className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
               />
             </div>

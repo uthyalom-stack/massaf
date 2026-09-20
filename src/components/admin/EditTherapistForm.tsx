@@ -15,7 +15,9 @@ import {
   addTherapistAvailabilityAction,
   updateTherapistAvailabilityAction,
   removeTherapistAvailabilityAction,
+  deleteTherapistAction,
 } from '@/app/admin/actions';
+import { ConfirmModal } from '@/components/admin/ConfirmModal';
 
 export interface PhotoData {
   id: string;
@@ -61,6 +63,7 @@ export interface DetailedTherapist {
   profileImage?: string | null;
   email?: string | null;
   phone?: string | null;
+  telegramChatId?: string | null;
   rating: number;
   reviewCount: number;
   isActive: boolean;
@@ -109,6 +112,7 @@ export function EditTherapistForm({
     name: therapist.name,
     email: therapist.email || '',
     phone: therapist.phone || '',
+    telegramChatId: therapist.telegramChatId || '',
     profileImage: therapist.profileImage || '',
     bio: therapist.bio || '',
     isActive: therapist.isActive,
@@ -152,6 +156,23 @@ export function EditTherapistForm({
   // State for Editing Availability
   const [editingAvailability, setEditingAvailability] = useState<AvailabilityData | null>(null);
 
+  // Modal State for Confirming Destructive Actions
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText: string;
+    isLoading: boolean;
+    onConfirm: () => Promise<void>;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    confirmText: 'Delete',
+    isLoading: false,
+    onConfirm: async () => {},
+  });
+
   // --- Handlers --- //
 
   // Save Basic Info
@@ -165,6 +186,7 @@ export function EditTherapistForm({
         name: basicForm.name.trim(),
         email: basicForm.email.trim() || undefined,
         phone: basicForm.phone.trim() || undefined,
+        telegramChatId: basicForm.telegramChatId.trim() || undefined,
         profileImage: basicForm.profileImage.trim() || undefined,
         bio: basicForm.bio.trim() || undefined,
         isActive: basicForm.isActive,
@@ -263,24 +285,34 @@ export function EditTherapistForm({
     }
   };
 
-  // Remove Photo
-  const handleRemovePhoto = async (photoId: string) => {
-    try {
-      const res = await removeTherapistPhotoAction(therapist.id, photoId);
-
-      if (!res.success) {
-        alert(res.error || 'Failed to delete photo');
-        return;
-      }
-
-      setTherapist((prev) => ({
-        ...prev,
-        photos: prev.photos.filter((p) => p.id !== photoId),
-      }));
-      router.refresh();
-    } catch (err) {
-      console.error('Error removing photo:', err);
-    }
+  // Remove Photo (Trigger Modal)
+  const triggerRemovePhoto = (photoId: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Remove Gallery Photo?',
+      message: 'Are you sure you want to remove this photo from the therapist gallery? This action cannot be undone.',
+      confirmText: 'Remove Photo',
+      isLoading: false,
+      onConfirm: async () => {
+        try {
+          setConfirmModal((prev) => ({ ...prev, isLoading: true }));
+          const res = await removeTherapistPhotoAction(therapist.id, photoId);
+          if (!res.success) {
+            alert(res.error || 'Failed to delete photo');
+            return;
+          }
+          setTherapist((prev) => ({
+            ...prev,
+            photos: prev.photos.filter((p) => p.id !== photoId),
+          }));
+          router.refresh();
+        } catch (err) {
+          console.error('Error removing photo:', err);
+        } finally {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+        }
+      },
+    });
   };
 
   // Assign Service
@@ -338,24 +370,34 @@ export function EditTherapistForm({
     }
   };
 
-  // Remove Service Assignment
-  const handleRemoveService = async (serviceId: string) => {
-    try {
-      const res = await removeTherapistServiceAction(therapist.id, serviceId);
-
-      if (!res.success) {
-        alert(res.error || 'Failed to remove service');
-        return;
-      }
-
-      setTherapist((prev) => ({
-        ...prev,
-        services: prev.services.filter((s) => s.serviceId !== serviceId),
-      }));
-      router.refresh();
-    } catch (err) {
-      console.error('Error removing service:', err);
-    }
+  // Remove Service Assignment (Trigger Modal)
+  const triggerRemoveService = (serviceId: string, serviceName: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Remove Service Assignment?',
+      message: `Are you sure you want to remove '${serviceName}' from this therapist's offered services list?`,
+      confirmText: 'Remove Service',
+      isLoading: false,
+      onConfirm: async () => {
+        try {
+          setConfirmModal((prev) => ({ ...prev, isLoading: true }));
+          const res = await removeTherapistServiceAction(therapist.id, serviceId);
+          if (!res.success) {
+            alert(res.error || 'Failed to remove service');
+            return;
+          }
+          setTherapist((prev) => ({
+            ...prev,
+            services: prev.services.filter((s) => s.serviceId !== serviceId),
+          }));
+          router.refresh();
+        } catch (err) {
+          console.error('Error removing service:', err);
+        } finally {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+        }
+      },
+    });
   };
 
   // Add Service Area
@@ -404,24 +446,34 @@ export function EditTherapistForm({
     }
   };
 
-  // Remove Service Area
-  const handleRemoveArea = async (areaId: string) => {
-    try {
-      const res = await removeServiceAreaAction(therapist.id, areaId);
-
-      if (!res.success) {
-        alert(res.error || 'Failed to remove area');
-        return;
-      }
-
-      setTherapist((prev) => ({
-        ...prev,
-        serviceAreas: prev.serviceAreas.filter((a) => a.id !== areaId),
-      }));
-      router.refresh();
-    } catch (err) {
-      console.error('Error removing area:', err);
-    }
+  // Remove Service Area (Trigger Modal)
+  const triggerRemoveArea = (areaId: string, cityName: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Remove Service Coverage Area?',
+      message: `Are you sure you want to remove '${cityName}' from this therapist's coverage area?`,
+      confirmText: 'Remove Area',
+      isLoading: false,
+      onConfirm: async () => {
+        try {
+          setConfirmModal((prev) => ({ ...prev, isLoading: true }));
+          const res = await removeServiceAreaAction(therapist.id, areaId);
+          if (!res.success) {
+            alert(res.error || 'Failed to remove area');
+            return;
+          }
+          setTherapist((prev) => ({
+            ...prev,
+            serviceAreas: prev.serviceAreas.filter((a) => a.id !== areaId),
+          }));
+          router.refresh();
+        } catch (err) {
+          console.error('Error removing area:', err);
+        } finally {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+        }
+      },
+    });
   };
 
   // Add Availability
@@ -530,24 +582,60 @@ export function EditTherapistForm({
     }
   };
 
-  // Remove Availability
-  const handleRemoveAvailability = async (availabilityId: string) => {
-    try {
-      const res = await removeTherapistAvailabilityAction(therapist.id, availabilityId);
+  // Remove Availability (Trigger Modal)
+  const triggerRemoveAvailability = (availabilityId: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Remove Schedule Rule?',
+      message: 'Are you sure you want to remove this working hours schedule entry?',
+      confirmText: 'Remove Rule',
+      isLoading: false,
+      onConfirm: async () => {
+        try {
+          setConfirmModal((prev) => ({ ...prev, isLoading: true }));
+          const res = await removeTherapistAvailabilityAction(therapist.id, availabilityId);
+          if (!res.success) {
+            alert(res.error || 'Failed to remove schedule entry');
+            return;
+          }
+          setTherapist((prev) => ({
+            ...prev,
+            availabilities: prev.availabilities.filter((a) => a.id !== availabilityId),
+          }));
+          router.refresh();
+        } catch (err) {
+          console.error('Error removing availability entry:', err);
+        } finally {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+        }
+      },
+    });
+  };
 
-      if (!res.success) {
-        alert(res.error || 'Failed to remove schedule entry');
-        return;
-      }
-
-      setTherapist((prev) => ({
-        ...prev,
-        availabilities: prev.availabilities.filter((a) => a.id !== availabilityId),
-      }));
-      router.refresh();
-    } catch (err) {
-      console.error('Error removing availability entry:', err);
-    }
+  // Delete Therapist (Trigger Modal)
+  const triggerDeleteTherapist = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: `Delete Therapist Record: ${therapist.name}?`,
+      message: `Are you sure you want to permanently delete therapist profile for ${therapist.name}? This will check for existing booking/review dependencies before proceeding.`,
+      confirmText: 'Permanently Delete Therapist',
+      isLoading: false,
+      onConfirm: async () => {
+        try {
+          setConfirmModal((prev) => ({ ...prev, isLoading: true }));
+          const res = await deleteTherapistAction(therapist.id);
+          if (!res.success) {
+            alert(res.error || 'Failed to delete therapist record');
+            return;
+          }
+          router.push('/admin/therapists');
+        } catch (err) {
+          console.error('Error deleting therapist:', err);
+        } finally {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+        }
+      },
+    });
   };
 
   return (
@@ -692,7 +780,7 @@ export function EditTherapistForm({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                   Phone Number
@@ -701,6 +789,19 @@ export function EditTherapistForm({
                   type="text"
                   value={basicForm.phone}
                   onChange={(e) => setBasicForm({ ...basicForm, phone: e.target.value })}
+                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Telegram Chat ID
+                </label>
+                <input
+                  type="text"
+                  value={basicForm.telegramChatId}
+                  onChange={(e) => setBasicForm({ ...basicForm, telegramChatId: e.target.value })}
+                  placeholder="e.g. 123456789"
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
                 />
               </div>
@@ -785,6 +886,21 @@ export function EditTherapistForm({
               </button>
             </div>
           </form>
+
+          {/* Danger Zone: Delete Therapist */}
+          <div className="pt-6 mt-6 border-t border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-red-600">Danger Zone</h3>
+              <p className="text-xs text-slate-500 mt-0.5">Permanently delete therapist profile if no historical bookings exist.</p>
+            </div>
+            <button
+              type="button"
+              onClick={triggerDeleteTherapist}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors cursor-pointer shrink-0"
+            >
+              Delete Therapist Profile
+            </button>
+          </div>
         </div>
       )}
 
@@ -908,7 +1024,7 @@ export function EditTherapistForm({
 
                     <button
                       type="button"
-                      onClick={() => handleRemovePhoto(photo.id)}
+                      onClick={() => triggerRemovePhoto(photo.id)}
                       className="absolute top-2 right-2 p-1.5 rounded-lg bg-red-600 text-white opacity-90 hover:opacity-100 transition-opacity cursor-pointer shadow-xs"
                       title="Remove Photo"
                     >
@@ -1017,7 +1133,7 @@ export function EditTherapistForm({
 
                       <button
                         type="button"
-                        onClick={() => handleRemoveService(ts.serviceId)}
+                        onClick={() => triggerRemoveService(ts.serviceId, ts.service.name)}
                         className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
                         title="Remove Service"
                       >
@@ -1125,7 +1241,7 @@ export function EditTherapistForm({
                     <span>{area.cityName}, {area.state} ({area.zipCode})</span>
                     <button
                       type="button"
-                      onClick={() => handleRemoveArea(area.id)}
+                      onClick={() => triggerRemoveArea(area.id, area.cityName)}
                       className="text-slate-400 hover:text-red-600 transition-colors cursor-pointer"
                       title="Remove Area"
                     >
@@ -1327,7 +1443,7 @@ export function EditTherapistForm({
 
                       <button
                         type="button"
-                        onClick={() => handleRemoveAvailability(av.id)}
+                        onClick={() => triggerRemoveAvailability(av.id)}
                         className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
                         title="Remove Schedule Rule"
                       >
@@ -1345,6 +1461,19 @@ export function EditTherapistForm({
           </div>
         </div>
       )}
+
+      {/* Confirmation Modal */}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        confirmText={confirmModal.confirmText}
+        cancelText="Cancel"
+        isDestructive={true}
+        isLoading={confirmModal.isLoading}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }
