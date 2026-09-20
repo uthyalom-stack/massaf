@@ -381,12 +381,13 @@ export async function confirmVerifiedPayLioPayment(
     },
   });
 
-  // Trigger Phase 15 payment confirmation notification asynchronously with failure isolation
+  // Trigger Phase 15 payment confirmation notification with failure isolation
   try {
     const { notifyBookingConfirmed } = await import('@/lib/notifications');
-    notifyBookingConfirmed(updatedBooking.id).catch((err) => {
-      console.error('Async notifyBookingConfirmed error:', err);
-    });
+    const notifRes = await notifyBookingConfirmed(updatedBooking.id);
+    if (!notifRes.success) {
+      console.warn('notifyBookingConfirmed dispatch warning:', notifRes.error);
+    }
   } catch (notifErr) {
     console.error('Failed to dispatch notifyBookingConfirmed:', notifErr);
   }

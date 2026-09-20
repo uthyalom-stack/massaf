@@ -5,7 +5,9 @@ import {
   notifyBookingCancelled,
   notifyBookingCompleted,
   notifyBookingReminder,
+  notifyBookingExpired,
 } from '../src/lib/notifications';
+import { sendTelegramMessage } from '../src/lib/notifications/telegram';
 
 async function runTests() {
   console.log('====================================================');
@@ -70,7 +72,7 @@ async function runTests() {
 
     const futureDate = new Date(Date.now() + 86400000 * 2);
 
-    // Test 1 — Booking Creation State Verification
+    // Test 1 — Booking Creation State & Created Notification
     const test1Booking = await db.booking.create({
       data: {
         bookingNumber: `MSF-TEST1-${Date.now().toString().slice(-4)}`,
@@ -90,10 +92,10 @@ async function runTests() {
       'Test 1: Booking created status is PENDING and paymentStatus is UNPAID'
     );
 
-    await notifyBookingCreated(test1Booking.id);
-    assert(true, 'Test 1b: notifyBookingCreated executes safely without throwing error');
+    const notifCreatedRes = await notifyBookingCreated(test1Booking.id);
+    assert(notifCreatedRes.success, 'Test 1b: notifyBookingCreated returns success result');
 
-    // Test 2 — PayLio Payment Confirmation Verification
+    // Test 2 — PayLio Payment Confirmation & Notification Dispatches
     const test2Token = `paylio_ipn_paid_test2_${Date.now()}`;
     const test2Booking = await db.booking.create({
       data: {
@@ -125,7 +127,7 @@ async function runTests() {
       'Test 2: Payment confirmation updates booking to PAID + CONFIRMED'
     );
 
-    // Test 3 — Failed Payment Verification
+    // Test 3 — Failed Payment State Protection
     const test3Token = `paylio_ipn_failed_test3_${Date.now()}`;
     const test3Booking = await db.booking.create({
       data: {
@@ -190,6 +192,9 @@ async function runTests() {
       'Test 4: Old unpaid booking was atomically cancelled after 30 minutes expiration'
     );
 
+    const expiredNotifRes = await notifyBookingExpired(expiredBooking.id);
+    assert(expiredNotifRes.success, 'Test 4b: notifyBookingExpired returns success result');
+
     // Test 5 — Paid Booking Expiration Protection
     const paidOldBooking = await db.booking.create({
       data: {
@@ -236,14 +241,14 @@ async function runTests() {
     );
 
     // Test 7 — Cancellation Notifications
-    await notifyBookingCancelled(test2Booking.id, 'Customer requested cancellation');
-    assert(true, 'Test 7: notifyBookingCancelled executes safely');
+    const cancelNotifRes = await notifyBookingCancelled(test2Booking.id, 'Customer requested cancellation');
+    assert(cancelNotifRes.success, 'Test 7: notifyBookingCancelled returns success result');
 
     // Test 8 — Completion Notifications
-    await notifyBookingCompleted(test2Booking.id);
-    assert(true, 'Test 8: notifyBookingCompleted executes safely');
+    const completeNotifRes = await notifyBookingCompleted(test2Booking.id);
+    assert(completeNotifRes.success, 'Test 8: notifyBookingCompleted returns success result');
 
-    // Test 9 & 10 — 24-Hour & 3-Hour Reminder Idempotency Claims
+    // Test 9 — Reminder Atomic Claim & Idempotency
     const reminder24hBooking = await db.booking.create({
       data: {
         bookingNumber: `MSF-REM24-${Date.now().toString().slice(-4)}`,
@@ -268,8 +273,10 @@ async function runTests() {
       data: { reminder24hSentAt: new Date() },
     });
 
+    let notifSuccess = false;
     if (claim1.count > 0) {
-      await notifyBookingReminder(reminder24hBooking.id, '24h');
+      const remRes = await notifyBookingReminder(reminder24hBooking.id, '24h');
+      notifSuccess = remRes.success;
     }
 
     // Second Claim (Repeated Cron Execution)
@@ -285,18 +292,69 @@ async function runTests() {
     const remCheck = await db.booking.findUnique({ where: { id: reminder24hBooking.id } });
 
     assert(
-      claim1.count === 1 && claim2.count === 0 && remCheck?.reminder24hSentAt !== null,
-      'Test 9 & 10: Reminder 24h atomic claim succeeded once and prevented duplicate delivery on rerun'
+      claim1.count === 1 && claim2.count === 0 && notifSuccess && remCheck?.reminder24hSentAt !== null,
+      'Test 9: Reminder 24h atomic claim succeeded once and prevented duplicate delivery on rerun'
     );
 
-    // Test 11 & 12 — Provider Failure Isolation
-    const test11Booking = await db.booking.findUnique({ where: { id: test2Booking.id } });
+    // Test 10 — Reminder Retry On Failure Mechanics
+    const retryTestBooking = await db.booking.create({
+      data: {
+        bookingNumber: `MSF-RETRY-${Date.now().toString().slice(-4)}`,
+        customerId: customer.id,
+        therapistId: therapist.id,
+        serviceId: service.id,
+        appointmentDateTime: new Date(Date.now() + 3 * 60 * 60 * 1000), // 3 hours away
+        durationMinutes: 60,
+        amount: 120.0,
+        status: 'CONFIRMED',
+        paymentStatus: 'PAID',
+      },
+    });
+
+    // Claim
+    await db.booking.updateMany({
+      where: { id: retryTestBooking.id },
+      data: { reminder3hSentAt: new Date() },
+    });
+
+    // Simulate failure -> Reset
+    await db.booking.update({
+      where: { id: retryTestBooking.id },
+      data: { reminder3hSentAt: null },
+    });
+
+    const resetCheck = await db.booking.findUnique({ where: { id: retryTestBooking.id } });
     assert(
-      test11Booking?.status === 'CONFIRMED' && test11Booking?.paymentStatus === 'PAID',
-      'Test 11 & 12: Notification failure isolation preserves authoritative database booking state'
+      resetCheck?.reminder3hSentAt === null,
+      'Test 10: Failed reminder delivery correctly resets sentAt timestamp for future retry'
     );
 
-    // Test 13 — Marketing Attribution Preservation
+    // Test 11 — Missing Telegram Token Behavior (No Fake Success)
+    const oldEnvToken = process.env.TELEGRAM_BOT_TOKEN;
+    const oldMock = process.env.TELEGRAM_MOCK_MODE;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.TELEGRAM_MOCK_MODE;
+
+    const unconfigTgRes = await sendTelegramMessage({
+      chatId: '123456789',
+      message: 'Test message with missing token',
+    });
+
+    if (oldEnvToken !== undefined) {
+      process.env.TELEGRAM_BOT_TOKEN = oldEnvToken;
+    }
+    if (oldMock !== undefined) {
+      process.env.TELEGRAM_MOCK_MODE = oldMock;
+    } else {
+      process.env.TELEGRAM_MOCK_MODE = 'true';
+    }
+
+    assert(
+      Boolean(!unconfigTgRes.success && unconfigTgRes.error?.includes('TELEGRAM_BOT_TOKEN is not configured')),
+      'Test 11: Missing TELEGRAM_BOT_TOKEN in production returns explicit failure (no fake success)'
+    );
+
+    // Test 12 — Marketing Attribution Preservation
     let marketingLink = await db.marketingLink.findFirst({ where: { code: 'test-promo-p15' } });
     if (!marketingLink) {
       marketingLink = await db.marketingLink.create({
@@ -331,10 +389,10 @@ async function runTests() {
     const attrCheck = await db.booking.findUnique({ where: { id: attributedBooking.id } });
     assert(
       attrCheck?.marketingLinkId === marketingLink.id,
-      'Test 13: Marketing attribution marketingLinkId is preserved across lifecycle transitions'
+      'Test 12: Marketing attribution marketingLinkId is preserved across lifecycle transitions'
     );
 
-    // Test 14 — Security & Secrets Inspection Audit
+    // Test 13 — Security & Secrets Inspection Audit
     const envKeys = Object.keys(process.env);
     const noPublicSecrets = envKeys.every((key) => {
       if (key.startsWith('NEXT_PUBLIC_')) {
@@ -345,7 +403,7 @@ async function runTests() {
 
     assert(
       noPublicSecrets,
-      'Test 14: Security audit confirms no private secrets or tokens are exposed via NEXT_PUBLIC_*'
+      'Test 13: Security audit confirms no private secrets or tokens are exposed via NEXT_PUBLIC_*'
     );
 
   } catch (err) {

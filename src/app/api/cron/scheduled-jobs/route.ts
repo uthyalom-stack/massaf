@@ -7,9 +7,16 @@ import { notifyBookingExpired, notifyBookingReminder } from '@/lib/notifications
  * Protected route: Authorization header (Bearer <CRON_SECRET>) or x-cron-secret header.
  * Fails closed with HTTP 500 if CRON_SECRET is unconfigured.
  * Returns HTTP 401 if unauthenticated.
+ *
  * Functions performed:
- * 1. Atomic cancel expired unpaid PENDING bookings after 30 minutes.
- * 2. Send 24-hour (~23.875h - 24.125h) and 3-hour (~2.875h - 3.125h) appointment reminders for active CONFIRMED bookings atomically.
+ * 1. Atomic cancel expired unpaid PENDING bookings created >= 30 minutes ago.
+ * 2. Send 24-hour and 3-hour appointment reminders for active CONFIRMED bookings.
+ *    - Designed to operate reliably whether triggered by Vercel daily cron or high-frequency cron schedules.
+ * 3. Idempotent Atomic Claim + Retry on Failure:
+ *    - Atomically claims booking (`reminder24hSentAt = now`).
+ *    - Awaits notification dispatch.
+ *    - If dispatch fails, resets `reminder24hSentAt = null` so future cron runs retry.
+ *    - If dispatch succeeds, leaves `reminder24hSentAt` set.
  */
 export async function GET(request: Request) {
   return handleScheduledJobs(request);
@@ -21,8 +28,8 @@ export async function POST(request: Request) {
 
 async function handleScheduledJobs(request: Request) {
   try {
-    // 1. Fail-Closed Cron Authentication Guard
-    const cronSecret = process.env.CRON_SECRET || process.env.MASSAF_ADMIN_API_KEY;
+    // 1. Strict Fail-Closed Cron Authentication Guard
+    const cronSecret = process.env.CRON_SECRET;
 
     if (!cronSecret || cronSecret.trim().length === 0) {
       console.error('[SECURITY ERROR] CRON_SECRET is not configured on the server. Scheduled jobs route is failing closed.');
@@ -44,7 +51,7 @@ async function handleScheduledJobs(request: Request) {
 
     if (!providedSecret || providedSecret !== cronSecret) {
       return NextResponse.json(
-        { error: 'Unauthorized: Valid cron authorization header required' },
+        { error: 'Unauthorized: Valid CRON_SECRET authorization header required' },
         { status: 401 }
       );
     }
@@ -57,6 +64,7 @@ async function handleScheduledJobs(request: Request) {
     };
 
     // 2. ATOMIC UNPAID BOOKING EXPIRATION (30 MINUTES)
+    // Any PENDING + UNPAID booking created >= 30 minutes ago is cancelled
     const thirtyMinutesAgo = new Date(now.getTime() - 30 * 60 * 1000);
 
     const expiredCandidates = await db.booking.findMany({
@@ -100,10 +108,10 @@ async function handleScheduledJobs(request: Request) {
       }
     }
 
-    // 3. APPOINTMENT REMINDERS WITH ATOMIC CLAIM IDEMPOTENCY
-    // 24-hour reminder window: Appointments scheduled between 23.875h and 24.125h from now (15-min cron window)
-    const window24hStart = new Date(now.getTime() + (23.875 * 60 * 60 * 1000));
-    const window24hEnd = new Date(now.getTime() + (24.125 * 60 * 60 * 1000));
+    // 3. APPOINTMENT REMINDERS WITH ATOMIC CLAIM & RETRY-ON-FAILURE
+    // 24-hour reminder window: Appointments scheduled within the next 24 hours (up to 26h from now) that haven't received a 24h reminder
+    const window24hStart = now;
+    const window24hEnd = new Date(now.getTime() + (26 * 60 * 60 * 1000));
 
     const candidates24h = await db.booking.findMany({
       where: {
@@ -118,7 +126,7 @@ async function handleScheduledJobs(request: Request) {
     });
 
     for (const b of candidates24h) {
-      // Atomic Claim: Update reminder24hSentAt only if it is currently null
+      // Atomic Claim: Set reminder24hSentAt = now only if it is currently null
       const claim = await db.booking.updateMany({
         where: {
           id: b.id,
@@ -131,18 +139,23 @@ async function handleScheduledJobs(request: Request) {
       });
 
       if (claim.count > 0) {
-        try {
-          await notifyBookingReminder(b.id, '24h');
+        const notifResult = await notifyBookingReminder(b.id, '24h');
+        if (notifResult.success) {
           results.reminders24hCount++;
-        } catch (err) {
-          console.error(`Error sending 24h reminder for ${b.bookingNumber}:`, err);
+        } else {
+          // Delivery failed -> Reset claim so next cron run can retry
+          console.warn(`24h reminder delivery failed for ${b.bookingNumber}. Resetting reminder24hSentAt for retry.`);
+          await db.booking.update({
+            where: { id: b.id },
+            data: { reminder24hSentAt: null },
+          });
         }
       }
     }
 
-    // 3-hour reminder window: Appointments scheduled between 2.875h and 3.125h from now (15-min cron window)
-    const window3hStart = new Date(now.getTime() + (2.875 * 60 * 60 * 1000));
-    const window3hEnd = new Date(now.getTime() + (3.125 * 60 * 60 * 1000));
+    // 3-hour reminder window: Appointments scheduled within the next 3.5 hours that haven't received a 3h reminder
+    const window3hStart = now;
+    const window3hEnd = new Date(now.getTime() + (3.5 * 60 * 60 * 1000));
 
     const candidates3h = await db.booking.findMany({
       where: {
@@ -157,7 +170,7 @@ async function handleScheduledJobs(request: Request) {
     });
 
     for (const b of candidates3h) {
-      // Atomic Claim: Update reminder3hSentAt only if it is currently null
+      // Atomic Claim: Set reminder3hSentAt = now only if it is currently null
       const claim = await db.booking.updateMany({
         where: {
           id: b.id,
@@ -170,11 +183,16 @@ async function handleScheduledJobs(request: Request) {
       });
 
       if (claim.count > 0) {
-        try {
-          await notifyBookingReminder(b.id, '3h');
+        const notifResult = await notifyBookingReminder(b.id, '3h');
+        if (notifResult.success) {
           results.reminders3hCount++;
-        } catch (err) {
-          console.error(`Error sending 3h reminder for ${b.bookingNumber}:`, err);
+        } else {
+          // Delivery failed -> Reset claim so next cron run can retry
+          console.warn(`3h reminder delivery failed for ${b.bookingNumber}. Resetting reminder3hSentAt for retry.`);
+          await db.booking.update({
+            where: { id: b.id },
+            data: { reminder3hSentAt: null },
+          });
         }
       }
     }

@@ -42,25 +42,35 @@ export async function sendTelegramMessage(options: SendTelegramOptions): Promise
       if (!response.ok) {
         const errorText = await response.text();
         console.error('[Telegram API Error]', response.status, errorText);
-        return { success: false, error: `Telegram API error (${response.status})` };
+        return { success: false, error: `Telegram API error (${response.status}): ${errorText}` };
       }
 
       const data = await response.json();
       return {
         success: Boolean(data.ok),
         messageId: data.result?.message_id,
+        error: data.ok ? undefined : 'Telegram API returned ok: false',
       };
     }
 
-    // Mock / Console Fallback Mode (When TELEGRAM_BOT_TOKEN is not set)
-    console.log('[Telegram Message Dispatched (Mock/Dev Mode)]', {
-      chatId: options.chatId,
-      messagePreview: options.message.slice(0, 100),
-    });
+    // Mock / Test Mode: Only enabled if TELEGRAM_MOCK_MODE === 'true' or NODE_ENV === 'test'
+    if (process.env.TELEGRAM_MOCK_MODE === 'true' || process.env.NODE_ENV === 'test') {
+      console.log('[Telegram Message Dispatched (Mock/Dev Mode)]', {
+        chatId: options.chatId,
+        messagePreview: options.message.slice(0, 100),
+      });
 
+      return {
+        success: true,
+        messageId: Math.floor(Math.random() * 1000000),
+      };
+    }
+
+    // Unconfigured in production -> Report explicit configuration error (never fake success)
+    console.warn('[Telegram Provider] TELEGRAM_BOT_TOKEN is not configured on server.');
     return {
-      success: true,
-      messageId: Math.floor(Math.random() * 1000000),
+      success: false,
+      error: 'TELEGRAM_BOT_TOKEN is not configured on the server',
     };
   } catch (error) {
     console.error('[Telegram Dispatch Exception]', error);

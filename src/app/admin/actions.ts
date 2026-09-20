@@ -322,11 +322,11 @@ export async function updateBookingStatusAction(input: unknown) {
     // Dispatch lifecycle notifications with failure isolation
     try {
       if (validated.status === 'CONFIRMED' && booking.status !== 'CONFIRMED') {
-        notifyBookingConfirmed(updated.id).catch((err) => console.error('notifyBookingConfirmed error:', err));
+        await notifyBookingConfirmed(updated.id);
       } else if (validated.status === 'CANCELLED' && booking.status !== 'CANCELLED') {
-        notifyBookingCancelled(updated.id).catch((err) => console.error('notifyBookingCancelled error:', err));
+        await notifyBookingCancelled(updated.id);
       } else if (validated.status === 'COMPLETED' && booking.status !== 'COMPLETED') {
-        notifyBookingCompleted(updated.id).catch((err) => console.error('notifyBookingCompleted error:', err));
+        await notifyBookingCompleted(updated.id);
       }
     } catch (notifErr) {
       console.error('Failed to trigger admin status change notification:', notifErr);
@@ -481,9 +481,7 @@ export async function cancelBookingAction(input: unknown) {
 
     // Dispatch cancellation notification with failure isolation
     try {
-      notifyBookingCancelled(updated.id, validated.reason || 'Cancelled by admin').catch((err) => {
-        console.error('notifyBookingCancelled error:', err);
-      });
+      await notifyBookingCancelled(updated.id, validated.reason || 'Cancelled by admin');
     } catch (notifErr) {
       console.error('Failed to trigger admin cancellation notification:', notifErr);
     }

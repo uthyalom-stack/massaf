@@ -3,6 +3,19 @@ import { sendEmail } from './email';
 import { sendTelegramMessage } from './telegram';
 import { formatUtcDateString, formatUtcTimeString } from '@/lib/timezone';
 
+export interface ChannelResult {
+  channel: 'email' | 'telegram';
+  recipient: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface NotificationResult {
+  success: boolean;
+  channelResults: ChannelResult[];
+  error?: string;
+}
+
 function getAppUrl(): string {
   return (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');
 }
@@ -11,9 +24,6 @@ function getAdminChatId(): string | undefined {
   return process.env.TELEGRAM_ADMIN_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
 }
 
-/**
- * Helper to retrieve full booking data with customer, therapist, and service relations
- */
 async function getBookingWithDetails(bookingId: string) {
   return db.booking.findUnique({
     where: { id: bookingId },
@@ -27,13 +37,15 @@ async function getBookingWithDetails(bookingId: string) {
 
 /**
  * 1. CUSTOMER BOOKING CREATED NOTIFICATION
- * Called when a new booking is submitted (status=PENDING, paymentStatus=UNPAID).
- * States "Payment Pending" and provides payment instructions.
+ * Triggers when a booking is created (PENDING + UNPAID).
  */
-export async function notifyBookingCreated(bookingId: string): Promise<void> {
+export async function notifyBookingCreated(bookingId: string): Promise<NotificationResult> {
+  const channelResults: ChannelResult[] = [];
   try {
     const booking = await getBookingWithDetails(bookingId);
-    if (!booking || !booking.customer) return;
+    if (!booking || !booking.customer) {
+      return { success: false, channelResults: [], error: 'Booking or customer record not found' };
+    }
 
     const formattedDate = formatUtcDateString(booking.appointmentDateTime);
     const formattedTime = formatUtcTimeString(booking.appointmentDateTime);
@@ -65,32 +77,51 @@ Warm regards,
 MASSAF Team
 ${appUrl}`;
 
-    await sendEmail({
+    const emailRes = await sendEmail({
       to: booking.customer.email,
       subject,
       text,
     });
+
+    channelResults.push({
+      channel: 'email',
+      recipient: booking.customer.email,
+      success: emailRes.success,
+      error: emailRes.error,
+    });
+
+    return {
+      success: emailRes.success,
+      channelResults,
+    };
   } catch (error) {
     console.error('[Notification Isolation] notifyBookingCreated error:', error);
+    return {
+      success: false,
+      channelResults,
+      error: error instanceof Error ? error.message : 'Unknown notification error',
+    };
   }
 }
 
 /**
  * 2. PAYMENT CONFIRMATION NOTIFICATION
- * Called when server verifies payment (paymentStatus=PAID, status=CONFIRMED).
- * Sends confirmation email to Customer, operational notification to Therapist (Telegram if telegramChatId set, else Email) and Admin (Telegram).
+ * Triggers when server verifies payment (PAID + CONFIRMED).
  */
-export async function notifyBookingConfirmed(bookingId: string): Promise<void> {
+export async function notifyBookingConfirmed(bookingId: string): Promise<NotificationResult> {
+  const channelResults: ChannelResult[] = [];
   try {
     const booking = await getBookingWithDetails(bookingId);
-    if (!booking || !booking.customer) return;
+    if (!booking || !booking.customer) {
+      return { success: false, channelResults: [], error: 'Booking or customer record not found' };
+    }
 
     const formattedDate = formatUtcDateString(booking.appointmentDateTime);
     const formattedTime = formatUtcTimeString(booking.appointmentDateTime);
     const appUrl = getAppUrl();
     const bookingUrl = `${appUrl}/booking/success?id=${booking.id}`;
 
-    // Customer Notification
+    // Customer Email
     const customerSubject = `MASSAF Booking Confirmed — ${booking.bookingNumber}`;
     const customerText = `Hello ${booking.customer.name},
 
@@ -114,16 +145,22 @@ We look forward to seeing you!
 Warm regards,
 MASSAF Team`;
 
-    await sendEmail({
+    const custEmailRes = await sendEmail({
       to: booking.customer.email,
       subject: customerSubject,
       text: customerText,
     });
 
+    channelResults.push({
+      channel: 'email',
+      recipient: booking.customer.email,
+      success: custEmailRes.success,
+      error: custEmailRes.error,
+    });
+
     // Therapist Operational Notification
     if (booking.therapist) {
       if (booking.therapist.telegramChatId) {
-        // Therapist has explicit Telegram configuration: send directly to therapist's Telegram chat
         const therapistTelegramMsg = `MASSAF — NEW CONFIRMED BOOKING
 
 Booking: ${booking.bookingNumber}
@@ -135,13 +172,19 @@ Type: ${booking.locationType === 'STUDIO' ? 'Studio' : 'In-Home'}
 ${booking.locationType === 'IN_HOME' && booking.addressLine1 ? `Location: ${booking.addressLine1}, ${booking.city || ''}, ${booking.state || ''}` : ''}
 Amount: $${booking.amount.toFixed(2)}`;
 
-        await sendTelegramMessage({
+        const tgRes = await sendTelegramMessage({
           chatId: booking.therapist.telegramChatId,
           message: therapistTelegramMsg,
         });
+
+        channelResults.push({
+          channel: 'telegram',
+          recipient: `therapist_tg_${booking.therapist.telegramChatId}`,
+          success: tgRes.success,
+          error: tgRes.error,
+        });
       } else if (booking.therapist.email) {
-        // Fall back to therapist's email if no telegramChatId is set (NEVER fall back to admin Telegram chat)
-        await sendEmail({
+        const thEmailRes = await sendEmail({
           to: booking.therapist.email,
           subject: `NEW CONFIRMED BOOKING — ${booking.bookingNumber}`,
           text: `Hello ${booking.therapist.name},
@@ -156,6 +199,13 @@ Time: ${formattedTime}
 Type: ${booking.locationType}
 ${booking.locationType === 'IN_HOME' && booking.addressLine1 ? `Address: ${booking.addressLine1}, ${booking.city || ''}` : ''}
 Amount: $${booking.amount.toFixed(2)}`,
+        });
+
+        channelResults.push({
+          channel: 'email',
+          recipient: booking.therapist.email,
+          success: thEmailRes.success,
+          error: thEmailRes.error,
         });
       }
     }
@@ -173,31 +223,51 @@ Time: ${formattedTime}
 Therapist: ${booking.therapist ? booking.therapist.name : 'Unassigned'}
 Amount: $${booking.amount.toFixed(2)}`;
 
-      await sendTelegramMessage({
+      const adminTgRes = await sendTelegramMessage({
         chatId: adminChatId,
         message: adminTelegramMsg,
       });
+
+      channelResults.push({
+        channel: 'telegram',
+        recipient: `admin_tg_${adminChatId}`,
+        success: adminTgRes.success,
+        error: adminTgRes.error,
+      });
     }
+
+    const overallSuccess = channelResults.some((r) => r.success);
+    return {
+      success: overallSuccess,
+      channelResults,
+    };
   } catch (error) {
     console.error('[Notification Isolation] notifyBookingConfirmed error:', error);
+    return {
+      success: false,
+      channelResults,
+      error: error instanceof Error ? error.message : 'Unknown notification error',
+    };
   }
 }
 
 /**
  * 3. CANCELLATION NOTIFICATION
- * Called when a booking transitions to CANCELLED status.
  */
-export async function notifyBookingCancelled(bookingId: string, reason?: string): Promise<void> {
+export async function notifyBookingCancelled(bookingId: string, reason?: string): Promise<NotificationResult> {
+  const channelResults: ChannelResult[] = [];
   try {
     const booking = await getBookingWithDetails(bookingId);
-    if (!booking || !booking.customer) return;
+    if (!booking || !booking.customer) {
+      return { success: false, channelResults: [], error: 'Booking or customer record not found' };
+    }
 
     const formattedDate = formatUtcDateString(booking.appointmentDateTime);
     const formattedTime = formatUtcTimeString(booking.appointmentDateTime);
     const appUrl = getAppUrl();
 
     // Customer Email
-    await sendEmail({
+    const custEmailRes = await sendEmail({
       to: booking.customer.email,
       subject: `MASSAF Booking Cancelled — ${booking.bookingNumber}`,
       text: `Hello ${booking.customer.name},
@@ -208,10 +278,17 @@ If you have any questions or wish to reschedule, please visit MASSAF at:
 ${appUrl}`,
     });
 
-    // Therapist Notification (Telegram if configured, otherwise Email)
+    channelResults.push({
+      channel: 'email',
+      recipient: booking.customer.email,
+      success: custEmailRes.success,
+      error: custEmailRes.error,
+    });
+
+    // Therapist Notification
     if (booking.therapist) {
       if (booking.therapist.telegramChatId) {
-        await sendTelegramMessage({
+        const tgRes = await sendTelegramMessage({
           chatId: booking.therapist.telegramChatId,
           message: `BOOKING CANCELLED
 
@@ -221,8 +298,15 @@ Service: ${booking.service.name}
 Date: ${formattedDate}
 Time: ${formattedTime}${reason ? `\nReason: ${reason}` : ''}`,
         });
+
+        channelResults.push({
+          channel: 'telegram',
+          recipient: `therapist_tg_${booking.therapist.telegramChatId}`,
+          success: tgRes.success,
+          error: tgRes.error,
+        });
       } else if (booking.therapist.email) {
-        await sendEmail({
+        const thEmailRes = await sendEmail({
           to: booking.therapist.email,
           subject: `BOOKING CANCELLED — ${booking.bookingNumber}`,
           text: `Hello ${booking.therapist.name},
@@ -235,13 +319,20 @@ Service: ${booking.service.name}
 Date: ${formattedDate}
 Time: ${formattedTime}${reason ? `\nReason: ${reason}` : ''}`,
         });
+
+        channelResults.push({
+          channel: 'email',
+          recipient: booking.therapist.email,
+          success: thEmailRes.success,
+          error: thEmailRes.error,
+        });
       }
     }
 
     // Admin Telegram Notification
     const adminChatId = getAdminChatId();
     if (adminChatId) {
-      await sendTelegramMessage({
+      const adminTgRes = await sendTelegramMessage({
         chatId: adminChatId,
         message: `BOOKING CANCELLED
 
@@ -252,26 +343,46 @@ Service: ${booking.service.name}
 Date: ${formattedDate}
 Time: ${formattedTime}${reason ? `\nReason: ${reason}` : ''}`,
       });
+
+      channelResults.push({
+        channel: 'telegram',
+        recipient: `admin_tg_${adminChatId}`,
+        success: adminTgRes.success,
+        error: adminTgRes.error,
+      });
     }
+
+    const overallSuccess = channelResults.some((r) => r.success);
+    return {
+      success: overallSuccess,
+      channelResults,
+    };
   } catch (error) {
     console.error('[Notification Isolation] notifyBookingCancelled error:', error);
+    return {
+      success: false,
+      channelResults,
+      error: error instanceof Error ? error.message : 'Unknown notification error',
+    };
   }
 }
 
 /**
  * 4. COMPLETION NOTIFICATION
- * Called when a booking becomes COMPLETED. Directs customer to review flow.
  */
-export async function notifyBookingCompleted(bookingId: string): Promise<void> {
+export async function notifyBookingCompleted(bookingId: string): Promise<NotificationResult> {
+  const channelResults: ChannelResult[] = [];
   try {
     const booking = await getBookingWithDetails(bookingId);
-    if (!booking || !booking.customer) return;
+    if (!booking || !booking.customer) {
+      return { success: false, channelResults: [], error: 'Booking or customer record not found' };
+    }
 
     const formattedDate = formatUtcDateString(booking.appointmentDateTime);
     const appUrl = getAppUrl();
     const reviewUrl = `${appUrl}/booking/success?id=${booking.id}`;
 
-    await sendEmail({
+    const custEmailRes = await sendEmail({
       to: booking.customer.email,
       subject: `How was your massage? Leave a review for ${booking.therapist ? booking.therapist.name : 'MASSAF'}`,
       text: `Hello ${booking.customer.name},
@@ -287,22 +398,41 @@ ${reviewUrl}
 
 Thank you for choosing MASSAF!`,
     });
+
+    channelResults.push({
+      channel: 'email',
+      recipient: booking.customer.email,
+      success: custEmailRes.success,
+      error: custEmailRes.error,
+    });
+
+    return {
+      success: custEmailRes.success,
+      channelResults,
+    };
   } catch (error) {
     console.error('[Notification Isolation] notifyBookingCompleted error:', error);
+    return {
+      success: false,
+      channelResults,
+      error: error instanceof Error ? error.message : 'Unknown notification error',
+    };
   }
 }
 
 /**
  * 5. APPOINTMENT REMINDER NOTIFICATION
- * Sent approximately 24 hours prior and 3 hours prior (same-day) before the appointment.
  */
 export async function notifyBookingReminder(
   bookingId: string,
   reminderType: '24h' | '3h'
-): Promise<void> {
+): Promise<NotificationResult> {
+  const channelResults: ChannelResult[] = [];
   try {
     const booking = await getBookingWithDetails(bookingId);
-    if (!booking || !booking.customer || booking.status !== 'CONFIRMED') return;
+    if (!booking || !booking.customer || booking.status !== 'CONFIRMED') {
+      return { success: false, channelResults: [], error: 'Eligible confirmed booking or customer record not found' };
+    }
 
     const formattedDate = formatUtcDateString(booking.appointmentDateTime);
     const formattedTime = formatUtcTimeString(booking.appointmentDateTime);
@@ -312,7 +442,7 @@ export async function notifyBookingReminder(
     const timingLabel = reminderType === '24h' ? 'Tomorrow (~24 hours)' : 'Today in ~3 hours';
 
     // Customer Reminder
-    await sendEmail({
+    const custEmailRes = await sendEmail({
       to: booking.customer.email,
       subject: `Upcoming MASSAF Appointment (${timingLabel}) — ${booking.bookingNumber}`,
       text: `Hello ${booking.customer.name},
@@ -333,10 +463,17 @@ Warm regards,
 MASSAF Team`,
     });
 
+    channelResults.push({
+      channel: 'email',
+      recipient: booking.customer.email,
+      success: custEmailRes.success,
+      error: custEmailRes.error,
+    });
+
     // Therapist Reminder
     if (booking.therapist) {
       if (booking.therapist.telegramChatId) {
-        await sendTelegramMessage({
+        const tgRes = await sendTelegramMessage({
           chatId: booking.therapist.telegramChatId,
           message: `APPOINTMENT REMINDER (${timingLabel.toUpperCase()})
 
@@ -346,8 +483,15 @@ Service: ${booking.service.name} (${booking.durationMinutes} mins)
 Date: ${formattedDate}
 Time: ${formattedTime}`,
         });
+
+        channelResults.push({
+          channel: 'telegram',
+          recipient: `therapist_tg_${booking.therapist.telegramChatId}`,
+          success: tgRes.success,
+          error: tgRes.error,
+        });
       } else if (booking.therapist.email) {
-        await sendEmail({
+        const thEmailRes = await sendEmail({
           to: booking.therapist.email,
           subject: `Appointment Reminder (${timingLabel}) — ${booking.bookingNumber}`,
           text: `Hello ${booking.therapist.name},
@@ -361,12 +505,19 @@ Date: ${formattedDate}
 Time: ${formattedTime}
 Type: ${booking.locationType}`,
         });
+
+        channelResults.push({
+          channel: 'email',
+          recipient: booking.therapist.email,
+          success: thEmailRes.success,
+          error: thEmailRes.error,
+        });
       }
     }
 
     const adminChatId = getAdminChatId();
     if (adminChatId) {
-      await sendTelegramMessage({
+      const adminTgRes = await sendTelegramMessage({
         chatId: adminChatId,
         message: `APPOINTMENT REMINDER (${timingLabel.toUpperCase()})
 
@@ -376,27 +527,47 @@ Therapist: ${booking.therapist ? booking.therapist.name : 'Unassigned'}
 Date: ${formattedDate}
 Time: ${formattedTime}`,
       });
+
+      channelResults.push({
+        channel: 'telegram',
+        recipient: `admin_tg_${adminChatId}`,
+        success: adminTgRes.success,
+        error: adminTgRes.error,
+      });
     }
+
+    const overallSuccess = channelResults.some((r) => r.success);
+    return {
+      success: overallSuccess,
+      channelResults,
+    };
   } catch (error) {
     console.error('[Notification Isolation] notifyBookingReminder error:', error);
+    return {
+      success: false,
+      channelResults,
+      error: error instanceof Error ? error.message : 'Unknown notification error',
+    };
   }
 }
 
 /**
  * 6. UNPAID BOOKING EXPIRED NOTIFICATION
- * Called when an unpaid pending booking is cancelled after 30 minutes.
  */
-export async function notifyBookingExpired(bookingId: string): Promise<void> {
+export async function notifyBookingExpired(bookingId: string): Promise<NotificationResult> {
+  const channelResults: ChannelResult[] = [];
   try {
     const booking = await getBookingWithDetails(bookingId);
-    if (!booking || !booking.customer) return;
+    if (!booking || !booking.customer) {
+      return { success: false, channelResults: [], error: 'Booking or customer record not found' };
+    }
 
     const formattedDate = formatUtcDateString(booking.appointmentDateTime);
     const formattedTime = formatUtcTimeString(booking.appointmentDateTime);
     const appUrl = getAppUrl();
 
     // Customer Email
-    await sendEmail({
+    const custEmailRes = await sendEmail({
       to: booking.customer.email,
       subject: `MASSAF Booking Expired — ${booking.bookingNumber}`,
       text: `Hello ${booking.customer.name},
@@ -410,10 +581,17 @@ Warm regards,
 MASSAF Team`,
     });
 
+    channelResults.push({
+      channel: 'email',
+      recipient: booking.customer.email,
+      success: custEmailRes.success,
+      error: custEmailRes.error,
+    });
+
     // Admin Telegram Notification
     const adminChatId = getAdminChatId();
     if (adminChatId) {
-      await sendTelegramMessage({
+      const adminTgRes = await sendTelegramMessage({
         chatId: adminChatId,
         message: `UNPAID BOOKING EXPIRED
 
@@ -424,8 +602,26 @@ Date: ${formattedDate}
 Time: ${formattedTime}
 Status: CANCELLED (30m unpaid timeout)`,
       });
+
+      channelResults.push({
+        channel: 'telegram',
+        recipient: `admin_tg_${adminChatId}`,
+        success: adminTgRes.success,
+        error: adminTgRes.error,
+      });
     }
+
+    const overallSuccess = channelResults.some((r) => r.success);
+    return {
+      success: overallSuccess,
+      channelResults,
+    };
   } catch (error) {
     console.error('[Notification Isolation] notifyBookingExpired error:', error);
+    return {
+      success: false,
+      channelResults,
+      error: error instanceof Error ? error.message : 'Unknown notification error',
+    };
   }
 }
