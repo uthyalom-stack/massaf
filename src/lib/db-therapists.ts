@@ -201,45 +201,39 @@ export function formatDbTherapistToPublic(therapist: RawTherapistData): Customer
 }
 
 export async function getActiveTherapists(): Promise<CustomerTherapist[]> {
-  try {
-    const dbTherapists = await db.therapist.findMany({
-      where: {
-        isActive: true,
+  const dbTherapists = await db.therapist.findMany({
+    where: {
+      isActive: true,
+    },
+    include: {
+      photos: {
+        orderBy: { sortOrder: 'asc' },
       },
-      include: {
-        photos: {
-          orderBy: { sortOrder: 'asc' },
+      services: {
+        where: {
+          isActive: true,
+          service: { isActive: true },
         },
-        services: {
-          where: {
-            isActive: true,
-            service: { isActive: true },
-          },
-          include: {
-            service: true,
-          },
-        },
-        serviceAreas: true,
-        availabilities: true,
-        _count: {
-          select: {
-            bookings: true,
-          },
+        include: {
+          service: true,
         },
       },
-      orderBy: [
-        { isFeatured: 'desc' },
-        { rating: 'desc' },
-        { createdAt: 'desc' },
-      ],
-    });
+      serviceAreas: true,
+      availabilities: true,
+      _count: {
+        select: {
+          bookings: true,
+        },
+      },
+    },
+    orderBy: [
+      { isFeatured: 'desc' },
+      { rating: 'desc' },
+      { createdAt: 'desc' },
+    ],
+  });
 
-    return dbTherapists.map((t) => formatDbTherapistToPublic(t));
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[getActiveTherapists] Database query failed:', message);
-    return [];
-  }
+  return dbTherapists.map((t) => formatDbTherapistToPublic(t));
 }
 
 export async function getActiveTherapistById(id: string): Promise<CustomerTherapist | null> {

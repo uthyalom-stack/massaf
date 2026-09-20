@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@libsql/client": "^0.18.0",
-    "@netlify/plugin-nextjs": "^5.16.0",
     "@prisma/adapter-libsql": "^6.19.3",
     "@prisma/client": "^6.19.3",
     "next": "16.3.5",
