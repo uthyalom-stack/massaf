@@ -749,7 +749,7 @@ export function CustomerDashboardClient() {
             profile.favorites.map((f) => (
               <div key={f.id} className="p-5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-slate-200 overflow-hidden shrink-0">
+                  <div className="w-12 h-12 rounded-xl bg-slate-200 overflow-hidden shrink-0 relative">
                     {f.profileImage ? (
                       <Image src={f.profileImage} alt={f.therapistName} fill className="object-cover" />
                     ) : (

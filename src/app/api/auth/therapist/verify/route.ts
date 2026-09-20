@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { generateVerificationToken, consumeVerificationToken } from '@/lib/verification-tokens';
 import { setTherapistSessionCookie, clearTherapistSessionCookie } from '@/lib/auth-session';
+import { checkRateLimit } from '@/lib/auth-rate-limit';
 
 export async function POST(request: Request) {
   try {
@@ -23,6 +24,18 @@ export async function POST(request: Request) {
       }
 
       const cleanEmail = String(email).trim().toLowerCase();
+
+      // Rate limiting: Max 5 token requests per 15 minutes per email/IP
+      const clientIp = request.headers.get('x-forwarded-for') || 'anon_ip';
+      const rateCheck = await checkRateLimit(`${cleanEmail}:${clientIp}`, 'therapist_request_token', 5, 15);
+
+      if (!rateCheck.allowed) {
+        return NextResponse.json(
+          { error: 'Too many verification requests. Please wait 15 minutes before requesting another token.' },
+          { status: 429 }
+        );
+      }
+
       const therapist = await db.therapist.findFirst({
         where: { email: cleanEmail, isActive: true },
       });
@@ -34,7 +47,7 @@ export async function POST(request: Request) {
         });
       }
 
-      const shortLivedToken = generateVerificationToken(therapist.id, 'THERAPIST_LOGIN');
+      const shortLivedToken = await generateVerificationToken(therapist.id, 'THERAPIST_LOGIN');
 
       // Dispatch notification / operational email or log token securely for therapist portal verification
       try {
@@ -45,9 +58,7 @@ export async function POST(request: Request) {
       }
 
       return NextResponse.json({
-        message: 'Verification token generated and sent to therapist.',
-        // Expose token in dev/test mode if needed, or rely on token verification step
-        token: process.env.NODE_ENV !== 'production' ? shortLivedToken : undefined,
+        message: 'If a matching active therapist account exists, a verification token has been generated and sent via notification channel.',
       });
     }
 
@@ -60,7 +71,7 @@ export async function POST(request: Request) {
         );
       }
 
-      const therapistId = consumeVerificationToken(String(token), 'THERAPIST_LOGIN');
+      const therapistId = await consumeVerificationToken(String(token), 'THERAPIST_LOGIN');
       if (!therapistId) {
         return NextResponse.json(
           { error: 'Invalid or expired verification token' },

@@ -1,63 +1,78 @@
 import crypto from 'crypto';
+import { db } from '@/lib/db';
 
-interface VerificationToken {
-  token: string;
-  entityId: string;
-  type: 'THERAPIST_LOGIN' | 'CUSTOMER_LOGIN';
-  expiresAt: number;
+function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
 }
 
-// In-memory single-use token registry (cleans up expired entries periodically)
-const tokenStore = new Map<string, VerificationToken>();
-
 /**
- * Generates a cryptographically random short-lived token bound to an entity ID.
- * Token expires in 15 minutes.
+ * Generates a cryptographically random short-lived token bound to an entity ID and stores its SHA-256 hash in the database.
+ * Token expires in 15 minutes by default.
  */
-export function generateVerificationToken(
+export async function generateVerificationToken(
   entityId: string,
-  type: 'THERAPIST_LOGIN' | 'CUSTOMER_LOGIN',
+  tokenType: 'THERAPIST_LOGIN' | 'CUSTOMER_LOGIN',
   expirationMinutes = 15
-): string {
-  // Clean up stale tokens
-  const now = Date.now();
-  for (const [key, val] of tokenStore.entries()) {
-    if (val.expiresAt < now) {
-      tokenStore.delete(key);
-    }
-  }
+): Promise<string> {
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const tokenHash = hashToken(rawToken);
+  const expiresAt = new Date(Date.now() + expirationMinutes * 60 * 1000);
 
-  const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = now + expirationMinutes * 60 * 1000;
-
-  tokenStore.set(token, {
-    token,
-    entityId,
-    type,
-    expiresAt,
+  // Store token hash in database
+  await db.verificationToken.create({
+    data: {
+      tokenHash,
+      entityId,
+      tokenType,
+      expiresAt,
+    },
   });
 
-  return token;
+  return rawToken;
 }
 
 /**
- * Consumes and invalidates a short-lived single-use verification token.
- * Returns the bound entity ID if valid and not expired; returns null otherwise.
+ * Atomically consumes and invalidates a short-lived single-use verification token.
+ * Uses conditional database update (`consumedAt: null` AND `expiresAt > now`) to prevent race conditions.
+ * Returns the bound entity ID if successfully consumed; returns null if invalid, expired, or already consumed.
  */
-export function consumeVerificationToken(
-  token: string,
-  type: 'THERAPIST_LOGIN' | 'CUSTOMER_LOGIN'
-): string | null {
-  if (!token || typeof token !== 'string') return null;
+export async function consumeVerificationToken(
+  rawToken: string,
+  expectedType: 'THERAPIST_LOGIN' | 'CUSTOMER_LOGIN'
+): Promise<string | null> {
+  if (!rawToken || typeof rawToken !== 'string' || rawToken.trim().length === 0) {
+    return null;
+  }
 
-  const entry = tokenStore.get(token);
-  if (!entry) return null;
+  const tokenHash = hashToken(rawToken.trim());
+  const now = new Date();
 
-  // Single-use guarantee: immediately delete token regardless of outcome
-  tokenStore.delete(token);
+  // Find token record
+  const tokenRecord = await db.verificationToken.findUnique({
+    where: { tokenHash },
+  });
 
-  if (entry.type !== type) return null;
-  if (Date.now() > entry.expiresAt) return null;
+  if (!tokenRecord) return null;
+  if (tokenRecord.tokenType !== expectedType) return null;
+  if (tokenRecord.consumedAt !== null) return null;
+  if (tokenRecord.expiresAt.getTime() <= now.getTime()) return null;
 
-  return entry.entityId;
+  // Atomic consumption: update consumedAt ONLY if consumedAt is still null and not expired
+  const updateResult = await db.verificationToken.updateMany({
+    where: {
+      id: tokenRecord.id,
+      consumedAt: null,
+      expiresAt: { gt: now },
+    },
+    data: {
+      consumedAt: now,
+    },
+  });
+
+  // If update count is 1, this request successfully and atomically consumed the token
+  if (updateResult.count === 1) {
+    return tokenRecord.entityId;
+  }
+
+  return null;
 }

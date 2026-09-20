@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { cookies } from 'next/headers';
+import { db } from '@/lib/db';
 
 export interface SessionPayload {
   entityId: string;
@@ -108,12 +109,28 @@ export function verifySessionToken(
 
 /**
  * Server-side helper to read and verify the active customer session from HTTP-only cookie.
+ * Revalidates against the database to confirm the Customer entity still exists.
  */
 export async function getVerifiedCustomerSession(): Promise<SessionPayload | null> {
   try {
     const cookieStore = await cookies();
     const token = cookieStore.get(CUSTOMER_COOKIE_NAME)?.value;
-    return verifySessionToken(token, 'CUSTOMER');
+    const payload = verifySessionToken(token, 'CUSTOMER');
+    if (!payload) return null;
+
+    // Database revalidation: Confirm customer still exists
+    const customer = await db.customer.findUnique({
+      where: { id: payload.entityId },
+      select: { id: true, email: true },
+    });
+
+    if (!customer) return null;
+
+    // Return payload with authoritative email from DB
+    return {
+      ...payload,
+      email: customer.email,
+    };
   } catch {
     return null;
   }
@@ -121,12 +138,28 @@ export async function getVerifiedCustomerSession(): Promise<SessionPayload | nul
 
 /**
  * Server-side helper to read and verify the active therapist session from HTTP-only cookie.
+ * Revalidates against the database to confirm the Therapist entity exists AND isActive === true.
  */
 export async function getVerifiedTherapistSession(): Promise<SessionPayload | null> {
   try {
     const cookieStore = await cookies();
     const token = cookieStore.get(THERAPIST_COOKIE_NAME)?.value;
-    return verifySessionToken(token, 'THERAPIST');
+    const payload = verifySessionToken(token, 'THERAPIST');
+    if (!payload) return null;
+
+    // Database revalidation: Confirm therapist exists and is active
+    const therapist = await db.therapist.findFirst({
+      where: { id: payload.entityId, isActive: true },
+      select: { id: true, email: true },
+    });
+
+    if (!therapist) return null;
+
+    // Return payload with authoritative email from DB
+    return {
+      ...payload,
+      email: therapist.email || payload.email,
+    };
   } catch {
     return null;
   }
