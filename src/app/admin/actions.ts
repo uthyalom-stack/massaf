@@ -24,6 +24,7 @@ import {
   notifyBookingCancelled,
   notifyBookingCompleted,
 } from '@/lib/notifications';
+import { deleteFromR2 } from '@/lib/r2';
 
 /**
  * Server-side authorization check ensuring MASSAF_ADMIN_API_KEY is configured on the server.
@@ -72,7 +73,7 @@ export async function createTherapistAction(input: unknown) {
       },
     });
 
-    revalidatePath('/admin/therapists');
+    safeRevalidatePath('/admin/therapists');
     return { success: true, therapist };
   } catch (err: unknown) {
     console.error('Error in createTherapistAction:', err);
@@ -501,6 +502,8 @@ export async function cancelBookingAction(input: unknown) {
 }
 
 export async function updateTherapistAction(id: string, input: unknown) {
+  let newlyUploadedUrl: string | null = null;
+
   try {
     checkServerAdminAuth();
     const therapist = await db.therapist.findUnique({ where: { id } });
@@ -510,21 +513,34 @@ export async function updateTherapistAction(id: string, input: unknown) {
 
     const validated = therapistBaseSchema.partial().parse(input);
 
+    const oldProfileImage = therapist.profileImage;
+    if (validated.profileImage && validated.profileImage !== oldProfileImage) {
+      newlyUploadedUrl = validated.profileImage;
+    }
+
     if (validated.email && validated.email !== therapist.email) {
       const existing = await db.therapist.findUnique({
         where: { email: validated.email },
       });
       if (existing) {
+        if (newlyUploadedUrl) {
+          try {
+            await deleteFromR2(newlyUploadedUrl);
+          } catch (delErr) {
+            console.error('Error cleaning up newly uploaded R2 image on email conflict:', delErr);
+          }
+        }
         return { success: false, error: 'Email address is already in use by another therapist.' };
       }
     }
 
+    // 1. Execute DB update FIRST
     const updated = await db.therapist.update({
       where: { id },
       data: {
         ...(validated.name !== undefined && { name: validated.name }),
         ...(validated.bio !== undefined && { bio: validated.bio }),
-        ...(validated.profileImage !== undefined && { profileImage: validated.profileImage }),
+        ...(validated.profileImage !== undefined && { profileImage: validated.profileImage || null }),
         ...(validated.email !== undefined && { email: validated.email }),
         ...(validated.phone !== undefined && { phone: validated.phone }),
         ...(validated.telegramChatId !== undefined && { telegramChatId: validated.telegramChatId || null }),
@@ -535,14 +551,33 @@ export async function updateTherapistAction(id: string, input: unknown) {
       },
     });
 
-    revalidatePath('/admin/therapists');
-    revalidatePath(`/admin/therapists/${id}`);
+    // 2. Only after DB update succeeds, safely delete old profile image if replaced or cleared
+    if (oldProfileImage && oldProfileImage !== updated.profileImage) {
+      try {
+        await deleteFromR2(oldProfileImage);
+      } catch (delErr) {
+        console.error('Non-critical error deleting replaced/cleared old profile image from R2:', delErr);
+      }
+    }
+
+    safeRevalidatePath('/admin/therapists');
+    safeRevalidatePath(`/admin/therapists/${id}`);
     return { success: true, therapist: updated };
   } catch (err: unknown) {
     console.error('Error in updateTherapistAction:', err);
+
+    // Rollback cleanup: if DB update failed and a new R2 object was uploaded, delete newly uploaded object
+    if (newlyUploadedUrl) {
+      try {
+        await deleteFromR2(newlyUploadedUrl);
+      } catch (rollbackErr) {
+        console.error('Failed to clean up newly uploaded R2 object after DB update error:', rollbackErr);
+      }
+    }
+
     return {
       success: false,
-      error: err instanceof Error ? err.message : 'Failed to update therapist details.',
+      error: 'Failed to update therapist details. Please try again.',
     };
   }
 }
@@ -557,6 +592,7 @@ export async function deleteTherapistAction(id: string) {
     const therapist = await db.therapist.findUnique({
       where: { id },
       include: {
+        photos: true,
         _count: {
           select: {
             bookings: true,
@@ -577,14 +613,25 @@ export async function deleteTherapistAction(id: string) {
       };
     }
 
+    // Delete DB record first
     await db.therapist.delete({ where: { id } });
-    revalidatePath('/admin/therapists');
+
+    // Clean up associated R2 media objects (profile image and gallery photos)
+    if (therapist.profileImage) {
+      await deleteFromR2(therapist.profileImage);
+    }
+
+    for (const photo of therapist.photos) {
+      await deleteFromR2(photo.url);
+    }
+
+    safeRevalidatePath('/admin/therapists');
     return { success: true };
   } catch (err: unknown) {
     console.error('Error in deleteTherapistAction:', err);
     return {
       success: false,
-      error: err instanceof Error ? err.message : 'Failed to delete therapist.',
+      error: 'Failed to delete therapist record. Please try again.',
     };
   }
 }
@@ -592,15 +639,31 @@ export async function deleteTherapistAction(id: string) {
 // --- Photos ---
 
 export async function addTherapistPhotoAction(therapistId: string, input: unknown) {
+  let uploadedUrl: string | null = null;
+
   try {
     checkServerAdminAuth();
+
+    if (typeof input === 'object' && input !== null && 'url' in input && typeof (input as { url: unknown }).url === 'string') {
+      uploadedUrl = (input as { url: string }).url;
+    }
+
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
+      if (uploadedUrl) {
+        try {
+          await deleteFromR2(uploadedUrl);
+        } catch (cleanupErr) {
+          console.error('Error cleaning up orphaned R2 object on therapist not found:', cleanupErr);
+        }
+      }
       return { success: false, error: 'Therapist not found.' };
     }
 
     const validated = photoSchema.parse(input);
+    uploadedUrl = validated.url;
 
+    // Create DB record
     const photo = await db.therapistPhoto.create({
       data: {
         therapistId,
@@ -610,13 +673,23 @@ export async function addTherapistPhotoAction(therapistId: string, input: unknow
       },
     });
 
-    revalidatePath(`/admin/therapists/${therapistId}`);
+    safeRevalidatePath(`/admin/therapists/${therapistId}`);
     return { success: true, photo };
   } catch (err: unknown) {
     console.error('Error in addTherapistPhotoAction:', err);
+
+    // If DB insertion fails, delete newly uploaded R2 object to prevent orphaned storage
+    if (uploadedUrl) {
+      try {
+        await deleteFromR2(uploadedUrl);
+      } catch (cleanupErr) {
+        console.error('Error cleaning up orphaned R2 object on gallery insert failure:', cleanupErr);
+      }
+    }
+
     return {
       success: false,
-      error: err instanceof Error ? err.message : 'Failed to add photo.',
+      error: 'Failed to save gallery photo record. Please try again.',
     };
   }
 }
@@ -648,13 +721,13 @@ export async function updateTherapistPhotoOrderAction(therapistId: string, input
       },
     });
 
-    revalidatePath(`/admin/therapists/${therapistId}`);
+    safeRevalidatePath(`/admin/therapists/${therapistId}`);
     return { success: true, photo: updated };
   } catch (err: unknown) {
     console.error('Error in updateTherapistPhotoOrderAction:', err);
     return {
       success: false,
-      error: err instanceof Error ? err.message : 'Failed to update photo order.',
+      error: 'Failed to update photo order.',
     };
   }
 }
@@ -670,14 +743,25 @@ export async function removeTherapistPhotoAction(therapistId: string, photoId: s
       return { success: false, error: 'Photo not found for this therapist.' };
     }
 
+    // 1. Delete DB record FIRST
     await db.therapistPhoto.delete({ where: { id: photoId } });
-    revalidatePath(`/admin/therapists/${therapistId}`);
+
+    // 2. Only if DB deletion succeeds, delete corresponding R2 object if it matches MASSAF R2 domain
+    if (photo.url) {
+      try {
+        await deleteFromR2(photo.url);
+      } catch (delErr) {
+        console.error('Non-critical error deleting photo object from R2:', delErr);
+      }
+    }
+
+    safeRevalidatePath(`/admin/therapists/${therapistId}`);
     return { success: true };
   } catch (err: unknown) {
     console.error('Error in removeTherapistPhotoAction:', err);
     return {
       success: false,
-      error: err instanceof Error ? err.message : 'Failed to remove photo.',
+      error: 'Failed to remove gallery photo. Please try again.',
     };
   }
 }
@@ -726,7 +810,7 @@ export async function assignTherapistServiceAction(therapistId: string, input: u
       },
     });
 
-    revalidatePath(`/admin/therapists/${therapistId}`);
+    safeRevalidatePath(`/admin/therapists/${therapistId}`);
     return { success: true, therapistService };
   } catch (err: unknown) {
     console.error('Error in assignTherapistServiceAction:', err);
@@ -762,7 +846,7 @@ export async function removeTherapistServiceAction(therapistId: string, serviceI
       },
     });
 
-    revalidatePath(`/admin/therapists/${therapistId}`);
+    safeRevalidatePath(`/admin/therapists/${therapistId}`);
     return { success: true };
   } catch (err: unknown) {
     console.error('Error in removeTherapistServiceAction:', err);
@@ -807,7 +891,7 @@ export async function addServiceAreaAction(therapistId: string, input: unknown) 
       },
     });
 
-    revalidatePath(`/admin/therapists/${therapistId}`);
+    safeRevalidatePath(`/admin/therapists/${therapistId}`);
     return { success: true, serviceArea };
   } catch (err: unknown) {
     console.error('Error in addServiceAreaAction:', err);
@@ -830,7 +914,7 @@ export async function removeServiceAreaAction(therapistId: string, areaId: strin
     }
 
     await db.serviceArea.delete({ where: { id: areaId } });
-    revalidatePath(`/admin/therapists/${therapistId}`);
+    safeRevalidatePath(`/admin/therapists/${therapistId}`);
     return { success: true };
   } catch (err: unknown) {
     console.error('Error in removeServiceAreaAction:', err);
@@ -864,7 +948,7 @@ export async function addTherapistAvailabilityAction(therapistId: string, input:
       },
     });
 
-    revalidatePath(`/admin/therapists/${therapistId}`);
+    safeRevalidatePath(`/admin/therapists/${therapistId}`);
     return { success: true, availability };
   } catch (err: unknown) {
     console.error('Error in addTherapistAvailabilityAction:', err);
@@ -906,7 +990,7 @@ export async function updateTherapistAvailabilityAction(therapistId: string, inp
       },
     });
 
-    revalidatePath(`/admin/therapists/${therapistId}`);
+    safeRevalidatePath(`/admin/therapists/${therapistId}`);
     return { success: true, availability: updated };
   } catch (err: unknown) {
     console.error('Error in updateTherapistAvailabilityAction:', err);
@@ -929,7 +1013,7 @@ export async function removeTherapistAvailabilityAction(therapistId: string, ava
     }
 
     await db.therapistAvailability.delete({ where: { id: availabilityId } });
-    revalidatePath(`/admin/therapists/${therapistId}`);
+    safeRevalidatePath(`/admin/therapists/${therapistId}`);
     return { success: true };
   } catch (err: unknown) {
     console.error('Error in removeTherapistAvailabilityAction:', err);
