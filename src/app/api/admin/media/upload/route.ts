@@ -58,10 +58,16 @@ function validateImageMagicBytes(buffer: Buffer): { valid: boolean; format?: str
   return { valid: false };
 }
 
+import { getVerifiedTherapistSession } from '@/lib/auth-session';
+
 export async function POST(request: Request) {
-  // 1. Verify admin authorization
-  const authError = verifyAdminApiKey(request);
-  if (authError) return authError;
+  // 1. Verify authorization (admin OR verified therapist session)
+  const adminAuthError = verifyAdminApiKey(request);
+  const therapistSession = await getVerifiedTherapistSession();
+
+  if (adminAuthError && !therapistSession) {
+    return adminAuthError;
+  }
 
   try {
     const formData = await request.formData();

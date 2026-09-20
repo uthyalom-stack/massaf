@@ -554,6 +554,83 @@ Time: ${formattedTime}`,
 /**
  * 6. UNPAID BOOKING EXPIRED NOTIFICATION
  */
+/**
+ * 7. THERAPIST PORTAL LOGIN VERIFICATION TOKEN NOTIFICATION
+ */
+export async function notifyTherapistLoginToken(
+  therapistId: string,
+  token: string
+): Promise<NotificationResult> {
+  const channelResults: ChannelResult[] = [];
+  try {
+    const therapist = await db.therapist.findUnique({
+      where: { id: therapistId },
+    });
+
+    if (!therapist) {
+      return { success: false, channelResults: [], error: 'Therapist record not found' };
+    }
+
+    const appUrl = getAppUrl();
+    const loginLink = `${appUrl}/therapist/login?token=${token}`;
+    const text = `Hello ${therapist.name},
+
+Here is your short-lived single-use verification token to access your MASSAF Therapist Portal:
+
+Verification Token: ${token}
+
+Or click the link below to verify directly:
+${loginLink}
+
+This token expires in 15 minutes. If you did not request this token, please ignore this message.
+
+Warm regards,
+MASSAF Platform`;
+
+    if (therapist.telegramChatId) {
+      const tgRes = await sendTelegramMessage({
+        chatId: therapist.telegramChatId,
+        message: `MASSAF THERAPIST LOGIN TOKEN
+
+Token: ${token}
+Link: ${loginLink}
+
+Expires in 15 minutes.`,
+      });
+      channelResults.push({
+        channel: 'telegram',
+        recipient: `therapist_tg_${therapist.telegramChatId}`,
+        success: tgRes.success,
+        error: tgRes.error,
+      });
+    } else if (therapist.email) {
+      const emailRes = await sendEmail({
+        to: therapist.email,
+        subject: `MASSAF Therapist Portal Login Token`,
+        text,
+      });
+      channelResults.push({
+        channel: 'email',
+        recipient: therapist.email,
+        success: emailRes.success,
+        error: emailRes.error,
+      });
+    }
+
+    return {
+      success: channelResults.some((r) => r.success),
+      channelResults,
+    };
+  } catch (error) {
+    console.error('[Notification Isolation] notifyTherapistLoginToken error:', error);
+    return {
+      success: false,
+      channelResults,
+      error: error instanceof Error ? error.message : 'Unknown notification error',
+    };
+  }
+}
+
 export async function notifyBookingExpired(bookingId: string): Promise<NotificationResult> {
   const channelResults: ChannelResult[] = [];
   try {

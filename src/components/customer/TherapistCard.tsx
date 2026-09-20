@@ -1,4 +1,6 @@
-import React from 'react';
+'use client';
+
+import React, { useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { CustomerTherapist } from '@/types/customer';
@@ -9,6 +11,36 @@ interface TherapistCardProps {
 }
 
 export function TherapistCard({ therapist }: TherapistCardProps) {
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [loadingFav, setLoadingFav] = useState(false);
+
+  const handleToggleFavorite = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setLoadingFav(true);
+
+    try {
+      const res = await fetch('/api/account/favorites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ therapistId: therapist.id }),
+      });
+
+      if (res.status === 401) {
+        alert('Please sign in or verify your customer account to save favorite therapists.');
+        return;
+      }
+
+      const data = await res.json();
+      if (res.ok) {
+        setIsFavorite(data.isFavorite);
+      }
+    } catch {
+      // ignore favorite error
+    } finally {
+      setLoadingFav(false);
+    }
+  };
   const profileHref = `/therapists/${therapist.id}`;
 
   return (
@@ -23,12 +55,21 @@ export function TherapistCard({ therapist }: TherapistCardProps) {
           className="object-cover transition-transform duration-300 group-hover:scale-105"
         />
 
-        {/* Availability Badge */}
-        <div className="absolute top-3 left-3">
+        {/* Availability Badge & Favorite Toggle */}
+        <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-white/95 backdrop-blur-xs text-emerald-800 shadow-2xs ring-1 ring-emerald-500/20">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" aria-hidden="true" />
             {therapist.availability}
           </span>
+
+          <button
+            onClick={handleToggleFavorite}
+            disabled={loadingFav}
+            aria-label={isFavorite ? 'Remove from favorites' : 'Save as favorite'}
+            className="w-8 h-8 rounded-full bg-white/90 backdrop-blur-xs flex items-center justify-center text-rose-500 shadow-xs hover:bg-white transition-transform active:scale-90"
+          >
+            {isFavorite ? '♥' : '♡'}
+          </button>
         </div>
 
         {/* Location Type Badges */}

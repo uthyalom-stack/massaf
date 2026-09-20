@@ -77,8 +77,43 @@ model Customer {
 
   bookings  Booking[]
   reviews   Review[]
+  addresses CustomerAddress[]
+  favorites CustomerFavorite[]
 
   @@index([email])
+}
+
+/// Saved in-home appointment addresses for customers
+model CustomerAddress {
+  id           String   @id @default(uuid())
+  customerId   String
+  label        String   @default("Home") // e.g. "Home", "Office", "Vacation Home"
+  addressLine1 String
+  addressLine2 String?
+  city         String
+  state        String
+  zipCode      String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+/// Saved favorite therapists for customers
+model CustomerFavorite {
+  id          String   @id @default(uuid())
+  customerId  String
+  therapistId String
+  createdAt   DateTime @default(now())
+
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  therapist   Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, therapistId])
+  @@index([customerId])
+  @@index([therapistId])
 }
 
 /// Massage therapists providing services
@@ -105,6 +140,7 @@ model Therapist {
   serviceAreas   ServiceArea[]
   bookings       Booking[]
   reviews        Review[]
+  favoritedBy    CustomerFavorite[]
 
   @@index([isActive])
   @@index([isFeatured])
