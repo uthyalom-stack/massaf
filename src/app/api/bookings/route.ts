@@ -248,6 +248,17 @@ export async function POST(request: Request) {
 
     const createdBooking = bookingResult.booking;
 
+    // Await notification dispatch with failure isolation
+    try {
+      const { notifyBookingCreated } = await import('@/lib/notifications');
+      const notifRes = await notifyBookingCreated(createdBooking.id);
+      if (!notifRes.success) {
+        console.warn('notifyBookingCreated dispatch warning:', notifRes.error);
+      }
+    } catch (notifErr) {
+      console.error('Failed to dispatch notifyBookingCreated:', notifErr);
+    }
+
     return NextResponse.json(
       {
         message: 'Booking created successfully',

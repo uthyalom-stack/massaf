@@ -1,0 +1,49 @@
+
+> massaf@0.1.0 dev
+> next dev
+
+▲ Next.js 16.3.5 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.0.2:3000
+✓ Ready in 580ms
+✓ Running next.config.ts took 61ms
+
+ POST /api/bookings 400 in 669ms (next.js: 578ms, application-code: 91ms)
+[Email Dispatched (Mock/Dev Mode)] {
+  to: 'customera.1789913715300@example.com',
+  subject: 'MASSAF Booking Received — Payment Pending (MSF-715972-694)',
+  preview: 'Hello CustomerA Concurrency,\n' +
+    '\n' +
+    'Thank you for choosing MASSAF! We have received your booking request.\n'
+}
+ POST /api/bookings 201 in 702ms (next.js: 324ms, application-code: 377ms)
+ POST /api/payments/paylio/create 200 in 281ms (next.js: 246ms, application-code: 35ms)
+ POST /api/payments/paylio/create 200 in 25ms (next.js: 4ms, application-code: 21ms)
+[SECURITY WARNING] PayLio callback received without required ipn_token parameter
+ GET /api/payments/paylio/callback?bookingId=a529b461-637b-4ba8-b5ac-ad0d1d9ae21e 400 in 183ms (next.js: 172ms, application-code: 11ms)
+[SECURITY WARNING] Token ownership mismatch in callback for booking MSF-TESTA-8712. Stored token: "paylio_ipn_created_MSF-TESTA-8712_1789913719093", Supplied token: "paylio_ipn_WRONG_TOKEN"
+ GET /api/payments/paylio/callback?bookingId=a529b461-637b-4ba8-b5ac-ad0d1d9ae21e&ipn_token=paylio_ipn_WRONG_TOKEN 400 in 12ms (next.js: 3ms, application-code: 9ms)
+[SECURITY WARNING] Token ownership mismatch in callback for booking MSF-TESTB-8722. Stored token: "null", Supplied token: "paylio_ipn_created_MSF-TESTA-8712_1789913719055"
+ GET /api/payments/paylio/callback?bookingId=4661dcca-20ce-4f8a-a9e4-aeba00bbc321&ipn_token=paylio_ipn_created_MSF-TESTA-8712_1789913719055 400 in 13ms (next.js: 3ms, application-code: 10ms)
+[Email Dispatched (Mock/Dev Mode)] {
+  to: 'paylio.test.1789913718699@example.com',
+  subject: 'MASSAF Booking Confirmed — MSF-TESTA-8712',
+  preview: 'Hello PayLio Test Customer,\n' +
+    '\n' +
+    'Great news! Your payment has been verified and your booking is now CONF'
+}
+ GET /api/payments/paylio/callback?bookingId=a529b461-637b-4ba8-b5ac-ad0d1d9ae21e&ipn_token=paylio_ipn_paid_1789913719333 200 in 31ms (next.js: 3ms, application-code: 28ms)
+ GET /api/payments/paylio/callback?bookingId=4661dcca-20ce-4f8a-a9e4-aeba00bbc321&ipn_token=paylio_ipn_pending_1789913719376&status=paid 400 in 31ms (next.js: 4ms, application-code: 27ms)
+ GET /api/payments/paylio/callback?bookingId=a529b461-637b-4ba8-b5ac-ad0d1d9ae21e&ipn_token=paylio_ipn_paid_1789913719333 200 in 18ms (next.js: 4ms, application-code: 15ms)
+ POST /api/payments/paylio/create 400 in 31ms (next.js: 3ms, application-code: 28ms)
+PayLio amount verification failed for booking MSF-TESTB-8722: provider original_amount is missing.
+ GET /api/payments/paylio/callback?bookingId=4661dcca-20ce-4f8a-a9e4-aeba00bbc321&ipn_token=mock_missing_amount_1789913719481 400 in 20ms (next.js: 5ms, application-code: 15ms)
+PayLio currency verification failed for booking MSF-TESTB-8722: currency="undefined". Expected USD.
+ GET /api/payments/paylio/callback?bookingId=4661dcca-20ce-4f8a-a9e4-aeba00bbc321&ipn_token=mock_missing_currency_1789913719519 400 in 19ms (next.js: 3ms, application-code: 16ms)
+PayLio currency verification failed for booking MSF-TESTB-8722: currency="undefined". Expected USD.
+ GET /api/payments/status?bookingId=4661dcca-20ce-4f8a-a9e4-aeba00bbc321 200 in 211ms (next.js: 192ms, application-code: 19ms)
+ GET /api/payments/paylio/callback?bookingId=4661dcca-20ce-4f8a-a9e4-aeba00bbc321&ipn_token=paylio_mock_failed_1789913719767 200 in 17ms (next.js: 2ms, application-code: 15ms)
+ POST /api/payments/paylio/create 400 in 13ms (next.js: 3ms, application-code: 10ms)
+ POST /api/payments/paylio/create 400 in 12ms (next.js: 2ms, application-code: 9ms)
+ POST /api/wallet 404 in 1442ms (next.js: 846ms, application-code: 596ms)
+[?25h

@@ -83,20 +83,21 @@ model Customer {
 
 /// Massage therapists providing services
 model Therapist {
-  id           String   @id @default(uuid())
-  name         String
-  bio          String?
-  profileImage String?
-  email        String?  @unique
-  phone        String?
-  rating       Float    @default(0.0)
-  reviewCount  Int      @default(0)
-  isActive     Boolean  @default(true)
-  isFeatured   Boolean  @default(false)
-  offersStudio Boolean  @default(true)
-  offersInHome Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id             String   @id @default(uuid())
+  name           String
+  bio            String?
+  profileImage   String?
+  email          String?  @unique
+  phone          String?
+  telegramChatId String?
+  rating         Float    @default(0.0)
+  reviewCount    Int      @default(0)
+  isActive       Boolean  @default(true)
+  isFeatured     Boolean  @default(false)
+  offersStudio   Boolean  @default(true)
+  offersInHome   Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   photos         TherapistPhoto[]
   services       TherapistService[]
@@ -217,6 +218,10 @@ model Booking {
   paymentStatus       PaymentStatus       @default(UNPAID)
   paymentMethod       PaymentMethod?
   paymentReference    String?             // Transaction hash or ID from payment provider
+
+  // Persistent appointment reminder tracking
+  reminder24hSentAt DateTime?
+  reminder3hSentAt  DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
