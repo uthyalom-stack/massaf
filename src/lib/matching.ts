@@ -2,8 +2,10 @@ import { CustomerTherapist } from '@/types/customer';
 import { MatchCriteria } from '@/lib/validations/matching';
 import {
   getScheduleWindowForDate,
+  getAvailableTimeSlots,
   isAppointmentTimeAvailable,
   parseTimeStringToMinutes,
+  formatMinutesToTimeString,
 } from '@/lib/availability';
 
 export interface MatchedTherapistResult {
@@ -16,6 +18,33 @@ export interface MatchedTherapistResult {
     price: number;
   };
   reasons: string[];
+}
+
+/**
+ * Checks if at least one 30-minute increment appointment slot within [rangeStartMin, rangeEndMin)
+ * fits the therapist's working schedule on dateStr for durationMinutes.
+ */
+export function checkTimeRangeAvailability(
+  therapist: CustomerTherapist,
+  dateStr: string,
+  rangeStartMin: number,
+  rangeEndMin: number,
+  durationMinutes: number
+): boolean {
+  const window = getScheduleWindowForDate(therapist.schedule, dateStr);
+  if (!window) return false;
+
+  const stepMinutes = 30;
+  for (let current = rangeStartMin; current < rangeEndMin; current += stepMinutes) {
+    if (
+      current >= window.startMinutes &&
+      current + durationMinutes <= window.endMinutes
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -137,51 +166,82 @@ export function rankTherapistsForMatch(
 
     // 4. Availability Compatibility (Max 10 pts)
     if (criteria.preferredDate) {
-      const scheduleWindow = getScheduleWindowForDate(
-        therapist.schedule,
-        criteria.preferredDate
-      );
+      if (criteria.preferredTime && criteria.preferredTime.trim()) {
+        const timeVal = criteria.preferredTime.trim().toLowerCase();
 
-      if (scheduleWindow) {
-        if (criteria.preferredTime && criteria.preferredTime.trim()) {
-          const timeVal = criteria.preferredTime.trim().toLowerCase();
-          let targetTimeStr = '';
-
-          if (timeVal === 'morning') {
-            targetTimeStr = '09:00';
-          } else if (timeVal === 'afternoon') {
-            targetTimeStr = '13:00';
-          } else if (timeVal === 'evening') {
-            targetTimeStr = '17:00';
-          } else {
-            try {
-              const mins = parseTimeStringToMinutes(criteria.preferredTime.trim());
-              const hh = Math.floor(mins / 60).toString().padStart(2, '0');
-              const mm = (mins % 60).toString().padStart(2, '0');
-              targetTimeStr = `${hh}:${mm}`;
-            } catch {
-              targetTimeStr = criteria.preferredTime.trim();
-            }
-          }
-
-          const timeCheck = isAppointmentTimeAvailable(
-            therapist,
-            criteria.preferredDate,
-            targetTimeStr,
-            matchedService.durationMinutes
-          );
-
-          if (timeCheck.isValid) {
+        if (timeVal === 'morning') {
+          // Morning = 08:00 - 12:00 (480 - 720 min)
+          if (
+            checkTimeRangeAvailability(
+              therapist,
+              criteria.preferredDate,
+              480,
+              720,
+              matchedService.durationMinutes
+            )
+          ) {
             points += 10;
-            const timeLabel = ['morning', 'afternoon', 'evening'].includes(timeVal)
-              ? `${timeVal} session`
-              : targetTimeStr;
-            reasons.push(`Available at your requested time (${timeLabel})`);
+            reasons.push('Available for your selected service during the morning (8am - 12pm)');
+          }
+        } else if (timeVal === 'afternoon') {
+          // Afternoon = 12:00 - 17:00 (720 - 1020 min)
+          if (
+            checkTimeRangeAvailability(
+              therapist,
+              criteria.preferredDate,
+              720,
+              1020,
+              matchedService.durationMinutes
+            )
+          ) {
+            points += 10;
+            reasons.push('Available for your selected service during the afternoon (12pm - 5pm)');
+          }
+        } else if (timeVal === 'evening') {
+          // Evening = 17:00 - 21:00 (1020 - 1260 min)
+          if (
+            checkTimeRangeAvailability(
+              therapist,
+              criteria.preferredDate,
+              1020,
+              1260,
+              matchedService.durationMinutes
+            )
+          ) {
+            points += 10;
+            reasons.push('Available for your selected service during the evening (5pm - 9pm)');
           }
         } else {
-          // Date supplied without specific time: therapist working on date
+          // Exact time string e.g. "09:30" or "2:30 PM"
+          try {
+            const startMins = parseTimeStringToMinutes(criteria.preferredTime.trim());
+            const formatted = formatMinutesToTimeString(startMins);
+            const timeCheck = isAppointmentTimeAvailable(
+              therapist,
+              criteria.preferredDate,
+              formatted.value,
+              matchedService.durationMinutes
+            );
+
+            if (timeCheck.isValid) {
+              points += 10;
+              reasons.push(`Available at your requested time (${formatted.label})`);
+            }
+          } catch {
+            // Malformed time string fails availability check safely
+          }
+        }
+      } else {
+        // Date supplied without time preference: check if therapist has at least 1 valid slot on date
+        const slots = getAvailableTimeSlots(
+          therapist,
+          criteria.preferredDate,
+          matchedService.durationMinutes
+        );
+
+        if (slots.length > 0) {
           points += 10;
-          reasons.push(`Available on your requested date (${criteria.preferredDate})`);
+          reasons.push('Available for your selected service on your requested date');
         }
       }
     } else {
