@@ -1,71 +1,73 @@
-# MASSAF - U.S. Massage Therapist Booking Platform
+# MASSAF — U.S. Massage Therapist Booking Platform
 
-MASSAF is a U.S.-based massage therapist booking platform controlled by one company. It allows customers to discover local therapists, schedule studio or in-home appointments, manage bookings, and leave reviews.
-
-## Tech Stack
-
-- **Framework:** [Next.js](https://nextjs.org/) (App Router)
-- **Language:** [TypeScript](https://www.typescriptlang.org/)
-- **Styling:** [Tailwind CSS](https://tailwindcss.com/)
-- **Database:** [Turso](https://turso.tech/) / [libSQL](https://github.com/tursodatabase/libsql)
-- **ORM:** [Prisma](https://www.prisma.io/) with `@prisma/adapter-libsql`
-- **Validation:** [Zod](https://zod.dev/)
-- **Hosting Target:** [Netlify](https://www.netlify.com/) (Eventual production target)
+MASSAF is a U.S.-based massage therapist booking platform controlled by one company. It enables customers to discover local therapists, schedule studio or in-home appointments, process card/crypto-settled payments via PayLio, track marketing referrals, and manage administrative operations.
 
 ---
 
-## Getting Started
+## Architecture & Core Systems
+
+- **Framework:** [Next.js](https://nextjs.org/) (App Router, Turbopack, TypeScript)
+- **Database & ORM:** [Turso](https://turso.tech/) / [libSQL](https://github.com/tursodatabase/libsql) with [Prisma](https://www.prisma.io/) (`@prisma/adapter-libsql`) & local SQLite fallback (`file:./dev.db`)
+- **Payment Processing:** Server-authoritative PayLio hosted payment flow (card-funded USD payments with automated Polygon USDC settlements)
+- **Matching Engine:** Data-backed therapist matching algorithm (`/match-me`) using active therapist capabilities and availability schedules
+- **Notifications:** Multi-channel operational alerts (Email & Telegram) for booking confirmations, cancellations, completions, expirations, and reminders
+- **Scheduled Jobs:** Vercel Cron-compatible job route (`/api/cron/scheduled-jobs`) executing 30-minute unpaid booking holds and idempotent 24h / 3h appointment reminders
+- **Administrative Control:** Complete therapist, booking, review moderation, marketing link, and system health management (`/admin`) guarded by server-side authorization keys
+
+---
+
+## Setup & Local Development
 
 ### 1. Prerequisites
 
-Ensure you have Node.js (v20+) and npm installed on your machine.
+- Node.js v20+ and npm
+- Git
 
-### 2. Environment Setup
+### 2. Environment Configuration
 
-Copy `.env.example` to create your local environment configuration:
+Copy `.env.example` to create your local `.env` file:
 
 ```bash
 cp .env.example .env
 ```
 
-For local development fallback using SQLite:
+For local development with SQLite:
 ```env
 TURSO_DATABASE_URL="file:./dev.db"
 TURSO_AUTH_TOKEN=""
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
+MASSAF_ADMIN_API_KEY="dev-admin-key"
+CRON_SECRET="dev-cron-secret"
+PAYLIO_MOCK_MODE="true"
+TELEGRAM_MOCK_MODE="true"
+RESEND_MOCK_MODE="true"
 ```
 
-For connecting to a remote Turso database:
+For production or staging with remote Turso:
 ```env
 TURSO_DATABASE_URL="libsql://your-database-name-your-org.turso.io"
 TURSO_AUTH_TOKEN="your-turso-auth-token"
-NEXT_PUBLIC_APP_URL="http://localhost:3000"
+NEXT_PUBLIC_APP_URL="https://your-domain.com"
+MASSAF_ADMIN_API_KEY="your-production-admin-key"
+CRON_SECRET="your-production-cron-secret"
+PAYLIO_API_KEY="your-paylio-api-key"
+PAYLIO_API_URL="https://paylio.org/api/v1"
+MASSAF_POLYGON_WALLET_ADDRESS="0xYourPolygonWalletAddress"
+TELEGRAM_BOT_TOKEN="your-telegram-bot-token"
+TELEGRAM_ADMIN_CHAT_ID="your-telegram-admin-chat-id"
+RESEND_API_KEY="re_your_resend_key"
 ```
 
-### 3. Install Dependencies
+### 3. Install Dependencies & Initialize Database
 
 ```bash
 npm install
-```
-
-### 4. Prisma Setup and Generation
-
-To validate the schema and generate the Prisma client:
-
-```bash
 npx prisma validate
 npx prisma generate
+TURSO_DATABASE_URL="file:./dev.db" npx prisma db push
 ```
 
-To sync local SQLite or Turso schema:
-
-```bash
-npx prisma db push
-```
-
-### 5. Running the Application
-
-Start the local development server:
+### 4. Running Local Development Server
 
 ```bash
 npm run dev
@@ -75,17 +77,61 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## Architectural Notes
+## Testing & Quality Suite
 
-### Database Access Layer
-Database access is handled through `src/lib/db.ts`, which instantiates `@prisma/adapter-libsql` and `@libsql/client`.
+Run the full quality and verification suite:
 
-### Payment Integration Note
-Payment integration (such as cryptocurrency or other payment methods) is **intentionally NOT implemented in Phase 1**. The `Booking` model contains provider-agnostic fields (`amount`, `paymentStatus`, `paymentMethod`, `paymentReference`) to support flexible payment providers in future phases without vendor lock-in.
+```bash
+# 1. Type checking & Prisma validation
+npm run lint
+npx tsc --noEmit
+npx prisma validate
 
-### Folder Structure
-- `src/app/(customer)/`: Customer-facing routes and layouts.
-- `src/app/admin/`: Platform administrative interface routes.
-- `src/app/api/`: Server API routes.
-- `src/lib/`: Shared utilities, database access layer, and Zod validation schemas.
-- `src/types/`: Domain TypeScript type definitions.
+# 2. Production build verification
+npm run build
+
+# 3. Automated concurrency test (Requires running local server)
+npm run test:concurrency
+
+# 4. Automated PayLio payment flow test suite (Requires running local server)
+npm run test:paylio
+
+# 5. Automated lifecycle and notification test suite
+npx tsx scripts/test-phase15-notifications.ts
+```
+
+---
+
+## Production & Deployment Requirements
+
+### Vercel Cron Configuration Note
+The application specifies a **15-minute cron schedule** (`*/15 * * * *`) in `vercel.json` to handle 30-minute unpaid booking expirations and appointment reminders:
+
+```json
+{
+  "crons": [
+    {
+      "path": "/api/cron/scheduled-jobs",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}
+```
+
+*Note on Vercel Hosting Plans:* Standard Vercel Hobby accounts limit cron execution frequency to once per day (`0 0 * * *`). To run 15-minute scheduled jobs in production on Vercel, a **Vercel Pro plan** is required. Alternatively, external scheduled job triggers (e.g. GitHub Actions, Cron-job.org) can invoke `POST https://your-domain.com/api/cron/scheduled-jobs` with header `Authorization: Bearer <CRON_SECRET>`.
+
+### PayLio Gateway Configuration
+In PayLio dashboard:
+1. Set the callback URL to: `https://your-domain.com/api/payments/paylio/callback`
+2. Configure settlement currency to **USDC** on **Polygon Network**.
+3. Supply `PAYLIO_API_KEY` and `MASSAF_POLYGON_WALLET_ADDRESS` in server environment variables.
+
+---
+
+## Directory Overview
+
+- `src/app/(customer)/` — Customer pages (therapist discovery, profiles, match wizard, checkout, confirmation)
+- `src/app/admin/` — Administrative pages (therapists, bookings, review moderation, marketing links, system settings)
+- `src/app/api/` — Server API routes (`/api/bookings`, `/api/payments/paylio/*`, `/api/cron/*`, `/api/admin/*`, `/api/match`)
+- `src/lib/` — Core libraries (database client, PayLio client, notifications, matching engine, availability, validations)
+- `scripts/` — Automated integration and concurrency test suites
