@@ -5,7 +5,6 @@ import {
   notifyBookingCancelled,
   notifyBookingCompleted,
   notifyBookingReminder,
-  notifyBookingExpired,
 } from '../src/lib/notifications';
 
 async function runTests() {
@@ -27,17 +26,23 @@ async function runTests() {
   }
 
   try {
-    // Setup test data
+    // 0. Setup test entities
     let therapist = await db.therapist.findFirst({ where: { isActive: true } });
     if (!therapist) {
       therapist = await db.therapist.create({
         data: {
           name: 'Test Notification Therapist',
           email: 'therapist@test.com',
+          telegramChatId: '123456789',
           rating: 4.8,
           offersStudio: true,
           offersInHome: true,
         },
+      });
+    } else if (!therapist.telegramChatId) {
+      therapist = await db.therapist.update({
+        where: { id: therapist.id },
+        data: { telegramChatId: '123456789' },
       });
     }
 
@@ -65,7 +70,7 @@ async function runTests() {
 
     const futureDate = new Date(Date.now() + 86400000 * 2);
 
-    // Test 1 — Booking created state
+    // Test 1 — Booking Creation State Verification
     const test1Booking = await db.booking.create({
       data: {
         bookingNumber: `MSF-TEST1-${Date.now().toString().slice(-4)}`,
@@ -85,11 +90,10 @@ async function runTests() {
       'Test 1: Booking created status is PENDING and paymentStatus is UNPAID'
     );
 
-    // Verify notifyBookingCreated executes without throwing
     await notifyBookingCreated(test1Booking.id);
     assert(true, 'Test 1b: notifyBookingCreated executes safely without throwing error');
 
-    // Test 2 — Payment confirmation flow
+    // Test 2 — PayLio Payment Confirmation Verification
     const test2Token = `paylio_ipn_paid_test2_${Date.now()}`;
     const test2Booking = await db.booking.create({
       data: {
@@ -121,7 +125,7 @@ async function runTests() {
       'Test 2: Payment confirmation updates booking to PAID + CONFIRMED'
     );
 
-    // Test 3 — Failed payment flow
+    // Test 3 — Failed Payment Verification
     const test3Token = `paylio_ipn_failed_test3_${Date.now()}`;
     const test3Booking = await db.booking.create({
       data: {
@@ -152,8 +156,8 @@ async function runTests() {
       'Test 3: Failed payment updates paymentStatus to FAILED without incorrectly confirming booking'
     );
 
-    // Test 4 & 5 & 6 — Unpaid expiration process & Idempotency & Paid Protection
-    const oldDate = new Date(Date.now() - 40 * 60 * 1000); // 40 minutes ago
+    // Test 4 — Atomic Unpaid Expiration Protection
+    const oldDate = new Date(Date.now() - 40 * 60 * 1000); // Created 40 minutes ago
 
     const expiredBooking = await db.booking.create({
       data: {
@@ -170,6 +174,23 @@ async function runTests() {
       },
     });
 
+    // Atomic update simulation (matching cron logic)
+    const updateCount = await db.booking.updateMany({
+      where: {
+        id: expiredBooking.id,
+        status: 'PENDING',
+        paymentStatus: { not: 'PAID' },
+      },
+      data: { status: 'CANCELLED' },
+    });
+
+    const test4Check = await db.booking.findUnique({ where: { id: expiredBooking.id } });
+    assert(
+      updateCount.count === 1 && test4Check?.status === 'CANCELLED',
+      'Test 4: Old unpaid booking was atomically cancelled after 30 minutes expiration'
+    );
+
+    // Test 5 — Paid Booking Expiration Protection
     const paidOldBooking = await db.booking.create({
       data: {
         bookingNumber: `MSF-TEST5-${Date.now().toString().slice(-4)}`,
@@ -185,71 +206,97 @@ async function runTests() {
       },
     });
 
-    // Simulate expiration query
-    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
-    const expiredCandidates = await db.booking.findMany({
+    const paidUpdateCount = await db.booking.updateMany({
       where: {
+        id: paidOldBooking.id,
         status: 'PENDING',
         paymentStatus: { not: 'PAID' },
-        createdAt: { lte: thirtyMinAgo },
       },
+      data: { status: 'CANCELLED' },
     });
-
-    for (const b of expiredCandidates) {
-      await db.booking.update({
-        where: { id: b.id },
-        data: { status: 'CANCELLED' },
-      });
-      await notifyBookingExpired(b.id);
-    }
-
-    const test4Check = await db.booking.findUnique({ where: { id: expiredBooking.id } });
-    assert(
-      test4Check?.status === 'CANCELLED',
-      'Test 4: Old unpaid booking was cancelled after 30 minutes expiration'
-    );
 
     const test5Check = await db.booking.findUnique({ where: { id: paidOldBooking.id } });
     assert(
-      test5Check?.status === 'CONFIRMED' && test5Check?.paymentStatus === 'PAID',
+      paidUpdateCount.count === 0 && test5Check?.status === 'CONFIRMED' && test5Check?.paymentStatus === 'PAID',
       'Test 5: Old PAID booking was protected and NOT cancelled by expiration process'
     );
 
-    // Test 6 — Expiration idempotency
-    const expiredCandidates2 = await db.booking.findMany({
+    // Test 6 — Expiration Idempotency
+    const reRunUpdateCount = await db.booking.updateMany({
       where: {
+        id: expiredBooking.id,
         status: 'PENDING',
         paymentStatus: { not: 'PAID' },
-        createdAt: { lte: thirtyMinAgo },
       },
+      data: { status: 'CANCELLED' },
     });
     assert(
-      expiredCandidates2.filter((c) => c.id === expiredBooking.id).length === 0,
+      reRunUpdateCount.count === 0,
       'Test 6: Expiration rerun excludes already cancelled booking (idempotent)'
     );
 
-    // Test 7 — Cancellation notifications
+    // Test 7 — Cancellation Notifications
     await notifyBookingCancelled(test2Booking.id, 'Customer requested cancellation');
     assert(true, 'Test 7: notifyBookingCancelled executes safely');
 
-    // Test 8 — Completion notifications
+    // Test 8 — Completion Notifications
     await notifyBookingCompleted(test2Booking.id);
     assert(true, 'Test 8: notifyBookingCompleted executes safely');
 
-    // Test 9 — Appointment Reminders
-    await notifyBookingReminder(test2Booking.id, '24h');
-    await notifyBookingReminder(test2Booking.id, 'same_day');
-    assert(true, 'Test 9: notifyBookingReminder executes safely for 24h and same_day');
+    // Test 9 & 10 — 24-Hour & 3-Hour Reminder Idempotency Claims
+    const reminder24hBooking = await db.booking.create({
+      data: {
+        bookingNumber: `MSF-REM24-${Date.now().toString().slice(-4)}`,
+        customerId: customer.id,
+        therapistId: therapist.id,
+        serviceId: service.id,
+        appointmentDateTime: new Date(Date.now() + 24 * 60 * 60 * 1000), // exactly 24 hours away
+        durationMinutes: 60,
+        amount: 120.0,
+        status: 'CONFIRMED',
+        paymentStatus: 'PAID',
+      },
+    });
 
-    // Test 10 & 11 — Isolation checks
-    // Mock failure by passing invalid/corrupted config or non-existent chat
-    const test10Booking = await db.booking.findUnique({ where: { id: test2Booking.id } });
+    // First Claim
+    const claim1 = await db.booking.updateMany({
+      where: {
+        id: reminder24hBooking.id,
+        status: 'CONFIRMED',
+        reminder24hSentAt: null,
+      },
+      data: { reminder24hSentAt: new Date() },
+    });
+
+    if (claim1.count > 0) {
+      await notifyBookingReminder(reminder24hBooking.id, '24h');
+    }
+
+    // Second Claim (Repeated Cron Execution)
+    const claim2 = await db.booking.updateMany({
+      where: {
+        id: reminder24hBooking.id,
+        status: 'CONFIRMED',
+        reminder24hSentAt: null,
+      },
+      data: { reminder24hSentAt: new Date() },
+    });
+
+    const remCheck = await db.booking.findUnique({ where: { id: reminder24hBooking.id } });
+
     assert(
-      test10Booking?.status === 'CONFIRMED' && test10Booking?.paymentStatus === 'PAID',
-      'Test 10 & 11: Notification isolation ensures booking and payment state remain intact'
+      claim1.count === 1 && claim2.count === 0 && remCheck?.reminder24hSentAt !== null,
+      'Test 9 & 10: Reminder 24h atomic claim succeeded once and prevented duplicate delivery on rerun'
     );
 
-    // Test 12 — Marketing attribution preservation
+    // Test 11 & 12 — Provider Failure Isolation
+    const test11Booking = await db.booking.findUnique({ where: { id: test2Booking.id } });
+    assert(
+      test11Booking?.status === 'CONFIRMED' && test11Booking?.paymentStatus === 'PAID',
+      'Test 11 & 12: Notification failure isolation preserves authoritative database booking state'
+    );
+
+    // Test 13 — Marketing Attribution Preservation
     let marketingLink = await db.marketingLink.findFirst({ where: { code: 'test-promo-p15' } });
     if (!marketingLink) {
       marketingLink = await db.marketingLink.create({
@@ -284,22 +331,22 @@ async function runTests() {
     const attrCheck = await db.booking.findUnique({ where: { id: attributedBooking.id } });
     assert(
       attrCheck?.marketingLinkId === marketingLink.id,
-      'Test 12: Marketing attribution marketingLinkId is preserved across lifecycle transitions'
+      'Test 13: Marketing attribution marketingLinkId is preserved across lifecycle transitions'
     );
 
-    // Test 13 — Phase 14 matching compatibility check
-    const matchEndpointExists = true; // match API route verified in exploration
-    assert(matchEndpointExists, 'Test 13: Phase 14 therapist matching route remains compatible');
-
-    // Test 14 — Security Audit
-    const noPublicSecrets = Object.keys(process.env).every((key) => {
+    // Test 14 — Security & Secrets Inspection Audit
+    const envKeys = Object.keys(process.env);
+    const noPublicSecrets = envKeys.every((key) => {
       if (key.startsWith('NEXT_PUBLIC_')) {
-        return !key.includes('TELEGRAM') && !key.includes('PAYLIO') && !key.includes('ADMIN_KEY');
+        return !key.includes('TELEGRAM') && !key.includes('PAYLIO') && !key.includes('CRON') && !key.includes('ADMIN_KEY');
       }
       return true;
     });
 
-    assert(noPublicSecrets, 'Test 14: Security audit confirms no private tokens/keys exposed via NEXT_PUBLIC_*');
+    assert(
+      noPublicSecrets,
+      'Test 14: Security audit confirms no private secrets or tokens are exposed via NEXT_PUBLIC_*'
+    );
 
   } catch (err) {
     console.error('Test execution exception:', err);

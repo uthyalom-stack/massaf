@@ -78,7 +78,7 @@ ${appUrl}`;
 /**
  * 2. PAYMENT CONFIRMATION NOTIFICATION
  * Called when server verifies payment (paymentStatus=PAID, status=CONFIRMED).
- * Sends confirmation email to Customer, operational notification to Therapist and Admin.
+ * Sends confirmation email to Customer, operational notification to Therapist (Telegram if telegramChatId set, else Email) and Admin (Telegram).
  */
 export async function notifyBookingConfirmed(bookingId: string): Promise<void> {
   try {
@@ -120,9 +120,27 @@ MASSAF Team`;
       text: customerText,
     });
 
-    // Therapist Operational Notification (Email & Telegram if configured)
+    // Therapist Operational Notification
     if (booking.therapist) {
-      if (booking.therapist.email) {
+      if (booking.therapist.telegramChatId) {
+        // Therapist has explicit Telegram configuration: send directly to therapist's Telegram chat
+        const therapistTelegramMsg = `MASSAF — NEW CONFIRMED BOOKING
+
+Booking: ${booking.bookingNumber}
+Customer: ${booking.customer.name}
+Service: ${booking.service.name} (${booking.durationMinutes} mins)
+Date: ${formattedDate}
+Time: ${formattedTime}
+Type: ${booking.locationType === 'STUDIO' ? 'Studio' : 'In-Home'}
+${booking.locationType === 'IN_HOME' && booking.addressLine1 ? `Location: ${booking.addressLine1}, ${booking.city || ''}, ${booking.state || ''}` : ''}
+Amount: $${booking.amount.toFixed(2)}`;
+
+        await sendTelegramMessage({
+          chatId: booking.therapist.telegramChatId,
+          message: therapistTelegramMsg,
+        });
+      } else if (booking.therapist.email) {
+        // Fall back to therapist's email if no telegramChatId is set (NEVER fall back to admin Telegram chat)
         await sendEmail({
           to: booking.therapist.email,
           subject: `NEW CONFIRMED BOOKING — ${booking.bookingNumber}`,
@@ -140,43 +158,25 @@ ${booking.locationType === 'IN_HOME' && booking.addressLine1 ? `Address: ${booki
 Amount: $${booking.amount.toFixed(2)}`,
         });
       }
+    }
 
-      // Therapist Telegram if bot environment or therapist phone/chat is configured
-      const adminChatId = getAdminChatId();
-      if (adminChatId) {
-        const therapistTelegramMsg = `NEW CONFIRMED BOOKING
-
-Booking: ${booking.bookingNumber}
-Customer: ${booking.customer.name}
-Service: ${booking.service.name} (${booking.durationMinutes}m)
-Date: ${formattedDate}
-Time: ${formattedTime}
-Type: ${booking.locationType}
-Therapist: ${booking.therapist.name}
-Amount: $${booking.amount.toFixed(2)}`;
-
-        await sendTelegramMessage({
-          chatId: adminChatId,
-          message: therapistTelegramMsg,
-        });
-      }
-    } else {
-      // Admin Telegram notification for auto-matching / unassigned confirmed booking
-      const adminChatId = getAdminChatId();
-      if (adminChatId) {
-        await sendTelegramMessage({
-          chatId: adminChatId,
-          message: `NEW CONFIRMED UNASSIGNED BOOKING
+    // Admin Telegram Notification
+    const adminChatId = getAdminChatId();
+    if (adminChatId) {
+      const adminTelegramMsg = `NEW CONFIRMED BOOKING
 
 Booking: ${booking.bookingNumber}
 Customer: ${booking.customer.name}
 Service: ${booking.service.name}
 Date: ${formattedDate}
 Time: ${formattedTime}
-Amount: $${booking.amount.toFixed(2)}
-Action Required: Assign therapist in admin panel.`,
-        });
-      }
+Therapist: ${booking.therapist ? booking.therapist.name : 'Unassigned'}
+Amount: $${booking.amount.toFixed(2)}`;
+
+      await sendTelegramMessage({
+        chatId: adminChatId,
+        message: adminTelegramMsg,
+      });
     }
   } catch (error) {
     console.error('[Notification Isolation] notifyBookingConfirmed error:', error);
@@ -208,12 +208,24 @@ If you have any questions or wish to reschedule, please visit MASSAF at:
 ${appUrl}`,
     });
 
-    // Therapist Email
-    if (booking.therapist && booking.therapist.email) {
-      await sendEmail({
-        to: booking.therapist.email,
-        subject: `BOOKING CANCELLED — ${booking.bookingNumber}`,
-        text: `Hello ${booking.therapist.name},
+    // Therapist Notification (Telegram if configured, otherwise Email)
+    if (booking.therapist) {
+      if (booking.therapist.telegramChatId) {
+        await sendTelegramMessage({
+          chatId: booking.therapist.telegramChatId,
+          message: `BOOKING CANCELLED
+
+Booking: ${booking.bookingNumber}
+Customer: ${booking.customer.name}
+Service: ${booking.service.name}
+Date: ${formattedDate}
+Time: ${formattedTime}${reason ? `\nReason: ${reason}` : ''}`,
+        });
+      } else if (booking.therapist.email) {
+        await sendEmail({
+          to: booking.therapist.email,
+          subject: `BOOKING CANCELLED — ${booking.bookingNumber}`,
+          text: `Hello ${booking.therapist.name},
 
 The following appointment has been cancelled:
 
@@ -222,7 +234,8 @@ Customer: ${booking.customer.name}
 Service: ${booking.service.name}
 Date: ${formattedDate}
 Time: ${formattedTime}${reason ? `\nReason: ${reason}` : ''}`,
-      });
+        });
+      }
     }
 
     // Admin Telegram Notification
@@ -281,11 +294,11 @@ Thank you for choosing MASSAF!`,
 
 /**
  * 5. APPOINTMENT REMINDER NOTIFICATION
- * Sent 24 hours prior and same-day before the appointment.
+ * Sent approximately 24 hours prior and 3 hours prior (same-day) before the appointment.
  */
 export async function notifyBookingReminder(
   bookingId: string,
-  reminderType: '24h' | 'same_day'
+  reminderType: '24h' | '3h'
 ): Promise<void> {
   try {
     const booking = await getBookingWithDetails(bookingId);
@@ -296,12 +309,12 @@ export async function notifyBookingReminder(
     const appUrl = getAppUrl();
     const bookingUrl = `${appUrl}/booking/success?id=${booking.id}`;
 
-    const timingLabel = reminderType === '24h' ? 'Tomorrow' : 'Today';
+    const timingLabel = reminderType === '24h' ? 'Tomorrow (~24 hours)' : 'Today in ~3 hours';
 
     // Customer Reminder
     await sendEmail({
       to: booking.customer.email,
-      subject: `Upcoming MASSAF Appointment ${timingLabel} — ${booking.bookingNumber}`,
+      subject: `Upcoming MASSAF Appointment (${timingLabel}) — ${booking.bookingNumber}`,
       text: `Hello ${booking.customer.name},
 
 Reminder: You have an upcoming massage session scheduled ${timingLabel.toLowerCase()}!
@@ -321,11 +334,23 @@ MASSAF Team`,
     });
 
     // Therapist Reminder
-    if (booking.therapist && booking.therapist.email) {
-      await sendEmail({
-        to: booking.therapist.email,
-        subject: `Appointment Reminder ${timingLabel} — ${booking.bookingNumber}`,
-        text: `Hello ${booking.therapist.name},
+    if (booking.therapist) {
+      if (booking.therapist.telegramChatId) {
+        await sendTelegramMessage({
+          chatId: booking.therapist.telegramChatId,
+          message: `APPOINTMENT REMINDER (${timingLabel.toUpperCase()})
+
+Booking: ${booking.bookingNumber}
+Customer: ${booking.customer.name}
+Service: ${booking.service.name} (${booking.durationMinutes} mins)
+Date: ${formattedDate}
+Time: ${formattedTime}`,
+        });
+      } else if (booking.therapist.email) {
+        await sendEmail({
+          to: booking.therapist.email,
+          subject: `Appointment Reminder (${timingLabel}) — ${booking.bookingNumber}`,
+          text: `Hello ${booking.therapist.name},
 
 Reminder for your scheduled appointment ${timingLabel.toLowerCase()}:
 
@@ -335,7 +360,8 @@ Service: ${booking.service.name} (${booking.durationMinutes} mins)
 Date: ${formattedDate}
 Time: ${formattedTime}
 Type: ${booking.locationType}`,
-      });
+        });
+      }
     }
 
     const adminChatId = getAdminChatId();

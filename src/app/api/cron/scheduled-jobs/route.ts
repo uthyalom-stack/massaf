@@ -4,10 +4,12 @@ import { notifyBookingExpired, notifyBookingReminder } from '@/lib/notifications
 
 /**
  * Server-only Scheduled Processing Route (Vercel Cron / Scheduled Job Compatible)
- * Protected route: Authorization header (Bearer <CRON_SECRET>) or query string parameter (?secret=<CRON_SECRET>).
+ * Protected route: Authorization header (Bearer <CRON_SECRET>) or x-cron-secret header.
+ * Fails closed with HTTP 500 if CRON_SECRET is unconfigured.
+ * Returns HTTP 401 if unauthenticated.
  * Functions performed:
- * 1. Cancel expired unpaid PENDING bookings after 30 minutes.
- * 2. Send 24-hour and same-day appointment reminders for active CONFIRMED bookings.
+ * 1. Atomic cancel expired unpaid PENDING bookings after 30 minutes.
+ * 2. Send 24-hour (~23.875h - 24.125h) and 3-hour (~2.875h - 3.125h) appointment reminders for active CONFIRMED bookings atomically.
  */
 export async function GET(request: Request) {
   return handleScheduledJobs(request);
@@ -19,39 +21,42 @@ export async function POST(request: Request) {
 
 async function handleScheduledJobs(request: Request) {
   try {
-    // 1. Authorization Guard
+    // 1. Fail-Closed Cron Authentication Guard
     const cronSecret = process.env.CRON_SECRET || process.env.MASSAF_ADMIN_API_KEY;
-    const { searchParams } = new URL(request.url);
+
+    if (!cronSecret || cronSecret.trim().length === 0) {
+      console.error('[SECURITY ERROR] CRON_SECRET is not configured on the server. Scheduled jobs route is failing closed.');
+      return NextResponse.json(
+        { error: 'Server configuration error: CRON_SECRET is not set' },
+        { status: 500 }
+      );
+    }
+
     const authHeader = request.headers.get('authorization');
-    const paramSecret = searchParams.get('secret');
+    const cronSecretHeader = request.headers.get('x-cron-secret');
 
     let providedSecret: string | null = null;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       providedSecret = authHeader.substring(7).trim();
-    } else if (paramSecret) {
-      providedSecret = paramSecret.trim();
-    } else {
-      providedSecret = request.headers.get('x-cron-secret');
+    } else if (cronSecretHeader) {
+      providedSecret = cronSecretHeader.trim();
     }
 
-    if (cronSecret && cronSecret.trim().length > 0) {
-      if (!providedSecret || providedSecret !== cronSecret) {
-        return NextResponse.json(
-          { error: 'Unauthorized: Invalid cron secret provided' },
-          { status: 401 }
-        );
-      }
+    if (!providedSecret || providedSecret !== cronSecret) {
+      return NextResponse.json(
+        { error: 'Unauthorized: Valid cron authorization header required' },
+        { status: 401 }
+      );
     }
 
     const now = new Date();
     const results = {
       expiredCount: 0,
       reminders24hCount: 0,
-      remindersSameDayCount: 0,
+      reminders3hCount: 0,
     };
 
-    // 2. UNPAID BOOKING EXPIRATION (30 MINUTES)
-    // Find PENDING + UNPAID bookings created >= 30 minutes ago
+    // 2. ATOMIC UNPAID BOOKING EXPIRATION (30 MINUTES)
     const thirtyMinutesAgo = new Date(now.getTime() - 30 * 60 * 1000);
 
     const expiredCandidates = await db.booking.findMany({
@@ -67,29 +72,26 @@ async function handleScheduledJobs(request: Request) {
       select: {
         id: true,
         bookingNumber: true,
-        status: true,
-        paymentStatus: true,
       },
     });
 
     for (const candidate of expiredCandidates) {
-      // Re-verify status in case payment was verified concurrently
-      const freshBooking = await db.booking.findUnique({
-        where: { id: candidate.id },
-        select: { status: true, paymentStatus: true },
+      // Atomic state-guarded update: only updates if status is STILL PENDING and paymentStatus != PAID
+      const updateResult = await db.booking.updateMany({
+        where: {
+          id: candidate.id,
+          status: 'PENDING',
+          paymentStatus: {
+            not: 'PAID',
+          },
+        },
+        data: {
+          status: 'CANCELLED',
+        },
       });
 
-      if (freshBooking && freshBooking.status === 'PENDING' && freshBooking.paymentStatus !== 'PAID') {
-        await db.booking.update({
-          where: { id: candidate.id },
-          data: {
-            status: 'CANCELLED',
-          },
-        });
-
+      if (updateResult.count > 0) {
         results.expiredCount++;
-
-        // Trigger notification asynchronously with failure isolation
         try {
           await notifyBookingExpired(candidate.id);
         } catch (err) {
@@ -98,14 +100,15 @@ async function handleScheduledJobs(request: Request) {
       }
     }
 
-    // 3. APPOINTMENT REMINDERS (24-Hour and Same-Day / 2-Hour)
-    // 24-hour window: Appointments scheduled between 23h and 25h from now
-    const window24hStart = new Date(now.getTime() + 23 * 60 * 60 * 1000);
-    const window24hEnd = new Date(now.getTime() + 25 * 60 * 60 * 1000);
+    // 3. APPOINTMENT REMINDERS WITH ATOMIC CLAIM IDEMPOTENCY
+    // 24-hour reminder window: Appointments scheduled between 23.875h and 24.125h from now (15-min cron window)
+    const window24hStart = new Date(now.getTime() + (23.875 * 60 * 60 * 1000));
+    const window24hEnd = new Date(now.getTime() + (24.125 * 60 * 60 * 1000));
 
-    const bookings24h = await db.booking.findMany({
+    const candidates24h = await db.booking.findMany({
       where: {
         status: 'CONFIRMED',
+        reminder24hSentAt: null,
         appointmentDateTime: {
           gte: window24hStart,
           lte: window24hEnd,
@@ -114,36 +117,65 @@ async function handleScheduledJobs(request: Request) {
       select: { id: true, bookingNumber: true },
     });
 
-    for (const b of bookings24h) {
-      try {
-        await notifyBookingReminder(b.id, '24h');
-        results.reminders24hCount++;
-      } catch (err) {
-        console.error(`Error sending 24h reminder for ${b.bookingNumber}:`, err);
+    for (const b of candidates24h) {
+      // Atomic Claim: Update reminder24hSentAt only if it is currently null
+      const claim = await db.booking.updateMany({
+        where: {
+          id: b.id,
+          status: 'CONFIRMED',
+          reminder24hSentAt: null,
+        },
+        data: {
+          reminder24hSentAt: now,
+        },
+      });
+
+      if (claim.count > 0) {
+        try {
+          await notifyBookingReminder(b.id, '24h');
+          results.reminders24hCount++;
+        } catch (err) {
+          console.error(`Error sending 24h reminder for ${b.bookingNumber}:`, err);
+        }
       }
     }
 
-    // Same-day / 2-hour window: Appointments scheduled between 1h and 3h from now
-    const windowSameDayStart = new Date(now.getTime() + 1 * 60 * 60 * 1000);
-    const windowSameDayEnd = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+    // 3-hour reminder window: Appointments scheduled between 2.875h and 3.125h from now (15-min cron window)
+    const window3hStart = new Date(now.getTime() + (2.875 * 60 * 60 * 1000));
+    const window3hEnd = new Date(now.getTime() + (3.125 * 60 * 60 * 1000));
 
-    const bookingsSameDay = await db.booking.findMany({
+    const candidates3h = await db.booking.findMany({
       where: {
         status: 'CONFIRMED',
+        reminder3hSentAt: null,
         appointmentDateTime: {
-          gte: windowSameDayStart,
-          lte: windowSameDayEnd,
+          gte: window3hStart,
+          lte: window3hEnd,
         },
       },
       select: { id: true, bookingNumber: true },
     });
 
-    for (const b of bookingsSameDay) {
-      try {
-        await notifyBookingReminder(b.id, 'same_day');
-        results.remindersSameDayCount++;
-      } catch (err) {
-        console.error(`Error sending same-day reminder for ${b.bookingNumber}:`, err);
+    for (const b of candidates3h) {
+      // Atomic Claim: Update reminder3hSentAt only if it is currently null
+      const claim = await db.booking.updateMany({
+        where: {
+          id: b.id,
+          status: 'CONFIRMED',
+          reminder3hSentAt: null,
+        },
+        data: {
+          reminder3hSentAt: now,
+        },
+      });
+
+      if (claim.count > 0) {
+        try {
+          await notifyBookingReminder(b.id, '3h');
+          results.reminders3hCount++;
+        } catch (err) {
+          console.error(`Error sending 3h reminder for ${b.bookingNumber}:`, err);
+        }
       }
     }
 
