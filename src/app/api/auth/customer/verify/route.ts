@@ -28,6 +28,12 @@ export async function POST(request: Request) {
     const rateCheck = await checkRateLimit(`${cleanEmail}:${clientIp}`, 'customer_verify', 5, 15);
 
     if (!rateCheck.allowed) {
+      if (rateCheck.error) {
+        return NextResponse.json(
+          { error: 'Authentication rate limit service temporarily unavailable. Please try again in a few moments.' },
+          { status: 503 }
+        );
+      }
       return NextResponse.json(
         { error: 'Too many verification attempts. Please wait 15 minutes before trying again.' },
         { status: 429 }

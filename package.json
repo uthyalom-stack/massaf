@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test:r2": "NODE_PATH=. npx tsx --tsconfig tsconfig.json scripts/test-r2-upload.ts",
     "test:concurrency": "NODE_PATH=. npx tsx --tsconfig tsconfig.json scripts/test-concurrent-booking.ts",
-    "test:paylio": "NODE_PATH=. npx tsx --tsconfig tsconfig.json scripts/test-paylio-payment.ts"
+    "test:paylio": "NODE_PATH=. npx tsx --tsconfig tsconfig.json scripts/test-paylio-payment.ts",
+    "test:phase19-auth": "NODE_PATH=. npx tsx --tsconfig tsconfig.json scripts/test-phase19-auth.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1136.0",

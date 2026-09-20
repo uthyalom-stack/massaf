@@ -2,8 +2,6 @@ import { db } from '@/lib/db';
 import {
   createSessionToken,
   verifySessionToken,
-  getVerifiedCustomerSession,
-  getVerifiedTherapistSession,
 } from '@/lib/auth-session';
 import {
   generateVerificationToken,
@@ -127,14 +125,25 @@ async function runAuthTests() {
     const rateCheckOver = await checkRateLimit(testLimitId, 'test_action', 5, 15);
     assert(!rateCheckOver.allowed, '11. Rate limit exceeded allowed limit and rejected 6th attempt');
 
-    // 11. Deactivated Therapist Session Revalidation Rejection
+    // 11. Atomic Concurrent Rate Limiting
+    const testConcurrentLimitId = `test_concurrent_limit_${Date.now()}`;
+    const concurrentRateLimitResults = await Promise.all([
+      checkRateLimit(testConcurrentLimitId, 'test_conc_action', 3, 15),
+      checkRateLimit(testConcurrentLimitId, 'test_conc_action', 3, 15),
+      checkRateLimit(testConcurrentLimitId, 'test_conc_action', 3, 15),
+      checkRateLimit(testConcurrentLimitId, 'test_conc_action', 3, 15),
+      checkRateLimit(testConcurrentLimitId, 'test_conc_action', 3, 15),
+    ]);
+    const allowedConcurrentCounts = concurrentRateLimitResults.filter((r) => r.allowed).length;
+    assert(allowedConcurrentCounts === 3, '12. Concurrent rate limit requests allowed exactly maxAttempts (3 out of 5)');
+
+    // 12. Deactivated Therapist Session Revalidation Rejection
     const deactSessionToken = createSessionToken(deactivatedTherapist.id, deactivatedTherapist.email!, 'THERAPIST');
-    // Simulate cookie lookup with deactivated therapist ID
     const deactVerified = verifySessionToken(deactSessionToken, 'THERAPIST');
     const dbDeactCheck = await db.therapist.findFirst({
       where: { id: deactVerified?.entityId, isActive: true },
     });
-    assert(dbDeactCheck === null, '12. Session for deactivated therapist rejected on database revalidation');
+    assert(dbDeactCheck === null, '13. Session for deactivated therapist rejected on database revalidation');
 
   } finally {
     // Cleanup
