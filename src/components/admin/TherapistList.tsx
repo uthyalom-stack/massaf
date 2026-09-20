@@ -4,6 +4,7 @@ import React, { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toggleTherapistActiveAction } from '@/app/admin/actions';
+import { ConfirmModal } from '@/components/admin/ConfirmModal';
 
 export interface AdminTherapistItem {
   id: string;
@@ -34,6 +35,17 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [therapists, setTherapists] = useState<AdminTherapistItem[]>(initialTherapists);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [confirmModalState, setConfirmModalState] = useState<{
+    isOpen: boolean;
+    therapistId: string;
+    therapistName: string;
+    currentStatus: boolean;
+  }>({
+    isOpen: false,
+    therapistId: '',
+    therapistName: '',
+    currentStatus: false,
+  });
 
   const filteredTherapists = useMemo(() => {
     return therapists.filter((t) => {
@@ -56,7 +68,22 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
     });
   }, [therapists, search, statusFilter]);
 
-  const handleToggleActive = async (id: string, currentStatus: boolean) => {
+  const handleInitiateToggleActive = (therapist: AdminTherapistItem) => {
+    if (therapist.isActive) {
+      // Deactivation is a destructive action - require confirmation modal
+      setConfirmModalState({
+        isOpen: true,
+        therapistId: therapist.id,
+        therapistName: therapist.name,
+        currentStatus: therapist.isActive,
+      });
+    } else {
+      // Activation - execute directly
+      executeToggleActive(therapist.id, therapist.isActive);
+    }
+  };
+
+  const executeToggleActive = async (id: string, currentStatus: boolean) => {
     try {
       setTogglingId(id);
       const res = await toggleTherapistActiveAction(id, !currentStatus);
@@ -76,6 +103,7 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
       alert('An error occurred while updating status.');
     } finally {
       setTogglingId(null);
+      setConfirmModalState((prev) => ({ ...prev, isOpen: false }));
     }
   };
 
@@ -235,7 +263,7 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
                       <button
                         type="button"
                         disabled={togglingId === therapist.id}
-                        onClick={() => handleToggleActive(therapist.id, therapist.isActive)}
+                        onClick={() => handleInitiateToggleActive(therapist)}
                         className={`text-xs font-semibold px-2.5 py-1 rounded-lg border transition-colors cursor-pointer ${
                           therapist.isActive
                             ? 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
@@ -279,6 +307,19 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
           )}
         </div>
       )}
+
+      {/* Confirmation Modal for Therapist Deactivation */}
+      <ConfirmModal
+        isOpen={confirmModalState.isOpen}
+        title="Deactivate Therapist Profile?"
+        message={`Are you sure you want to deactivate ${confirmModalState.therapistName}? Deactivating will hide this practitioner from public discovery and search results.`}
+        confirmText="Deactivate Therapist"
+        cancelText="Keep Active"
+        isDestructive={true}
+        isLoading={togglingId === confirmModalState.therapistId}
+        onConfirm={() => executeToggleActive(confirmModalState.therapistId, confirmModalState.currentStatus)}
+        onCancel={() => setConfirmModalState((prev) => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }

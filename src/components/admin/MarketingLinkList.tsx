@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createMarketingLinkAction, toggleMarketingLinkActiveAction } from '@/app/admin/actions';
+import { ConfirmModal } from '@/components/admin/ConfirmModal';
 
 export interface MarketingLinkItem {
   id: string;
@@ -28,6 +29,17 @@ export function MarketingLinkList({ initialLinks, baseUrl }: MarketingLinkListPr
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [confirmDeactivateState, setConfirmDeactivateState] = useState<{
+    isOpen: boolean;
+    linkId: string;
+    linkName: string;
+    currentStatus: boolean;
+  }>({
+    isOpen: false,
+    linkId: '',
+    linkName: '',
+    currentStatus: false,
+  });
 
   // Form state
   const [name, setName] = useState('');
@@ -49,7 +61,21 @@ export function MarketingLinkList({ initialLinks, baseUrl }: MarketingLinkListPr
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const handleToggleActive = async (id: string, currentStatus: boolean) => {
+  const handleInitiateToggleActive = (link: MarketingLinkItem) => {
+    if (link.isActive) {
+      // Deactivation is a destructive action - open confirmation modal
+      setConfirmDeactivateState({
+        isOpen: true,
+        linkId: link.id,
+        linkName: link.name,
+        currentStatus: link.isActive,
+      });
+    } else {
+      executeToggleActive(link.id, link.isActive);
+    }
+  };
+
+  const executeToggleActive = async (id: string, currentStatus: boolean) => {
     // Optimistic update
     setLinks((prev) =>
       prev.map((l) => (l.id === id ? { ...l, isActive: !currentStatus } : l))
@@ -65,6 +91,7 @@ export function MarketingLinkList({ initialLinks, baseUrl }: MarketingLinkListPr
     } else {
       router.refresh();
     }
+    setConfirmDeactivateState((prev) => ({ ...prev, isOpen: false }));
   };
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
@@ -217,7 +244,7 @@ export function MarketingLinkList({ initialLinks, baseUrl }: MarketingLinkListPr
 
                       <td className="py-3.5 px-4 text-center">
                         <button
-                          onClick={() => handleToggleActive(link.id, link.isActive)}
+                          onClick={() => handleInitiateToggleActive(link)}
                           className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${
                             link.isActive
                               ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
@@ -260,6 +287,18 @@ export function MarketingLinkList({ initialLinks, baseUrl }: MarketingLinkListPr
           </table>
         </div>
       </div>
+
+      {/* Deactivation Confirmation Modal */}
+      <ConfirmModal
+        isOpen={confirmDeactivateState.isOpen}
+        title="Deactivate Marketing Link?"
+        message={`Are you sure you want to deactivate marketing tracking link '${confirmDeactivateState.linkName}'? Future traffic on this link will no longer attribute bookings.`}
+        confirmText="Deactivate Link"
+        cancelText="Keep Active"
+        isDestructive={true}
+        onConfirm={() => executeToggleActive(confirmDeactivateState.linkId, confirmDeactivateState.currentStatus)}
+        onCancel={() => setConfirmDeactivateState((prev) => ({ ...prev, isOpen: false }))}
+      />
 
       {/* Create Marketing Link Modal */}
       {isModalOpen && (

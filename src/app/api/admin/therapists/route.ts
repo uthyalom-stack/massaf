@@ -58,6 +58,7 @@ export async function POST(request: Request) {
         profileImage: validated.profileImage || null,
         email: validated.email || null,
         phone: validated.phone || null,
+        telegramChatId: validated.telegramChatId || null,
         isActive: validated.isActive,
         isFeatured: validated.isFeatured,
         offersStudio: validated.offersStudio,
