@@ -11,7 +11,6 @@ import { notifyBookingExpired, notifyBookingReminder } from '@/lib/notifications
  * Functions performed:
  * 1. Atomic cancel expired unpaid PENDING bookings created >= 30 minutes ago.
  * 2. Send 24-hour and 3-hour appointment reminders for active CONFIRMED bookings.
- *    - Designed to operate reliably whether triggered by Vercel daily cron or high-frequency cron schedules.
  * 3. Idempotent Atomic Claim + Retry on Failure:
  *    - Atomically claims booking (`reminder24hSentAt = now`).
  *    - Awaits notification dispatch.
@@ -109,9 +108,9 @@ async function handleScheduledJobs(request: Request) {
     }
 
     // 3. APPOINTMENT REMINDERS WITH ATOMIC CLAIM & RETRY-ON-FAILURE
-    // 24-hour reminder window: Appointments scheduled within the next 24 hours (up to 26h from now) that haven't received a 24h reminder
-    const window24hStart = now;
-    const window24hEnd = new Date(now.getTime() + (26 * 60 * 60 * 1000));
+    // 24-hour reminder window: 23 hours <= appointmentDateTime - now <= 25 hours
+    const window24hStart = new Date(now.getTime() + 23 * 60 * 60 * 1000);
+    const window24hEnd = new Date(now.getTime() + 25 * 60 * 60 * 1000);
 
     const candidates24h = await db.booking.findMany({
       where: {
@@ -153,9 +152,9 @@ async function handleScheduledJobs(request: Request) {
       }
     }
 
-    // 3-hour reminder window: Appointments scheduled within the next 3.5 hours that haven't received a 3h reminder
-    const window3hStart = now;
-    const window3hEnd = new Date(now.getTime() + (3.5 * 60 * 60 * 1000));
+    // 3-hour reminder window: 2.875 hours <= appointmentDateTime - now <= 3.125 hours
+    const window3hStart = new Date(now.getTime() + 2.875 * 60 * 60 * 1000);
+    const window3hEnd = new Date(now.getTime() + 3.125 * 60 * 60 * 1000);
 
     const candidates3h = await db.booking.findMany({
       where: {

@@ -16,7 +16,8 @@ async function runTests() {
 
   // Track created entity IDs for reliable cleanup
   const createdBookingIds: string[] = [];
-  let testTherapistId = '';
+  let testTherapistWithTgId = '';
+  let testTherapistNoTgId = '';
   let testServiceId = '';
   let testCustomerId = '';
   let testMarketingLinkId = '';
@@ -36,10 +37,10 @@ async function runTests() {
 
   try {
     // 1. Setup isolated test entities (never modify pre-existing records)
-    const therapist = await db.therapist.create({
+    const therapistWithTg = await db.therapist.create({
       data: {
-        name: `Test Phase15 Practitioner ${Date.now()}`,
-        email: `p15therapist_${Date.now()}@test.com`,
+        name: `Test Phase15 TG Therapist ${Date.now()}`,
+        email: `p15tg_${Date.now()}@test.com`,
         telegramChatId: '123456789',
         rating: 4.9,
         offersStudio: true,
@@ -47,7 +48,20 @@ async function runTests() {
         isActive: true,
       },
     });
-    testTherapistId = therapist.id;
+    testTherapistWithTgId = therapistWithTg.id;
+
+    const therapistNoTg = await db.therapist.create({
+      data: {
+        name: `Test Phase15 No-TG Therapist ${Date.now()}`,
+        email: `p15notg_${Date.now()}@test.com`,
+        telegramChatId: null,
+        rating: 4.8,
+        offersStudio: true,
+        offersInHome: true,
+        isActive: true,
+      },
+    });
+    testTherapistNoTgId = therapistNoTg.id;
 
     const service = await db.service.create({
       data: {
@@ -75,7 +89,7 @@ async function runTests() {
       data: {
         bookingNumber: `MSF-P15T1-${Date.now().toString().slice(-4)}`,
         customerId: testCustomerId,
-        therapistId: testTherapistId,
+        therapistId: testTherapistWithTgId,
         serviceId: testServiceId,
         appointmentDateTime: futureDate,
         durationMinutes: 60,
@@ -100,7 +114,7 @@ async function runTests() {
       data: {
         bookingNumber: `MSF-P15T2-${Date.now().toString().slice(-4)}`,
         customerId: testCustomerId,
-        therapistId: testTherapistId,
+        therapistId: testTherapistWithTgId,
         serviceId: testServiceId,
         appointmentDateTime: futureDate,
         durationMinutes: 60,
@@ -133,7 +147,7 @@ async function runTests() {
       data: {
         bookingNumber: `MSF-P15T3-${Date.now().toString().slice(-4)}`,
         customerId: testCustomerId,
-        therapistId: testTherapistId,
+        therapistId: testTherapistWithTgId,
         serviceId: testServiceId,
         appointmentDateTime: futureDate,
         durationMinutes: 60,
@@ -166,7 +180,7 @@ async function runTests() {
       data: {
         bookingNumber: `MSF-P15T4-${Date.now().toString().slice(-4)}`,
         customerId: testCustomerId,
-        therapistId: testTherapistId,
+        therapistId: testTherapistWithTgId,
         serviceId: testServiceId,
         appointmentDateTime: futureDate,
         durationMinutes: 60,
@@ -178,7 +192,6 @@ async function runTests() {
     });
     createdBookingIds.push(expiredBooking.id);
 
-    // Atomic update simulation (matching cron logic)
     const updateCount = await db.booking.updateMany({
       where: {
         id: expiredBooking.id,
@@ -202,7 +215,7 @@ async function runTests() {
       data: {
         bookingNumber: `MSF-P15T5-${Date.now().toString().slice(-4)}`,
         customerId: testCustomerId,
-        therapistId: testTherapistId,
+        therapistId: testTherapistWithTgId,
         serviceId: testServiceId,
         appointmentDateTime: futureDate,
         durationMinutes: 60,
@@ -243,22 +256,59 @@ async function runTests() {
       'Test 6: Expiration rerun excludes already cancelled booking (idempotent)'
     );
 
-    // Test 7 — Cancellation Notifications
-    const cancelNotifRes = await notifyBookingCancelled(test2Booking.id, 'Customer requested cancellation');
-    assert(cancelNotifRes.success, 'Test 7: notifyBookingCancelled returns success result');
+    // Test 7 — 24-Hour Reminder Window Eligibility (23h - 25h)
+    const nowMs = Date.now();
+    const t22h59m = new Date(nowMs + (22 * 60 + 59) * 60 * 1000);
+    const t23h = new Date(nowMs + 23 * 60 * 60 * 1000);
+    const t24h = new Date(nowMs + 24 * 60 * 60 * 1000);
+    const t25h = new Date(nowMs + 25 * 60 * 60 * 1000);
+    const t25h01m = new Date(nowMs + (25 * 60 + 1) * 60 * 1000);
 
-    // Test 8 — Completion Notifications
-    const completeNotifRes = await notifyBookingCompleted(test2Booking.id);
-    assert(completeNotifRes.success, 'Test 8: notifyBookingCompleted returns success result');
+    const is24hEligible = (date: Date) => {
+      const windowStart = new Date(nowMs + 23 * 60 * 60 * 1000);
+      const windowEnd = new Date(nowMs + 25 * 60 * 60 * 1000);
+      return date >= windowStart && date <= windowEnd;
+    };
 
-    // Test 9 — Reminder Atomic Claim & Idempotency
+    assert(
+      !is24hEligible(t22h59m) &&
+        is24hEligible(t23h) &&
+        is24hEligible(t24h) &&
+        is24hEligible(t25h) &&
+        !is24hEligible(t25h01m),
+      'Test 7: 24h reminder window strictly includes 23h-25h and excludes 22h59m and 25h01m'
+    );
+
+    // Test 8 — 3-Hour Reminder Window Eligibility (2.875h - 3.125h)
+    const t2h52m = new Date(nowMs + (2 * 60 + 52) * 60 * 1000);
+    const t2h55m = new Date(nowMs + (2 * 60 + 55) * 60 * 1000);
+    const t3h = new Date(nowMs + 3 * 60 * 60 * 1000);
+    const t3h05m = new Date(nowMs + (3 * 60 + 5) * 60 * 1000);
+    const t3h13m = new Date(nowMs + (3 * 60 + 13) * 60 * 1000);
+
+    const is3hEligible = (date: Date) => {
+      const windowStart = new Date(nowMs + 2.875 * 60 * 60 * 1000);
+      const windowEnd = new Date(nowMs + 3.125 * 60 * 60 * 1000);
+      return date >= windowStart && date <= windowEnd;
+    };
+
+    assert(
+      !is3hEligible(t2h52m) &&
+        is3hEligible(t2h55m) &&
+        is3hEligible(t3h) &&
+        is3hEligible(t3h05m) &&
+        !is3hEligible(t3h13m),
+      'Test 8: 3h reminder window strictly includes 2.875h-3.125h and excludes 2h52m and 3h13m'
+    );
+
+    // Test 9 — Reminder 24h Atomic Claim & Idempotency
     const reminder24hBooking = await db.booking.create({
       data: {
         bookingNumber: `MSF-P15R24-${Date.now().toString().slice(-4)}`,
         customerId: testCustomerId,
-        therapistId: testTherapistId,
+        therapistId: testTherapistWithTgId,
         serviceId: testServiceId,
-        appointmentDateTime: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours away
+        appointmentDateTime: t24h,
         durationMinutes: 60,
         amount: 120.0,
         status: 'CONFIRMED',
@@ -267,7 +317,6 @@ async function runTests() {
     });
     createdBookingIds.push(reminder24hBooking.id);
 
-    // First Claim
     const claim1 = await db.booking.updateMany({
       where: {
         id: reminder24hBooking.id,
@@ -283,7 +332,6 @@ async function runTests() {
       notifSuccess = remRes.success;
     }
 
-    // Second Claim (Repeated Cron Execution)
     const claim2 = await db.booking.updateMany({
       where: {
         id: reminder24hBooking.id,
@@ -305,9 +353,9 @@ async function runTests() {
       data: {
         bookingNumber: `MSF-P15RETRY-${Date.now().toString().slice(-4)}`,
         customerId: testCustomerId,
-        therapistId: testTherapistId,
+        therapistId: testTherapistWithTgId,
         serviceId: testServiceId,
-        appointmentDateTime: new Date(Date.now() + 3 * 60 * 60 * 1000), // 3 hours away
+        appointmentDateTime: t3h,
         durationMinutes: 60,
         amount: 120.0,
         status: 'CONFIRMED',
@@ -316,13 +364,11 @@ async function runTests() {
     });
     createdBookingIds.push(retryTestBooking.id);
 
-    // Claim
     await db.booking.updateMany({
       where: { id: retryTestBooking.id },
       data: { reminder3hSentAt: new Date() },
     });
 
-    // Simulate failure -> Reset
     await db.booking.update({
       where: { id: retryTestBooking.id },
       data: { reminder3hSentAt: null },
@@ -373,7 +419,7 @@ async function runTests() {
       data: {
         bookingNumber: `MSF-P15ATTR-${Date.now().toString().slice(-4)}`,
         customerId: testCustomerId,
-        therapistId: testTherapistId,
+        therapistId: testTherapistWithTgId,
         serviceId: testServiceId,
         marketingLinkId: testMarketingLinkId,
         appointmentDateTime: futureDate,
@@ -394,6 +440,43 @@ async function runTests() {
     assert(
       attrCheck?.marketingLinkId === testMarketingLinkId,
       'Test 12: Marketing attribution marketingLinkId is preserved across lifecycle transitions'
+    );
+
+    // Test 14 — Cancellation & Completion Notification Dispatches
+    const cancelRes = await notifyBookingCancelled(test2Booking.id, 'Customer cancellation test');
+    const completeRes = await notifyBookingCompleted(test2Booking.id);
+    assert(
+      cancelRes.success && completeRes.success,
+      'Test 14: Cancellation and completion notifications dispatch successfully for confirmed state transitions'
+    );
+
+    // Test 15 — Therapist Telegram Fallback
+    const noTgBooking = await db.booking.create({
+      data: {
+        bookingNumber: `MSF-P15NOTG-${Date.now().toString().slice(-4)}`,
+        customerId: testCustomerId,
+        therapistId: testTherapistNoTgId,
+        serviceId: testServiceId,
+        appointmentDateTime: futureDate,
+        durationMinutes: 60,
+        amount: 120.0,
+        status: 'CONFIRMED',
+        paymentStatus: 'PAID',
+      },
+    });
+    createdBookingIds.push(noTgBooking.id);
+
+    const noTgNotifRes = await notifyBookingReminder(noTgBooking.id, '24h');
+    const usedEmail = noTgNotifRes.channelResults.some(
+      (r) => r.channel === 'email' && r.recipient === therapistNoTg.email
+    );
+    const usedTgForNoTg = noTgNotifRes.channelResults.some(
+      (r) => r.channel === 'telegram' && r.recipient.includes('therapist_tg')
+    );
+
+    assert(
+      usedEmail && !usedTgForNoTg,
+      'Test 15: Therapist without telegramChatId safely falls back to email and never sends therapist msg to admin chat'
     );
 
     // Test 13 — Security & Secrets Inspection Audit
@@ -422,8 +505,11 @@ async function runTests() {
       if (testCustomerId) {
         await db.customer.delete({ where: { id: testCustomerId } }).catch(() => null);
       }
-      if (testTherapistId) {
-        await db.therapist.delete({ where: { id: testTherapistId } }).catch(() => null);
+      if (testTherapistWithTgId) {
+        await db.therapist.delete({ where: { id: testTherapistWithTgId } }).catch(() => null);
+      }
+      if (testTherapistNoTgId) {
+        await db.therapist.delete({ where: { id: testTherapistNoTgId } }).catch(() => null);
       }
       if (testServiceId) {
         await db.service.delete({ where: { id: testServiceId } }).catch(() => null);
