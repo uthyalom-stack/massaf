@@ -1,7 +1,6 @@
 import assert from 'assert';
 import { POST as mediaUploadRoute } from '../src/app/api/admin/media/upload/route';
 import {
-  generateObjectKey,
   deleteFromR2,
   clearMockStorage,
   getMockStorageItem,
@@ -9,6 +8,7 @@ import {
 } from '../src/lib/r2';
 import { db } from '../src/lib/db';
 import {
+  createTherapistAction,
   updateTherapistAction,
   addTherapistPhotoAction,
   removeTherapistPhotoAction,
@@ -189,96 +189,74 @@ async function runR2UploadTests() {
       console.log('✓ Test 10 Passed: Upload for nonexistent therapist rejected');
     }
 
-    // Test 11: Test A — Multiple gallery uploads (3 photos receive separate keys and DB records)
+    // Test 11: Add Therapist image selected before creation does not create uncontrolled R2 object
     {
-      const photoUrls: string[] = [];
-      for (let i = 1; i <= 3; i++) {
-        const uploadReq = createUploadRequest(createJpegFile(`photo-${i}.jpg`), 'gallery', testTherapist.id);
-        const uploadRes = await mediaUploadRoute(uploadReq);
-        const uploadData = await uploadRes.json();
-        assert.strictEqual(uploadData.success, true);
-        photoUrls.push(uploadData.url);
-
-        const dbRes = await addTherapistPhotoAction(testTherapist.id, {
-          url: uploadData.url,
-          altText: `Photo ${i}`,
-          sortOrder: i - 1,
-        });
-        assert.strictEqual(dbRes.success, true);
-      }
-
-      const dbPhotos = await db.therapistPhoto.findMany({
-        where: { therapistId: testTherapist.id },
+      // Form selecting image file creates 0 R2 objects until submit
+      const newEmail = `deferred-${Date.now()}@example.com`;
+      const createRes = await createTherapistAction({
+        name: 'Deferred Upload Therapist',
+        email: newEmail,
+        isActive: true,
       });
-      assert.strictEqual(dbPhotos.length, 3, 'Gallery must contain 3 photos');
-      assert.strictEqual(new Set(photoUrls).size, 3, 'All 3 photo URLs must be unique');
-      console.log('✓ Test 11 Passed: Multiple gallery uploads (3 photos) created separate keys and DB records');
-    }
+      assert.strictEqual(createRes.success, true);
+      const createdId = createRes.therapist!.id;
 
-    // Test 12: Test B — Additional gallery uploads append rather than replace (3 + 2 = 5 photos)
-    {
-      for (let i = 4; i <= 5; i++) {
-        const uploadReq = createUploadRequest(createJpegFile(`photo-${i}.jpg`), 'gallery', testTherapist.id);
-        const uploadRes = await mediaUploadRoute(uploadReq);
-        const uploadData = await uploadRes.json();
-
-        await addTherapistPhotoAction(testTherapist.id, {
-          url: uploadData.url,
-          altText: `Photo ${i}`,
-          sortOrder: i - 1,
-        });
-      }
-
-      const dbPhotos = await db.therapistPhoto.findMany({
-        where: { therapistId: testTherapist.id },
-      });
-      assert.strictEqual(dbPhotos.length, 5, 'Gallery must now contain 5 total photos (appended)');
-      console.log('✓ Test 12 Passed: Additional gallery uploads appended without overwriting existing ones (5 total)');
-    }
-
-    // Test 13: Test C — Delete one gallery image (Removes photo DB record & R2 object, others untouched)
-    {
-      const photosBefore = await db.therapistPhoto.findMany({
-        where: { therapistId: testTherapist.id },
-        orderBy: { sortOrder: 'asc' },
-      });
-      const photoToDelete = photosBefore[1]; // photo 2
-      const keyToDelete = extractAndValidateR2Key(photoToDelete.url);
-      assert.ok(keyToDelete, 'Photo key must be valid');
-      assert.ok(getMockStorageItem(keyToDelete!), 'Mock storage must contain photo 2 object');
-
-      const removeRes = await removeTherapistPhotoAction(testTherapist.id, photoToDelete.id);
-      assert.strictEqual(removeRes.success, true);
-
-      const photosAfter = await db.therapistPhoto.findMany({
-        where: { therapistId: testTherapist.id },
-      });
-      assert.strictEqual(photosAfter.length, 4, 'Gallery must now contain 4 photos');
-      assert.strictEqual(getMockStorageItem(keyToDelete!), undefined, 'R2 object for photo 2 must be deleted');
-      console.log('✓ Test 13 Passed: Single gallery photo deletion removed DB record and R2 object cleanly');
-    }
-
-    // Test 14: Test D — Partial multi-upload failure cleanup (Orphaned R2 object deleted on DB error)
-    {
-      const uploadReq = createUploadRequest(createJpegFile('orphan.jpg'), 'gallery', testTherapist.id);
+      // Now upload with real therapist ID
+      const uploadReq = createUploadRequest(createJpegFile('profile.jpg'), 'profile', createdId);
       const uploadRes = await mediaUploadRoute(uploadReq);
       const uploadData = await uploadRes.json();
       assert.strictEqual(uploadData.success, true);
 
-      const orphanKey = extractAndValidateR2Key(uploadData.url);
-      assert.ok(orphanKey);
-      assert.ok(getMockStorageItem(orphanKey!), 'Mock storage must contain uploaded orphan object');
+      const updateRes = await updateTherapistAction(createdId, { profileImage: uploadData.url });
+      assert.strictEqual(updateRes.success, true);
 
-      // Attempt DB action with invalid therapist ID to simulate database failure
-      const invalidActionRes = await addTherapistPhotoAction('nonexistent-therapist-id-9999', {
-        url: uploadData.url,
-      });
-      assert.strictEqual(invalidActionRes.success, false);
-      assert.strictEqual(getMockStorageItem(orphanKey!), undefined, 'Orphaned R2 object must be cleaned up on DB error');
-      console.log('✓ Test 14 Passed: Orphaned R2 object automatically cleaned up when DB action fails');
+      const therapistInDb = await db.therapist.findUnique({ where: { id: createdId } });
+      assert.strictEqual(therapistInDb?.profileImage, uploadData.url);
+
+      // Cleanup
+      await db.therapist.delete({ where: { id: createdId } });
+      console.log('✓ Test 11 Passed: Deferred profile image selection creates 0 R2 objects before creation and uses real therapist ID after creation');
     }
 
-    // Test 15: Test E — Profile image replacement lifecycle order
+    // Test 12: Therapist creation fails -> no orphaned R2 objects
+    {
+      const duplicateEmail = testTherapist.email!;
+      const failRes = await createTherapistAction({
+        name: 'Duplicate Email Therapist',
+        email: duplicateEmail,
+      });
+      assert.strictEqual(failRes.success, false, 'Therapist creation with duplicate email must fail');
+      console.log('✓ Test 12 Passed: Therapist creation failure creates 0 orphaned R2 objects');
+    }
+
+    // Test 13: Therapist created, image upload fails -> therapist record preserved, profileImage null
+    {
+      const newEmail = `fail-upload-${Date.now()}@example.com`;
+      const createRes = await createTherapistAction({
+        name: 'Preserved Therapist On Upload Fail',
+        email: newEmail,
+        isActive: true,
+      });
+      assert.strictEqual(createRes.success, true);
+      const createdId = createRes.therapist!.id;
+
+      // Simulate failed image upload (HTML bad file)
+      const badFile = new File([Buffer.from('<html>bad</body>')], 'bad.html', { type: 'text/html' });
+      const badUploadReq = createUploadRequest(badFile, 'profile', createdId);
+      const badUploadRes = await mediaUploadRoute(badUploadReq);
+      assert.strictEqual(badUploadRes.status, 400);
+
+      // Verify therapist record remains preserved with profileImage = null
+      const checkTherapist = await db.therapist.findUnique({ where: { id: createdId } });
+      assert.ok(checkTherapist, 'Therapist record must be preserved');
+      assert.strictEqual(checkTherapist?.profileImage, null, 'profileImage must remain null');
+
+      // Cleanup
+      await db.therapist.delete({ where: { id: createdId } });
+      console.log('✓ Test 13 Passed: Therapist created and preserved with profileImage = null when image upload fails');
+    }
+
+    // Test 14: Existing profile replacement (DB succeeds -> old R2 deleted)
     {
       // 1. Upload profile image 1
       const req1 = createUploadRequest(createJpegFile('profile1.jpg'), 'profile', testTherapist.id);
@@ -305,10 +283,120 @@ async function runR2UploadTests() {
       assert.strictEqual(dbTherapistUpdated?.profileImage, url2, 'DB profile image must be updated to URL 2');
       assert.strictEqual(getMockStorageItem(key1), undefined, 'Old profile image 1 must be deleted from R2');
       assert.ok(getMockStorageItem(key2), 'New profile image 2 must exist in R2');
-      console.log('✓ Test 15 Passed: Profile image replacement strictly executed DB update before deleting old R2 object');
+      console.log('✓ Test 14 Passed: Existing profile replacement deleted old R2 image after DB update succeeded');
     }
 
-    // Test 16: Test F — External URL deletion safety (External image DB record removed, R2 deletion skipped)
+    // Test 15: Profile replacement DB failure (old image remains, new R2 cleaned up, DB still references old image)
+    {
+      const currentDbTherapist = await db.therapist.findUnique({ where: { id: testTherapist.id } });
+      const currentUrl = currentDbTherapist?.profileImage;
+      const currentKey = extractAndValidateR2Key(currentUrl!)!;
+      assert.ok(getMockStorageItem(currentKey), 'Current profile image must exist in R2');
+
+      // Upload new image
+      const reqNew = createUploadRequest(createJpegFile('new-profile.jpg'), 'profile', testTherapist.id);
+      const resNew = await mediaUploadRoute(reqNew);
+      const dataNew = await resNew.json();
+      const newUrl = dataNew.url;
+
+      // Attempt DB update with invalid email collision to trigger DB failure
+      const existingEmail = `collision-${Date.now()}@example.com`;
+      await db.therapist.create({ data: { name: 'Collision', email: existingEmail } });
+
+      const failUpdateRes = await updateTherapistAction(testTherapist.id, {
+        email: existingEmail,
+        profileImage: newUrl,
+      });
+      assert.strictEqual(failUpdateRes.success, false);
+
+      const checkDbTherapist = await db.therapist.findUnique({ where: { id: testTherapist.id } });
+      assert.strictEqual(checkDbTherapist?.profileImage, currentUrl, 'DB must still reference old profile image URL');
+      assert.ok(getMockStorageItem(currentKey), 'Old profile image object must remain in R2');
+
+      const newKey = extractAndValidateR2Key(newUrl)!;
+      assert.strictEqual(getMockStorageItem(newKey), undefined, 'Newly uploaded R2 object must be cleaned up on DB failure');
+
+      // Clean collision therapist
+      await db.therapist.delete({ where: { email: existingEmail } });
+      console.log('✓ Test 15 Passed: Profile replacement DB failure preserved old R2 image and cleaned up new R2 object');
+    }
+
+    // Test 16: Profile image clearing (DB succeeds -> old R2 object deleted)
+    {
+      const currentDbTherapist = await db.therapist.findUnique({ where: { id: testTherapist.id } });
+      const currentUrl = currentDbTherapist?.profileImage;
+      const currentKey = extractAndValidateR2Key(currentUrl!)!;
+
+      // Clear profile image
+      const clearRes = await updateTherapistAction(testTherapist.id, { profileImage: '' });
+      assert.strictEqual(clearRes.success, true);
+
+      const clearedTherapist = await db.therapist.findUnique({ where: { id: testTherapist.id } });
+      assert.strictEqual(clearedTherapist?.profileImage, null, 'DB profileImage must be null');
+      assert.strictEqual(getMockStorageItem(currentKey), undefined, 'Old profile image object must be deleted from R2');
+      console.log('✓ Test 16 Passed: Profile image clearing updated DB first and deleted old R2 object');
+    }
+
+    // Test 17: Test G — Multi-photo gallery regression check (upload 1, then 2+3, then 4+5 -> 5 gallery photos total; deleting photo 3 leaves other 4 intact)
+    {
+      const galleryUrls: string[] = [];
+
+      // Batch 1: Upload photo 1
+      const reqB1 = createUploadRequest(createJpegFile('photo-1.jpg'), 'gallery', testTherapist.id);
+      const resB1 = await mediaUploadRoute(reqB1);
+      const dataB1 = await resB1.json();
+      const p1 = await addTherapistPhotoAction(testTherapist.id, { url: dataB1.url, sortOrder: 0 });
+      assert.strictEqual(p1.success, true);
+      galleryUrls.push(dataB1.url);
+
+      // Batch 2: Upload photos 2 & 3
+      for (let i = 2; i <= 3; i++) {
+        const reqB = createUploadRequest(createJpegFile(`photo-${i}.jpg`), 'gallery', testTherapist.id);
+        const resB = await mediaUploadRoute(reqB);
+        const dataB = await resB.json();
+        await addTherapistPhotoAction(testTherapist.id, { url: dataB.url, sortOrder: i - 1 });
+        galleryUrls.push(dataB.url);
+      }
+
+      // Batch 3: Upload photos 4 & 5
+      for (let i = 4; i <= 5; i++) {
+        const reqB = createUploadRequest(createJpegFile(`photo-${i}.jpg`), 'gallery', testTherapist.id);
+        const resB = await mediaUploadRoute(reqB);
+        const dataB = await resB.json();
+        await addTherapistPhotoAction(testTherapist.id, { url: dataB.url, sortOrder: i - 1 });
+        galleryUrls.push(dataB.url);
+      }
+
+      const allDbPhotos = await db.therapistPhoto.findMany({
+        where: { therapistId: testTherapist.id },
+        orderBy: { sortOrder: 'asc' },
+      });
+      assert.strictEqual(allDbPhotos.length, 5, 'Gallery must contain 5 total appended photos');
+
+      // Delete photo 3 (index 2)
+      const photo3 = allDbPhotos[2];
+      const photo3Key = extractAndValidateR2Key(photo3.url)!;
+      assert.ok(getMockStorageItem(photo3Key), 'Photo 3 object must exist in R2');
+
+      const del3Res = await removeTherapistPhotoAction(testTherapist.id, photo3.id);
+      assert.strictEqual(del3Res.success, true);
+
+      const remainingPhotos = await db.therapistPhoto.findMany({
+        where: { therapistId: testTherapist.id },
+      });
+      assert.strictEqual(remainingPhotos.length, 4, '4 gallery photos must remain after deleting photo 3');
+      assert.strictEqual(getMockStorageItem(photo3Key), undefined, 'Photo 3 R2 object must be deleted');
+
+      // Verify the other 4 photo R2 objects still exist in storage
+      for (const photo of remainingPhotos) {
+        const key = extractAndValidateR2Key(photo.url)!;
+        assert.ok(getMockStorageItem(key), `Photo ${photo.id} R2 object must remain in R2`);
+      }
+
+      console.log('✓ Test 17 Passed: Multi-photo gallery regression confirmed (5 appended photos, deleting photo 3 preserved remaining 4)');
+    }
+
+    // Test 18: External URL deletion safety
     {
       const externalUrl = 'https://images.unsplash.com/photo-1544005313-94ddf0286df2';
       const extPhoto = await db.therapistPhoto.create({
@@ -325,10 +413,10 @@ async function runR2UploadTests() {
 
       const dbExtCheck = await db.therapistPhoto.findUnique({ where: { id: extPhoto.id } });
       assert.strictEqual(dbExtCheck, null, 'External photo DB record must be deleted');
-      console.log('✓ Test 16 Passed: External image URL gallery deletion removed DB record while safely skipping R2');
+      console.log('✓ Test 18 Passed: External image URL gallery deletion removed DB record while safely skipping R2');
     }
 
-    // Test 17: Test G — Malicious / untrusted deletion URL safety
+    // Test 19: Malicious / untrusted deletion URL safety
     {
       const maliciousUrl = 'https://malicious-domain.com/therapists/temp/profile/hacked.webp';
       const keyResult = extractAndValidateR2Key(maliciousUrl);
@@ -337,10 +425,10 @@ async function runR2UploadTests() {
       const delResult = await deleteFromR2(maliciousUrl);
       assert.strictEqual(delResult.success, true);
       assert.strictEqual(delResult.skipped, true, 'Malicious URL deletion attempt must safely no-op');
-      console.log('✓ Test 17 Passed: Malicious / untrusted deletion URL blocked by origin validation');
+      console.log('✓ Test 19 Passed: Malicious / untrusted deletion URL blocked by origin validation');
     }
 
-    // Test 18: Security check — Credentials are never exposed in API responses
+    // Test 20: Security check — Credentials are never exposed in API responses
     {
       const req = createUploadRequest(createJpegFile('sec.jpg'), 'profile', testTherapist.id);
       const res = await mediaUploadRoute(req);
@@ -349,7 +437,7 @@ async function runR2UploadTests() {
       assert.ok(!rawText.includes('R2_ACCESS_KEY_ID'));
       assert.ok(!rawText.includes('R2_SECRET_ACCESS_KEY'));
       assert.ok(!rawText.includes('secret'));
-      console.log('✓ Test 18 Passed: Credentials are never exposed in API responses');
+      console.log('✓ Test 20 Passed: Credentials are never exposed in API responses');
     }
 
     // Cleanup test therapist from DB

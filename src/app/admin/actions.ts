@@ -503,7 +503,6 @@ export async function cancelBookingAction(input: unknown) {
 
 export async function updateTherapistAction(id: string, input: unknown) {
   let newlyUploadedUrl: string | null = null;
-  let oldProfileImage: string | null = null;
 
   try {
     checkServerAdminAuth();
@@ -514,18 +513,25 @@ export async function updateTherapistAction(id: string, input: unknown) {
 
     const validated = therapistBaseSchema.partial().parse(input);
 
+    const oldProfileImage = therapist.profileImage;
+    if (validated.profileImage && validated.profileImage !== oldProfileImage) {
+      newlyUploadedUrl = validated.profileImage;
+    }
+
     if (validated.email && validated.email !== therapist.email) {
       const existing = await db.therapist.findUnique({
         where: { email: validated.email },
       });
       if (existing) {
+        if (newlyUploadedUrl) {
+          try {
+            await deleteFromR2(newlyUploadedUrl);
+          } catch (delErr) {
+            console.error('Error cleaning up newly uploaded R2 image on email conflict:', delErr);
+          }
+        }
         return { success: false, error: 'Email address is already in use by another therapist.' };
       }
-    }
-
-    oldProfileImage = therapist.profileImage;
-    if (validated.profileImage && validated.profileImage !== oldProfileImage) {
-      newlyUploadedUrl = validated.profileImage;
     }
 
     // 1. Execute DB update FIRST
@@ -534,7 +540,7 @@ export async function updateTherapistAction(id: string, input: unknown) {
       data: {
         ...(validated.name !== undefined && { name: validated.name }),
         ...(validated.bio !== undefined && { bio: validated.bio }),
-        ...(validated.profileImage !== undefined && { profileImage: validated.profileImage }),
+        ...(validated.profileImage !== undefined && { profileImage: validated.profileImage || null }),
         ...(validated.email !== undefined && { email: validated.email }),
         ...(validated.phone !== undefined && { phone: validated.phone }),
         ...(validated.telegramChatId !== undefined && { telegramChatId: validated.telegramChatId || null }),
@@ -545,12 +551,12 @@ export async function updateTherapistAction(id: string, input: unknown) {
       },
     });
 
-    // 2. Only after DB update succeeds, safely delete old profile image if replaced
-    if (newlyUploadedUrl && oldProfileImage && oldProfileImage !== newlyUploadedUrl) {
+    // 2. Only after DB update succeeds, safely delete old profile image if replaced or cleared
+    if (oldProfileImage && oldProfileImage !== updated.profileImage) {
       try {
         await deleteFromR2(oldProfileImage);
       } catch (delErr) {
-        console.error('Non-critical error deleting replaced old profile image from R2:', delErr);
+        console.error('Non-critical error deleting replaced/cleared old profile image from R2:', delErr);
       }
     }
 

@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { createTherapistAction } from '@/app/admin/actions';
+import { createTherapistAction, updateTherapistAction } from '@/app/admin/actions';
 
 export function AddTherapistForm() {
   const router = useRouter();
@@ -12,7 +12,6 @@ export function AddTherapistForm() {
     email: '',
     phone: '',
     telegramChatId: '',
-    profileImage: '',
     bio: '',
     isActive: true,
     isFeatured: false,
@@ -20,12 +19,15 @@ export function AddTherapistForm() {
     offersInHome: true,
   });
 
-  const [submitting, setSubmitting] = useState(false);
-  const [uploadingImage, setUploadingImage] = useState(false);
+  // Local state for deferred profile image file & preview
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+
+  const [submitting, setSubmitting] = useState(false);
+  const [submitStepText, setSubmitStepText] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -37,51 +39,21 @@ export function AddTherapistForm() {
       return;
     }
 
-    // Validate client type
+    // Validate client MIME type
     const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
     if (!validTypes.includes(file.type.toLowerCase())) {
       setErrorMessage('Invalid image type. Please select a JPEG, PNG, or WebP image.');
       return;
     }
 
-    // Show instant local preview
-    const objectUrl = URL.createObjectURL(file);
-    setImagePreview(objectUrl);
-
-    try {
-      setUploadingImage(true);
-      const uploadData = new FormData();
-      uploadData.append('file', file);
-      uploadData.append('folder', 'profile');
-      uploadData.append('therapistId', 'temp');
-      if (formData.profileImage) {
-        uploadData.append('oldUrl', formData.profileImage);
-      }
-
-      const res = await fetch('/api/admin/media/upload', {
-        method: 'POST',
-        body: uploadData,
-      });
-
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
-        setErrorMessage(data.error || 'Failed to upload image. Please try again.');
-        return;
-      }
-
-      setFormData((prev) => ({ ...prev, profileImage: data.url }));
-    } catch (err) {
-      console.error('Error uploading image:', err);
-      setErrorMessage('Network error while uploading image.');
-    } finally {
-      setUploadingImage(false);
-    }
+    // Store local File reference and generate instant browser preview
+    setSelectedFile(file);
+    setImagePreview(URL.createObjectURL(file));
   };
 
   const handleClearImage = () => {
+    setSelectedFile(null);
     setImagePreview(null);
-    setFormData((prev) => ({ ...prev, profileImage: '' }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -93,19 +65,16 @@ export function AddTherapistForm() {
       return;
     }
 
-    if (uploadingImage) {
-      setErrorMessage('Please wait for the image upload to complete.');
-      return;
-    }
-
     try {
       setSubmitting(true);
+      setSubmitStepText('Creating therapist profile...');
+
+      // 1. Create therapist record FIRST (profileImage initially undefined)
       const res = await createTherapistAction({
         name: formData.name.trim(),
         email: formData.email.trim() || undefined,
         phone: formData.phone.trim() || undefined,
         telegramChatId: formData.telegramChatId.trim() || undefined,
-        profileImage: formData.profileImage.trim() || undefined,
         bio: formData.bio.trim() || undefined,
         isActive: formData.isActive,
         isFeatured: formData.isFeatured,
@@ -113,20 +82,62 @@ export function AddTherapistForm() {
         offersInHome: formData.offersInHome,
       });
 
-      if (!res.success) {
+      if (!res.success || !res.therapist?.id) {
         setErrorMessage(res.error || 'Failed to create therapist profile.');
         return;
       }
 
-      // Redirect to edit page of newly created therapist
-      if (res.therapist?.id) {
-        router.push(`/admin/therapists/${res.therapist.id}?created=true`);
+      const createdTherapistId = res.therapist.id;
+
+      // 2. If a profile image file was selected, upload to R2 using the REAL therapist ID
+      if (selectedFile) {
+        setSubmitStepText('Uploading profile image to Cloudflare R2...');
+
+        const uploadData = new FormData();
+        uploadData.append('file', selectedFile);
+        uploadData.append('folder', 'profile');
+        uploadData.append('therapistId', createdTherapistId);
+
+        const uploadRes = await fetch('/api/admin/media/upload', {
+          method: 'POST',
+          body: uploadData,
+        });
+
+        const uploadJson = await uploadRes.json();
+
+        if (!uploadRes.ok || !uploadJson.success || !uploadJson.url) {
+          console.error('Profile image upload failed after therapist creation:', uploadJson.error);
+          // Preserve therapist record, alert user, and redirect to edit page
+          alert(
+            `Therapist profile created successfully, but profile image upload failed: ${
+              uploadJson.error || 'Unknown error'
+            }. You can upload the image from the profile edit page.`
+          );
+          router.push(`/admin/therapists/${createdTherapistId}?created=true&imageError=true`);
+          return;
+        }
+
+        // 3. Update therapist record with the returned R2 URL
+        setSubmitStepText('Updating profile image reference...');
+        const updateRes = await updateTherapistAction(createdTherapistId, {
+          profileImage: uploadJson.url,
+        });
+
+        if (!updateRes.success) {
+          console.error('Failed to update therapist record with profile image URL:', updateRes.error);
+          router.push(`/admin/therapists/${createdTherapistId}?created=true&imageUpdateError=true`);
+          return;
+        }
       }
+
+      // Redirect to edit page of newly created therapist
+      router.push(`/admin/therapists/${createdTherapistId}?created=true`);
     } catch (err) {
       console.error('Error submitting form:', err);
       setErrorMessage('An unexpected network error occurred.');
     } finally {
       setSubmitting(false);
+      setSubmitStepText(null);
     }
   };
 
@@ -217,40 +228,35 @@ export function AddTherapistForm() {
             </div>
           </div>
 
-          {/* Profile Image Upload Component */}
+          {/* Profile Image Selection Component (Deferred Upload) */}
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-              Profile Image
+              Profile Image (Optional)
             </label>
 
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-              {/* Image Preview */}
+              {/* Local Image Preview */}
               <div className="relative w-24 h-24 rounded-2xl border border-slate-200 overflow-hidden bg-slate-200 shrink-0 flex items-center justify-center">
-                {imagePreview || formData.profileImage ? (
+                {imagePreview ? (
                   /* eslint-disable-next-line @next/next/no-img-element */
                   <img
-                    src={imagePreview || formData.profileImage}
+                    src={imagePreview}
                     alt="Profile preview"
                     className="w-full h-full object-cover"
                   />
                 ) : (
                   <span className="text-2xl text-slate-400">👤</span>
                 )}
-                {uploadingImage && (
-                  <div className="absolute inset-0 bg-slate-900/60 flex items-center justify-center text-white text-[10px] font-bold">
-                    Uploading...
-                  </div>
-                )}
               </div>
 
-              {/* Upload Controls */}
+              {/* Selection Controls */}
               <div className="space-y-2 flex-1 w-full">
                 <input
                   type="file"
                   id="profile-image-upload"
                   accept="image/jpeg,image/png,image/webp"
                   onChange={handleImageChange}
-                  disabled={uploadingImage}
+                  disabled={submitting}
                   className="hidden"
                 />
 
@@ -258,20 +264,20 @@ export function AddTherapistForm() {
                   <label
                     htmlFor="profile-image-upload"
                     className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
-                      uploadingImage
+                      submitting
                         ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
                         : 'bg-emerald-700 text-white hover:bg-emerald-800'
                     }`}
                   >
                     <span>📷</span>
-                    <span>{uploadingImage ? 'Uploading Image...' : 'Choose Image'}</span>
+                    <span>{selectedFile ? 'Change Selected Image' : 'Choose Image'}</span>
                   </label>
 
-                  {(imagePreview || formData.profileImage) && (
+                  {selectedFile && (
                     <button
                       type="button"
                       onClick={handleClearImage}
-                      disabled={uploadingImage}
+                      disabled={submitting}
                       className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-red-700 hover:bg-red-50 border border-slate-200 transition-colors cursor-pointer"
                     >
                       Remove
@@ -280,12 +286,12 @@ export function AddTherapistForm() {
                 </div>
 
                 <p className="text-[11px] text-slate-500">
-                  Select JPEG, PNG, or WebP image from your phone, tablet, or desktop (max 10 MB).
+                  Select JPEG, PNG, or WebP image from your device (max 10 MB). Uploads automatically after profile creation.
                 </p>
 
-                {formData.profileImage && (
+                {selectedFile && (
                   <p className="text-[10px] font-mono text-emerald-800 truncate max-w-md">
-                    R2 URL: {formData.profileImage}
+                    Selected: {selectedFile.name} ({(selectedFile.size / (1024 * 1024)).toFixed(2)} MB)
                   </p>
                 )}
               </div>
@@ -363,10 +369,10 @@ export function AddTherapistForm() {
             </Link>
             <button
               type="submit"
-              disabled={submitting || uploadingImage}
+              disabled={submitting}
               className="px-6 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
             >
-              {submitting ? 'Creating Profile...' : 'Save & Continue'}
+              {submitting ? submitStepText || 'Creating Profile...' : 'Save & Continue'}
             </button>
           </div>
         </form>
