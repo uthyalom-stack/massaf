@@ -15,13 +15,13 @@ export default async function FindTherapistPage() {
         <div className="text-center max-w-3xl mx-auto space-y-3">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100/80 text-emerald-900 border border-emerald-200">
             <span className="w-2 h-2 rounded-full bg-emerald-600" />
-            Verified Practitioner Network
+            Therapist Network
           </div>
           <h1 className="text-3xl sm:text-5xl font-extrabold text-slate-900 tracking-tight">
             Find a Massage Therapist
           </h1>
           <p className="text-slate-600 text-sm sm:text-base leading-relaxed">
-            Discover licensed, background-checked massage therapy professionals available for in-home visits or local studio appointments near you.
+            Discover massage therapy professionals available for in-home visits or local studio appointments near you.
           </p>
         </div>
 
@@ -35,7 +35,7 @@ export default async function FindTherapistPage() {
               Let Us Match You With The Right Therapist
             </h2>
             <p className="text-xs sm:text-sm text-slate-300 max-w-xl">
-              Answer 4 short questions about your treatment preferences, location, and budget to get custom practitioner recommendations.
+              Answer 4 short questions about your treatment preferences, location, and budget to get custom therapist recommendations.
             </p>
           </div>
 

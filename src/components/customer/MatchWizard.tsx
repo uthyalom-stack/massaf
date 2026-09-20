@@ -148,11 +148,11 @@ export function MatchWizard({ services }: MatchWizardProps) {
             {step === 5 && 'Confirm your preferences'}
           </h2>
           <p className="text-slate-300 text-xs sm:text-sm mt-1">
-            {step === 1 && 'Select from available massage treatments in our verified practitioner network.'}
-            {step === 2 && 'Choose between having a practitioner visit your home or going to a studio.'}
-            {step === 3 && 'Select your target date to match practitioner schedules.'}
-            {step === 4 && 'Filter practitioners who offer your selected service within your budget limit.'}
-            {step === 5 && 'Review your criteria before running our therapist matching engine.'}
+            {step === 1 && 'Select from available massage treatments in our therapist network.'}
+            {step === 2 && 'Choose between having a therapist visit your home or going to a studio.'}
+            {step === 3 && 'Select your target date to match therapist schedules.'}
+            {step === 4 && 'Filter therapists who offer your selected service within your budget limit.'}
+            {step === 5 && 'Review your criteria before running our therapist matching system.'}
           </p>
         </div>
       </div>
@@ -239,7 +239,7 @@ export function MatchWizard({ services }: MatchWizardProps) {
                   </div>
                   <h3 className="font-bold text-slate-900 text-base">In-Home Session</h3>
                   <p className="text-xs text-slate-600 mt-1">
-                    Practitioner travels to your home or hotel with full equipment.
+                    Therapist travels to your home or hotel with full equipment.
                   </p>
                 </button>
 
@@ -259,7 +259,7 @@ export function MatchWizard({ services }: MatchWizardProps) {
                   </div>
                   <h3 className="font-bold text-slate-900 text-base">Studio Appointment</h3>
                   <p className="text-xs text-slate-600 mt-1">
-                    Visit practitioner&apos;s licensed studio or clinic facility.
+                    Visit therapist&apos;s studio facility.
                   </p>
                 </button>
               </div>
@@ -306,7 +306,7 @@ export function MatchWizard({ services }: MatchWizardProps) {
                 Preferred Date (Optional)
               </label>
               <p className="text-xs text-slate-500 mb-3">
-                Select your target session date to check practitioner availability windows.
+                Select your target session date to check therapist availability windows.
               </p>
               <input
                 id="preferredDate"
@@ -356,7 +356,7 @@ export function MatchWizard({ services }: MatchWizardProps) {
                 Max Target Session Budget
               </label>
               <p className="text-xs text-slate-500 mb-4">
-                We will prioritize practitioners whose prices for your selected treatment fit within your budget.
+                We will prioritize therapists whose prices for your selected treatment fit within your budget.
               </p>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

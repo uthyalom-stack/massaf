@@ -27,7 +27,18 @@ export const matchCriteriaSchema = z.object({
       (val) => !val || !isNaN(Date.parse(val)),
       'Invalid date format.'
     ),
-  preferredTime: z.string().optional().default(''),
+  preferredTime: z
+    .string()
+    .optional()
+    .default('')
+    .refine((val) => {
+      if (!val || !val.trim()) return true;
+      const clean = val.trim();
+      if (['morning', 'afternoon', 'evening'].includes(clean.toLowerCase())) {
+        return true;
+      }
+      return /^(\d{1,2}):(\d{2})(\s*(AM|PM))?$/i.test(clean);
+    }, 'Please select or enter a valid appointment time (e.g. 09:00, 2:30 PM, or morning/afternoon/evening).'),
 });
 
 export type MatchCriteria = z.infer<typeof matchCriteriaSchema>;

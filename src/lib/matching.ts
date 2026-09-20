@@ -1,6 +1,10 @@
 import { CustomerTherapist } from '@/types/customer';
 import { MatchCriteria } from '@/lib/validations/matching';
-import { getScheduleWindowForDate } from '@/lib/availability';
+import {
+  getScheduleWindowForDate,
+  isAppointmentTimeAvailable,
+  parseTimeStringToMinutes,
+} from '@/lib/availability';
 
 export interface MatchedTherapistResult {
   therapist: CustomerTherapist;
@@ -139,11 +143,49 @@ export function rankTherapistsForMatch(
       );
 
       if (scheduleWindow) {
-        points += 10;
-        reasons.push(`Available on your requested date (${criteria.preferredDate})`);
+        if (criteria.preferredTime && criteria.preferredTime.trim()) {
+          const timeVal = criteria.preferredTime.trim().toLowerCase();
+          let targetTimeStr = '';
+
+          if (timeVal === 'morning') {
+            targetTimeStr = '09:00';
+          } else if (timeVal === 'afternoon') {
+            targetTimeStr = '13:00';
+          } else if (timeVal === 'evening') {
+            targetTimeStr = '17:00';
+          } else {
+            try {
+              const mins = parseTimeStringToMinutes(criteria.preferredTime.trim());
+              const hh = Math.floor(mins / 60).toString().padStart(2, '0');
+              const mm = (mins % 60).toString().padStart(2, '0');
+              targetTimeStr = `${hh}:${mm}`;
+            } catch {
+              targetTimeStr = criteria.preferredTime.trim();
+            }
+          }
+
+          const timeCheck = isAppointmentTimeAvailable(
+            therapist,
+            criteria.preferredDate,
+            targetTimeStr,
+            matchedService.durationMinutes
+          );
+
+          if (timeCheck.isValid) {
+            points += 10;
+            const timeLabel = ['morning', 'afternoon', 'evening'].includes(timeVal)
+              ? `${timeVal} session`
+              : targetTimeStr;
+            reasons.push(`Available at your requested time (${timeLabel})`);
+          }
+        } else {
+          // Date supplied without specific time: therapist working on date
+          points += 10;
+          reasons.push(`Available on your requested date (${criteria.preferredDate})`);
+        }
       }
     } else {
-      // Date not specified: award baseline availability
+      // Date not specified: award baseline schedule fit
       points += 5;
     }
 
@@ -153,7 +195,7 @@ export function rankTherapistsForMatch(
 
     if (therapist.rating >= 4.8) {
       reasons.push(
-        `Top-rated practitioner (${therapist.rating.toFixed(2)}★ from ${therapist.reviewCount} reviews)`
+        `Highly rated therapist (${therapist.rating.toFixed(2)}★ from ${therapist.reviewCount} reviews)`
       );
     }
 

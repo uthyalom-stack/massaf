@@ -31,7 +31,7 @@ export function MatchResults({ results, criteria, onStartOver }: MatchResultsPro
             No Exact Therapist Matches Found
           </h2>
           <p className="text-slate-600 text-sm leading-relaxed max-w-md mx-auto">
-            We couldn&apos;t find an active therapist matching all your selected criteria (service, location, budget, or date).
+            We couldn&apos;t find an active therapist matching all your selected criteria (service, location, budget, or date/time).
           </p>
         </div>
 
@@ -67,7 +67,7 @@ export function MatchResults({ results, criteria, onStartOver }: MatchResultsPro
             Found {results.length} Matched Therapist{results.length > 1 ? 's' : ''}
           </h2>
           <p className="text-xs sm:text-sm text-slate-600 mt-0.5">
-            Ranked based on service compatibility, location coverage, budget fit, and ratings.
+            Ranked based on service compatibility, location coverage, budget fit, and schedule availability.
           </p>
         </div>
 
@@ -94,6 +94,10 @@ export function MatchResults({ results, criteria, onStartOver }: MatchResultsPro
 
           if (criteria.preferredDate) {
             bookingParams.set('date', criteria.preferredDate);
+          }
+
+          if (criteria.preferredTime) {
+            bookingParams.set('time', criteria.preferredTime);
           }
 
           if (criteria.zipCode) {
@@ -159,10 +163,10 @@ export function MatchResults({ results, criteria, onStartOver }: MatchResultsPro
                     </div>
                   </div>
 
-                  {/* Honest Match Explanations */}
+                  {/* Match Explanations */}
                   <div className="pt-2">
                     <span className="text-xs font-semibold text-slate-700 block mb-1.5 uppercase tracking-wider">
-                      Why this practitioner matches you:
+                      Why this therapist matches you:
                     </span>
                     <ul className="space-y-1.5 text-xs text-slate-700">
                       {reasons.map((reason, idx) => (
