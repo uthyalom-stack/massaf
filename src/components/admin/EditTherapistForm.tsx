@@ -120,14 +120,27 @@ export function EditTherapistForm({
     offersStudio: therapist.offersStudio,
     offersInHome: therapist.offersInHome,
   });
+
+  // Local state for deferred profile image file & preview
+  const [selectedProfileFile, setSelectedProfileFile] = useState<File | null>(null);
+  const [profilePreview, setProfilePreview] = useState<string | null>(null);
+
   const [basicSaving, setBasicSaving] = useState(false);
+  const [basicSubmitStepText, setBasicSubmitStepText] = useState<string | null>(null);
   const [basicMsg, setBasicMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // State for Add Photo
-  const [newPhotoUrl, setNewPhotoUrl] = useState('');
+  // State for Gallery Upload (Supports Multiple Files)
+  const [galleryFiles, setGalleryFiles] = useState<File[]>([]);
+  const [galleryPreviews, setGalleryPreviews] = useState<string[]>([]);
   const [newPhotoAlt, setNewPhotoAlt] = useState('');
   const [photoSaving, setPhotoSaving] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [photoMsg, setPhotoMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // State for External Photo URL Form
+  const [externalPhotoUrl, setExternalPhotoUrl] = useState('');
+  const [externalPhotoAlt, setExternalPhotoAlt] = useState('');
+  const [externalPhotoSaving, setExternalPhotoSaving] = useState(false);
 
   // State for Editing Photo Order
   const [editingPhotoId, setEditingPhotoId] = useState<string | null>(null);
@@ -175,19 +188,80 @@ export function EditTherapistForm({
 
   // --- Handlers --- //
 
-  // Save Basic Info
+  // Profile Image Local Device File Selection (Deferred until Save)
+  const handleProfileImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setBasicMsg(null);
+
+    if (file.size > 10 * 1024 * 1024) {
+      setBasicMsg({ type: 'error', text: 'Selected image exceeds the maximum 10 MB size limit.' });
+      return;
+    }
+
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!validTypes.includes(file.type.toLowerCase())) {
+      setBasicMsg({ type: 'error', text: 'Invalid image format. Please select JPEG, PNG, or WebP.' });
+      return;
+    }
+
+    setSelectedProfileFile(file);
+    setProfilePreview(URL.createObjectURL(file));
+  };
+
+  const handleClearProfileImage = () => {
+    setSelectedProfileFile(null);
+    setProfilePreview(null);
+    setBasicForm((prev) => ({ ...prev, profileImage: '' }));
+  };
+
+  // Save Basic Info (Uploads profile image file if selected, then calls updateTherapistAction)
   const handleSaveBasic = async (e: React.FormEvent) => {
     e.preventDefault();
     setBasicSaving(true);
     setBasicMsg(null);
 
+    let finalProfileUrl = basicForm.profileImage.trim();
+
     try {
+      // 1. If a new profile image file was selected from device, upload it to R2 FIRST
+      if (selectedProfileFile) {
+        setBasicSubmitStepText('Uploading profile image to Cloudflare R2...');
+
+        const uploadData = new FormData();
+        uploadData.append('file', selectedProfileFile);
+        uploadData.append('folder', 'profile');
+        uploadData.append('therapistId', therapist.id);
+
+        const uploadRes = await fetch('/api/admin/media/upload', {
+          method: 'POST',
+          body: uploadData,
+        });
+
+        const uploadJson = await uploadRes.json();
+
+        if (!uploadRes.ok || !uploadJson.success || !uploadJson.url) {
+          setBasicMsg({
+            type: 'error',
+            text: uploadJson.error || 'Failed to upload profile image to Cloudflare R2.',
+          });
+          setBasicSaving(false);
+          setBasicSubmitStepText(null);
+          return;
+        }
+
+        finalProfileUrl = uploadJson.url;
+      }
+
+      // 2. Persist therapist updates to DB (updateTherapistAction handles deleting old R2 image if replacement succeeds, or cleaning up new R2 image if DB update fails)
+      setBasicSubmitStepText('Saving profile updates...');
       const res = await updateTherapistAction(therapist.id, {
         name: basicForm.name.trim(),
         email: basicForm.email.trim() || undefined,
         phone: basicForm.phone.trim() || undefined,
         telegramChatId: basicForm.telegramChatId.trim() || undefined,
-        profileImage: basicForm.profileImage.trim() || undefined,
+        profileImage: finalProfileUrl || undefined,
         bio: basicForm.bio.trim() || undefined,
         isActive: basicForm.isActive,
         isFeatured: basicForm.isFeatured,
@@ -196,13 +270,17 @@ export function EditTherapistForm({
       });
 
       if (!res.success) {
-        setBasicMsg({ type: 'error', text: res.error || 'Failed to update therapist' });
+        setBasicMsg({ type: 'error', text: res.error || 'Failed to update therapist details.' });
         return;
       }
 
       if (res.therapist) {
         setTherapist((prev) => ({ ...prev, ...res.therapist }));
+        setBasicForm((prev) => ({ ...prev, profileImage: res.therapist?.profileImage || '' }));
       }
+
+      setSelectedProfileFile(null);
+      setProfilePreview(null);
       setBasicMsg({ type: 'success', text: 'Basic details updated successfully!' });
       router.refresh();
     } catch (err) {
@@ -210,26 +288,171 @@ export function EditTherapistForm({
       setBasicMsg({ type: 'error', text: 'An unexpected error occurred.' });
     } finally {
       setBasicSaving(false);
+      setBasicSubmitStepText(null);
     }
   };
 
-  // Add Photo
-  const handleAddPhoto = async (e: React.FormEvent) => {
+  // Gallery File Selection (Supports multiple files)
+  const handleGalleryFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(e.target.files || []);
+    if (selectedFiles.length === 0) return;
+
+    setPhotoMsg(null);
+
+    const validFiles: File[] = [];
+    const previews: string[] = [];
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+
+    for (const file of selectedFiles) {
+      if (file.size > 10 * 1024 * 1024) {
+        setPhotoMsg({ type: 'error', text: `File "${file.name}" exceeds the maximum 10 MB limit.` });
+        return;
+      }
+      if (!validTypes.includes(file.type.toLowerCase())) {
+        setPhotoMsg({ type: 'error', text: `File "${file.name}" is invalid. Only JPEG, PNG, and WebP are supported.` });
+        return;
+      }
+      validFiles.push(file);
+      previews.push(URL.createObjectURL(file));
+    }
+
+    setGalleryFiles((prev) => [...prev, ...validFiles]);
+    setGalleryPreviews((prev) => [...prev, ...previews]);
+  };
+
+  // Remove individual file from pre-upload gallery selection
+  const handleRemoveSelectedGalleryFile = (index: number) => {
+    setGalleryFiles((prev) => prev.filter((_, i) => i !== index));
+    setGalleryPreviews((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Clear all pre-upload selected gallery files
+  const handleClearGallerySelection = () => {
+    setGalleryFiles([]);
+    setGalleryPreviews([]);
+    setUploadProgress(null);
+  };
+
+  // Add Gallery Photos (Upload to R2 & save records - Appends to existing gallery)
+  const handleAddPhotos = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPhotoUrl.trim()) return;
+    if (galleryFiles.length === 0) {
+      setPhotoMsg({ type: 'error', text: 'Please select one or more image files to upload.' });
+      return;
+    }
 
     setPhotoSaving(true);
     setPhotoMsg(null);
 
+    const newAddedPhotos: PhotoData[] = [];
+    let successCount = 0;
+    let failCount = 0;
+
+    try {
+      for (let i = 0; i < galleryFiles.length; i++) {
+        const file = galleryFiles[i];
+        setUploadProgress(`Uploading photo ${i + 1} of ${galleryFiles.length}...`);
+
+        // 1. Upload image to R2 endpoint
+        const uploadFormData = new FormData();
+        uploadFormData.append('file', file);
+        uploadFormData.append('folder', 'gallery');
+        uploadFormData.append('therapistId', therapist.id);
+
+        const uploadRes = await fetch('/api/admin/media/upload', {
+          method: 'POST',
+          body: uploadFormData,
+        });
+
+        const uploadData = await uploadRes.json();
+
+        if (!uploadRes.ok || !uploadData.success) {
+          console.error(`Failed to upload file ${file.name}:`, uploadData.error);
+          failCount++;
+          continue;
+        }
+
+        // 2. Add photo record to database
+        const res = await addTherapistPhotoAction(therapist.id, {
+          url: uploadData.url,
+          altText: newPhotoAlt.trim() || undefined,
+          sortOrder: therapist.photos.length + newAddedPhotos.length,
+        });
+
+        if (!res.success || !res.photo) {
+          console.error(`Failed to create database record for ${file.name}:`, res.error);
+          failCount++;
+          continue;
+        }
+
+        newAddedPhotos.push({
+          id: res.photo.id,
+          url: res.photo.url,
+          altText: res.photo.altText,
+          sortOrder: res.photo.sortOrder,
+        });
+        successCount++;
+      }
+
+      // Update state by appending newly added photos to existing gallery
+      if (newAddedPhotos.length > 0) {
+        setTherapist((prev) => ({
+          ...prev,
+          photos: [...prev.photos, ...newAddedPhotos].sort((a, b) => a.sortOrder - b.sortOrder),
+        }));
+      }
+
+      setGalleryFiles([]);
+      setGalleryPreviews([]);
+      setNewPhotoAlt('');
+      setUploadProgress(null);
+
+      if (failCount === 0) {
+        setPhotoMsg({
+          type: 'success',
+          text: successCount === 1
+            ? 'Photo uploaded to R2 and added to gallery!'
+            : `All ${successCount} photos uploaded to R2 and added to gallery!`,
+        });
+      } else if (successCount > 0) {
+        setPhotoMsg({
+          type: 'error',
+          text: `Uploaded ${successCount} photo(s) successfully, but ${failCount} file(s) failed.`,
+        });
+      } else {
+        setPhotoMsg({
+          type: 'error',
+          text: 'Failed to upload selected gallery photos. Please try again.',
+        });
+      }
+
+      router.refresh();
+    } catch (err) {
+      console.error('Error adding gallery photos:', err);
+      setPhotoMsg({ type: 'error', text: 'An unexpected error occurred during photo upload.' });
+    } finally {
+      setPhotoSaving(false);
+      setUploadProgress(null);
+    }
+  };
+
+  // Add External Photo URL (Option B)
+  const handleAddExternalPhoto = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!externalPhotoUrl.trim()) return;
+
+    setExternalPhotoSaving(true);
+    setPhotoMsg(null);
+
     try {
       const res = await addTherapistPhotoAction(therapist.id, {
-        url: newPhotoUrl.trim(),
-        altText: newPhotoAlt.trim() || undefined,
+        url: externalPhotoUrl.trim(),
+        altText: externalPhotoAlt.trim() || undefined,
         sortOrder: therapist.photos.length,
       });
 
       if (!res.success) {
-        setPhotoMsg({ type: 'error', text: res.error || 'Failed to add photo' });
+        setPhotoMsg({ type: 'error', text: res.error || 'Failed to add external photo' });
         return;
       }
 
@@ -246,15 +469,15 @@ export function EditTherapistForm({
         }));
       }
 
-      setNewPhotoUrl('');
-      setNewPhotoAlt('');
-      setPhotoMsg({ type: 'success', text: 'Photo added successfully!' });
+      setExternalPhotoUrl('');
+      setExternalPhotoAlt('');
+      setPhotoMsg({ type: 'success', text: 'External photo URL added to gallery!' });
       router.refresh();
     } catch (err) {
-      console.error('Error adding photo:', err);
+      console.error('Error adding external photo:', err);
       setPhotoMsg({ type: 'error', text: 'An unexpected error occurred.' });
     } finally {
-      setPhotoSaving(false);
+      setExternalPhotoSaving(false);
     }
   };
 
@@ -285,12 +508,12 @@ export function EditTherapistForm({
     }
   };
 
-  // Remove Photo (Trigger Modal)
+  // Remove Photo (Trigger Modal & remove from DB and R2)
   const triggerRemovePhoto = (photoId: string) => {
     setConfirmModal({
       isOpen: true,
       title: 'Remove Gallery Photo?',
-      message: 'Are you sure you want to remove this photo from the therapist gallery? This action cannot be undone.',
+      message: 'Are you sure you want to remove this photo from the therapist gallery? If stored on Cloudflare R2, the object will also be safely deleted.',
       confirmText: 'Remove Photo',
       isLoading: false,
       onConfirm: async () => {
@@ -301,6 +524,7 @@ export function EditTherapistForm({
             alert(res.error || 'Failed to delete photo');
             return;
           }
+
           setTherapist((prev) => ({
             ...prev,
             photos: prev.photos.filter((p) => p.id !== photoId),
@@ -780,7 +1004,7 @@ export function EditTherapistForm({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                   Phone Number
@@ -805,16 +1029,92 @@ export function EditTherapistForm({
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
                 />
               </div>
+            </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Profile Main Photo URL
+            {/* Profile Image Selection Component (Device Upload + Deferred Save OR External URL) */}
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-4">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Profile Image
+              </label>
+
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                {/* Image Preview */}
+                <div className="relative w-24 h-24 rounded-2xl border border-slate-200 overflow-hidden bg-slate-200 shrink-0 flex items-center justify-center">
+                  {profilePreview || basicForm.profileImage ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={profilePreview || basicForm.profileImage}
+                      alt="Profile preview"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-2xl text-slate-400">👤</span>
+                  )}
+                </div>
+
+                {/* Device Upload Controls (Deferred Save) */}
+                <div className="space-y-2 flex-1 w-full">
+                  <input
+                    type="file"
+                    id="edit-profile-image-upload"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleProfileImageChange}
+                    disabled={basicSaving}
+                    className="hidden"
+                  />
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label
+                      htmlFor="edit-profile-image-upload"
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
+                        basicSaving
+                          ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                          : 'bg-emerald-700 text-white hover:bg-emerald-800'
+                      }`}
+                    >
+                      <span>📷</span>
+                      <span>{selectedProfileFile ? 'Change Selected Image' : 'Choose Image From Device'}</span>
+                    </label>
+
+                    {(profilePreview || basicForm.profileImage || selectedProfileFile) && (
+                      <button
+                        type="button"
+                        onClick={handleClearProfileImage}
+                        disabled={basicSaving}
+                        className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-red-700 hover:bg-red-50 border border-slate-200 transition-colors cursor-pointer"
+                      >
+                        Remove Image
+                      </button>
+                    )}
+                  </div>
+
+                  <p className="text-[11px] text-slate-500">
+                    Select JPEG, PNG, or WebP image from phone or PC (max 10 MB). Upload occurs when clicking Save Profile Changes below.
+                  </p>
+
+                  {selectedProfileFile && (
+                    <p className="text-[10px] font-mono text-emerald-800 truncate max-w-md">
+                      Selected: {selectedProfileFile.name} ({(selectedProfileFile.size / (1024 * 1024)).toFixed(2)} MB)
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Option B: External Image URL */}
+              <div className="pt-2 border-t border-slate-200">
+                <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
+                  OR External Image URL
                 </label>
                 <input
                   type="url"
                   value={basicForm.profileImage}
-                  onChange={(e) => setBasicForm({ ...basicForm, profileImage: e.target.value })}
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                  onChange={(e) => {
+                    setSelectedProfileFile(null);
+                    setProfilePreview(null);
+                    setBasicForm({ ...basicForm, profileImage: e.target.value });
+                  }}
+                  placeholder="https://images.unsplash.com/..."
+                  className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
                 />
               </div>
             </div>
@@ -882,7 +1182,7 @@ export function EditTherapistForm({
                 disabled={basicSaving}
                 className="px-6 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
               >
-                {basicSaving ? 'Saving Changes...' : 'Save Profile Changes'}
+                {basicSaving ? basicSubmitStepText || 'Saving Changes...' : 'Save Profile Changes'}
               </button>
             </div>
           </form>
@@ -908,7 +1208,7 @@ export function EditTherapistForm({
       {activeTab === 'photos' && (
         <div className="space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs max-w-3xl space-y-4">
-            <h2 className="text-lg font-bold text-slate-900">Add Gallery Photo</h2>
+            <h2 className="text-lg font-bold text-slate-900">Upload Gallery Photos</h2>
 
             {photoMsg && (
               <div
@@ -922,44 +1222,152 @@ export function EditTherapistForm({
               </div>
             )}
 
-            <form onSubmit={handleAddPhoto} className="flex flex-col sm:flex-row gap-3 items-end">
-              <div className="flex-1 w-full">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Photo URL
+            {/* Option A: Upload Device Photos */}
+            <form onSubmit={handleAddPhotos} className="space-y-4">
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  Option A: Choose Device Photos (Multiple Allowed)
                 </label>
-                <input
-                  type="url"
-                  required
-                  value={newPhotoUrl}
-                  onChange={(e) => setNewPhotoUrl(e.target.value)}
-                  placeholder="https://images.unsplash.com/..."
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                />
+
+                {/* Gallery Previews Grid with individual removal */}
+                {galleryPreviews.length > 0 && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pb-2">
+                    {galleryPreviews.map((prevUrl, idx) => (
+                      <div key={idx} className="relative rounded-xl border border-slate-200 overflow-hidden bg-slate-200 group flex flex-col justify-between">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={prevUrl} alt={`Selected ${idx + 1}`} className="w-full h-24 object-cover" />
+                        <div className="p-1.5 bg-white text-[10px] font-mono text-slate-600 truncate border-t border-slate-100">
+                          {galleryFiles[idx]?.name}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveSelectedGalleryFile(idx)}
+                          className="absolute top-1 right-1 p-1 bg-red-600 text-white rounded-md text-[10px] font-bold opacity-90 hover:opacity-100"
+                          title="Remove file"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="space-y-2 flex-1 w-full">
+                  <input
+                    type="file"
+                    id="gallery-photos-upload"
+                    multiple
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleGalleryFileChange}
+                    disabled={photoSaving}
+                    className="hidden"
+                  />
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label
+                      htmlFor="gallery-photos-upload"
+                      className="px-4 py-2 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                    >
+                      <span>📷</span>
+                      <span>
+                        {galleryFiles.length > 0
+                          ? `Add More Files (${galleryFiles.length} Selected)`
+                          : 'Choose Gallery Photos'}
+                      </span>
+                    </label>
+
+                    {galleryFiles.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearGallerySelection}
+                        disabled={photoSaving}
+                        className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-red-700 border border-slate-200 transition-colors cursor-pointer"
+                      >
+                        Clear All Selected
+                      </button>
+                    )}
+                  </div>
+
+                  <p className="text-[11px] text-slate-500">
+                    Select JPEG, PNG, or WebP photos from phone or PC (max 10 MB per file). Uploading appends to existing gallery.
+                  </p>
+                </div>
               </div>
 
-              <div className="w-full sm:w-48">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Alt Caption
-                </label>
-                <input
-                  type="text"
-                  value={newPhotoAlt}
-                  onChange={(e) => setNewPhotoAlt(e.target.value)}
-                  placeholder="Studio setup"
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                />
-              </div>
+              <div className="flex flex-col sm:flex-row gap-3 items-end">
+                <div className="flex-1 w-full">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Alt Caption / Description (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={newPhotoAlt}
+                    onChange={(e) => setNewPhotoAlt(e.target.value)}
+                    placeholder="e.g. Studio massage room setup"
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                  />
+                </div>
 
-              <button
-                type="submit"
-                disabled={photoSaving}
-                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shrink-0"
-              >
-                {photoSaving ? 'Adding...' : 'Add Photo'}
-              </button>
+                <button
+                  type="submit"
+                  disabled={photoSaving || galleryFiles.length === 0}
+                  className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shrink-0 shadow-xs"
+                >
+                  {photoSaving
+                    ? uploadProgress || 'Uploading to R2...'
+                    : `Upload & Add ${galleryFiles.length > 1 ? `${galleryFiles.length} Photos` : 'Photo'}`}
+                </button>
+              </div>
+            </form>
+
+            <hr className="my-6 border-slate-200" />
+
+            {/* Option B: Add External Photo URL */}
+            <form onSubmit={handleAddExternalPhoto} className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+              <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Option B: Add External Photo URL
+              </h3>
+
+              <div className="flex flex-col sm:flex-row gap-3 items-end">
+                <div className="flex-1 w-full">
+                  <label className="block text-[11px] font-semibold text-slate-600 uppercase tracking-wider mb-1">
+                    Photo URL
+                  </label>
+                  <input
+                    type="url"
+                    required
+                    value={externalPhotoUrl}
+                    onChange={(e) => setExternalPhotoUrl(e.target.value)}
+                    placeholder="https://images.unsplash.com/..."
+                    className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
+                  />
+                </div>
+
+                <div className="w-full sm:w-48">
+                  <label className="block text-[11px] font-semibold text-slate-600 uppercase tracking-wider mb-1">
+                    Alt Caption
+                  </label>
+                  <input
+                    type="text"
+                    value={externalPhotoAlt}
+                    onChange={(e) => setExternalPhotoAlt(e.target.value)}
+                    placeholder="Studio setup"
+                    className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={externalPhotoSaving || !externalPhotoUrl.trim()}
+                  className="w-full sm:w-auto px-5 py-2 rounded-xl bg-slate-800 text-white font-bold text-xs hover:bg-slate-900 transition-colors disabled:opacity-50 cursor-pointer shrink-0"
+                >
+                  {externalPhotoSaving ? 'Adding...' : 'Add External URL'}
+                </button>
+              </div>
             </form>
           </div>
 
+          {/* Existing Gallery Display */}
           <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
             <h2 className="text-lg font-bold text-slate-900">
               Gallery Photos ({therapist.photos.length})
@@ -970,6 +1378,7 @@ export function EditTherapistForm({
                 {therapist.photos.map((photo) => (
                   <div key={photo.id} className="relative group rounded-xl border border-slate-200 overflow-hidden bg-slate-100 flex flex-col justify-between">
                     <div>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={photo.url}
                         alt={photo.altText || 'Therapist photo'}
