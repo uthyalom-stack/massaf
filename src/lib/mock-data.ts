@@ -2,6 +2,7 @@ import { MockTherapist, MockReview, MockTestimonial, NavItem } from '@/types/cus
 
 export const NAV_LINKS: NavItem[] = [
   { label: 'Find a Therapist', href: '/find-a-therapist' },
+  { label: 'Match Me', href: '/match-me' },
   { label: 'How It Works', href: '/#how-it-works' },
   { label: 'Reviews', href: '/#reviews' },
   { label: 'About', href: '/#about' },
