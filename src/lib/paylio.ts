@@ -381,6 +381,16 @@ export async function confirmVerifiedPayLioPayment(
     },
   });
 
+  // Trigger Phase 15 payment confirmation notification asynchronously with failure isolation
+  try {
+    const { notifyBookingConfirmed } = await import('@/lib/notifications');
+    notifyBookingConfirmed(updatedBooking.id).catch((err) => {
+      console.error('Async notifyBookingConfirmed error:', err);
+    });
+  } catch (notifErr) {
+    console.error('Failed to dispatch notifyBookingConfirmed:', notifErr);
+  }
+
   return {
     success: true,
     message: 'Payment verified and booking transitioned to PAID/CONFIRMED.',

@@ -19,6 +19,11 @@ import { updateReviewStatusSchema } from '@/lib/validations/admin-review';
 import { createMarketingLinkSchema, updateMarketingLinkSchema } from '@/lib/validations/admin-marketing';
 import { BookingStatus, ReviewStatus } from '@prisma/client';
 import { revalidatePath } from 'next/cache';
+import {
+  notifyBookingConfirmed,
+  notifyBookingCancelled,
+  notifyBookingCompleted,
+} from '@/lib/notifications';
 
 /**
  * Server-side authorization check ensuring MASSAF_ADMIN_API_KEY is configured on the server.
@@ -314,6 +319,19 @@ export async function updateBookingStatusAction(input: unknown) {
       data: { status: validated.status },
     });
 
+    // Dispatch lifecycle notifications with failure isolation
+    try {
+      if (validated.status === 'CONFIRMED' && booking.status !== 'CONFIRMED') {
+        notifyBookingConfirmed(updated.id).catch((err) => console.error('notifyBookingConfirmed error:', err));
+      } else if (validated.status === 'CANCELLED' && booking.status !== 'CANCELLED') {
+        notifyBookingCancelled(updated.id).catch((err) => console.error('notifyBookingCancelled error:', err));
+      } else if (validated.status === 'COMPLETED' && booking.status !== 'COMPLETED') {
+        notifyBookingCompleted(updated.id).catch((err) => console.error('notifyBookingCompleted error:', err));
+      }
+    } catch (notifErr) {
+      console.error('Failed to trigger admin status change notification:', notifErr);
+    }
+
     safeRevalidatePath('/admin');
     safeRevalidatePath('/admin/bookings');
     safeRevalidatePath(`/admin/bookings/${validated.bookingId}`);
@@ -460,6 +478,15 @@ export async function cancelBookingAction(input: unknown) {
         status: 'CANCELLED',
       },
     });
+
+    // Dispatch cancellation notification with failure isolation
+    try {
+      notifyBookingCancelled(updated.id, validated.reason || 'Cancelled by admin').catch((err) => {
+        console.error('notifyBookingCancelled error:', err);
+      });
+    } catch (notifErr) {
+      console.error('Failed to trigger admin cancellation notification:', notifErr);
+    }
 
     safeRevalidatePath('/admin');
     safeRevalidatePath('/admin/bookings');
