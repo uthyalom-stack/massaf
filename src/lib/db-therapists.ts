@@ -276,3 +276,32 @@ export async function getActiveTherapistById(id: string): Promise<CustomerTherap
   if (!therapist) return null;
   return formatDbTherapistToPublic(therapist);
 }
+
+export interface PublicServiceOption {
+  id: string;
+  name: string;
+  durationMinutes: number;
+  price: number;
+  description: string;
+}
+
+export async function getActiveServices(): Promise<PublicServiceOption[]> {
+  try {
+    const services = await db.service.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+    });
+
+    return services.map((s) => ({
+      id: s.id,
+      name: s.name,
+      durationMinutes: s.durationMinutes,
+      price: s.price,
+      description: s.description || '',
+    }));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[getActiveServices] Database query failed:', message);
+    return [];
+  }
+}

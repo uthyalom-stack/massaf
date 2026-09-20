@@ -45,8 +45,14 @@ export function Header({ navLinks }: HeaderProps) {
             ))}
           </nav>
 
-          {/* Header Action CTA */}
-          <div className="hidden md:flex items-center gap-4">
+          {/* Header Action CTAs */}
+          <div className="hidden md:flex items-center gap-3">
+            <Link
+              href="/match-me"
+              className="inline-flex items-center justify-center px-3.5 py-2 text-sm font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors border border-emerald-200"
+            >
+              Match Me
+            </Link>
             <Link
               href="/find-a-therapist"
               className="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow-xs focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
@@ -94,7 +100,14 @@ export function Header({ navLinks }: HeaderProps) {
             ))}
           </nav>
 
-          <div className="pt-2">
+          <div className="pt-2 space-y-2">
+            <Link
+              href="/match-me"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block w-full text-center px-4 py-2.5 text-sm font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors border border-emerald-200"
+            >
+              Match Me With A Therapist
+            </Link>
             <Link
               href="/find-a-therapist"
               onClick={() => setMobileMenuOpen(false)}
