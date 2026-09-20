@@ -57,10 +57,10 @@ function getS3Client(): S3Client {
 
 /**
  * Generates a clean, unique object key for media storage.
- * Example format: therapists/{therapistId}/{type}/{uuid}.{ext}
+ * Example format: therapists/{therapistId}/{folder}/{uuid}.{ext}
  */
 export function generateObjectKey(folder: string, therapistId: string, extension: string): string {
-  const sanitizedFolder = folder.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase() || 'general';
+  const sanitizedFolder = folder.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase() || 'profile';
   const sanitizedTherapistId = therapistId.replace(/[^a-zA-Z0-9_-]/g, '') || 'temp';
   const sanitizedExt = extension.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'webp';
   const uniqueId = crypto.randomUUID();
@@ -119,37 +119,89 @@ export async function uploadToR2({
 }
 
 /**
- * Safely deletes an object from Cloudflare R2 if the URL matches the configured R2 domain.
- * Safely ignores external URLs (e.g. Unsplash, external CDNs).
+ * Safely derives and validates the object key from a full public URL or relative object key.
+ * Strictly verifies protocol, host/origin, and key namespace structure.
+ */
+export function extractAndValidateR2Key(publicUrlOrKey: string): string | null {
+  if (!publicUrlOrKey || typeof publicUrlOrKey !== 'string') {
+    return null;
+  }
+
+  const trimmed = publicUrlOrKey.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const mockPublicBase = process.env.R2_PUBLIC_URL || 'https://r2-mock.massaf.com';
+
+  let extractedKey = trimmed;
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      const targetUrl = new URL(trimmed);
+      const configuredBaseUrl = new URL(mockPublicBase);
+
+      // Verify protocol and origin match MASSAF configured R2 public domain exactly
+      if (
+        targetUrl.protocol !== configuredBaseUrl.protocol ||
+        targetUrl.origin.toLowerCase() !== configuredBaseUrl.origin.toLowerCase()
+      ) {
+        // External URL (e.g. Unsplash, external CDN) -> return null to safely skip R2 deletion
+        return null;
+      }
+
+      // Check base pathname prefix if configured public URL has a path (e.g., https://domain.com/storage)
+      const baseBasePath = configuredBaseUrl.pathname.replace(/\/+$/, '');
+      let targetPath = targetUrl.pathname;
+
+      if (baseBasePath && baseBasePath !== '/') {
+        if (!targetPath.startsWith(baseBasePath)) {
+          return null;
+        }
+        targetPath = targetPath.substring(baseBasePath.length);
+      }
+
+      extractedKey = targetPath.replace(/^\/+/, '');
+    } catch {
+      // Invalid URL format
+      return null;
+    }
+  }
+
+  // Validate extracted key namespace structure: must start with 'therapists/', no path traversal ('..')
+  if (!extractedKey || extractedKey.includes('..')) {
+    return null;
+  }
+
+  // Key must strictly match valid MASSAF object key namespace
+  // e.g. therapists/{therapistId}/{folder}/{uuid}.{ext}
+  const validKeyPattern = /^therapists\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/;
+  if (!validKeyPattern.test(extractedKey)) {
+    return null;
+  }
+
+  return extractedKey;
+}
+
+/**
+ * Safely deletes an object from Cloudflare R2 if the URL matches the configured R2 domain and object key structure.
+ * Safely skips external URLs (e.g. Unsplash, external CDNs) without attempting deletion.
  */
 export async function deleteFromR2(publicUrlOrKey: string): Promise<DeleteResult> {
-  if (!publicUrlOrKey || typeof publicUrlOrKey !== 'string') {
-    return { success: false, skipped: true };
-  }
-
-  const publicBaseUrl = (process.env.R2_PUBLIC_URL || 'https://r2-mock.massaf.com').replace(/\/+$/, '');
-
-  let key = publicUrlOrKey;
-
-  // Check if it's a full URL
-  if (publicUrlOrKey.startsWith('http://') || publicUrlOrKey.startsWith('https://')) {
-    if (!publicUrlOrKey.startsWith(publicBaseUrl)) {
-      // External URL (e.g., Unsplash), skip deletion
-      return { success: true, skipped: true };
-    }
-    // Extract key from public URL
-    key = publicUrlOrKey.substring(publicBaseUrl.length).replace(/^\/+/, '');
-  }
+  const key = extractAndValidateR2Key(publicUrlOrKey);
 
   if (!key) {
-    return { success: false, skipped: true };
+    // URL/key is external, invalid, or doesn't belong to MASSAF R2 storage
+    return { success: true, skipped: true };
   }
 
   const configured = isR2Configured();
 
   if (!configured) {
     if (process.env.NODE_ENV === 'production') {
-      throw new Error('Cloudflare R2 environment variables are missing in production.');
+      throw new Error(
+        'Cloudflare R2 environment variables (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_PUBLIC_URL) are missing in production.'
+      );
     }
 
     // Dev/Test Mock Mode deletion

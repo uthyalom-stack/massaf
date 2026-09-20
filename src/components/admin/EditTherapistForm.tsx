@@ -125,11 +125,12 @@ export function EditTherapistForm({
   const [profilePreview, setProfilePreview] = useState<string | null>(null);
   const [basicMsg, setBasicMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // State for Add Photo / Gallery Upload
-  const [galleryFile, setGalleryFile] = useState<File | null>(null);
-  const [galleryPreview, setGalleryPreview] = useState<string | null>(null);
+  // State for Gallery Upload (Supports Multiple Files)
+  const [galleryFiles, setGalleryFiles] = useState<File[]>([]);
+  const [galleryPreviews, setGalleryPreviews] = useState<string[]>([]);
   const [newPhotoAlt, setNewPhotoAlt] = useState('');
   const [photoSaving, setPhotoSaving] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [photoMsg, setPhotoMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // State for Editing Photo Order
@@ -205,9 +206,6 @@ export function EditTherapistForm({
       formData.append('file', file);
       formData.append('folder', 'profile');
       formData.append('therapistId', therapist.id);
-      if (basicForm.profileImage) {
-        formData.append('oldUrl', basicForm.profileImage);
-      }
 
       const res = await fetch('/api/admin/media/upload', {
         method: 'POST',
@@ -222,7 +220,7 @@ export function EditTherapistForm({
       }
 
       setBasicForm((prev) => ({ ...prev, profileImage: data.url }));
-      setBasicMsg({ type: 'success', text: 'Profile image uploaded successfully to R2!' });
+      setBasicMsg({ type: 'success', text: 'Profile image uploaded to R2. Save profile changes to confirm.' });
     } catch (err) {
       console.error('Error uploading profile image:', err);
       setBasicMsg({ type: 'error', text: 'Network error during image upload.' });
@@ -279,93 +277,141 @@ export function EditTherapistForm({
     }
   };
 
-  // Gallery File Selection
+  // Gallery File Selection (Supports multiple files)
   const handleGalleryFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const selectedFiles = Array.from(e.target.files || []);
+    if (selectedFiles.length === 0) return;
 
     setPhotoMsg(null);
 
-    if (file.size > 10 * 1024 * 1024) {
-      setPhotoMsg({ type: 'error', text: 'Selected file exceeds maximum 10 MB limit.' });
-      return;
-    }
-
+    const validFiles: File[] = [];
+    const previews: string[] = [];
     const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!validTypes.includes(file.type.toLowerCase())) {
-      setPhotoMsg({ type: 'error', text: 'Invalid file format. Only JPEG, PNG, and WebP are allowed.' });
-      return;
+
+    for (const file of selectedFiles) {
+      if (file.size > 10 * 1024 * 1024) {
+        setPhotoMsg({ type: 'error', text: `File "${file.name}" exceeds the maximum 10 MB limit.` });
+        return;
+      }
+      if (!validTypes.includes(file.type.toLowerCase())) {
+        setPhotoMsg({ type: 'error', text: `File "${file.name}" is invalid. Only JPEG, PNG, and WebP are supported.` });
+        return;
+      }
+      validFiles.push(file);
+      previews.push(URL.createObjectURL(file));
     }
 
-    setGalleryFile(file);
-    setGalleryPreview(URL.createObjectURL(file));
+    setGalleryFiles(validFiles);
+    setGalleryPreviews(previews);
   };
 
-  // Add Gallery Photo (Upload to R2 & save record)
-  const handleAddPhoto = async (e: React.FormEvent) => {
+  // Clear Gallery Selection
+  const handleClearGallerySelection = () => {
+    setGalleryFiles([]);
+    setGalleryPreviews([]);
+    setUploadProgress(null);
+  };
+
+  // Add Gallery Photos (Upload to R2 & save records - Appends to existing gallery)
+  const handleAddPhotos = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!galleryFile) {
-      setPhotoMsg({ type: 'error', text: 'Please select an image file to upload.' });
+    if (galleryFiles.length === 0) {
+      setPhotoMsg({ type: 'error', text: 'Please select one or more image files to upload.' });
       return;
     }
 
     setPhotoSaving(true);
     setPhotoMsg(null);
 
+    const newAddedPhotos: PhotoData[] = [];
+    let successCount = 0;
+    let failCount = 0;
+
     try {
-      // 1. Upload image to R2 endpoint
-      const uploadFormData = new FormData();
-      uploadFormData.append('file', galleryFile);
-      uploadFormData.append('folder', 'gallery');
-      uploadFormData.append('therapistId', therapist.id);
+      for (let i = 0; i < galleryFiles.length; i++) {
+        const file = galleryFiles[i];
+        setUploadProgress(`Uploading photo ${i + 1} of ${galleryFiles.length}...`);
 
-      const uploadRes = await fetch('/api/admin/media/upload', {
-        method: 'POST',
-        body: uploadFormData,
-      });
+        // 1. Upload image to R2 endpoint
+        const uploadFormData = new FormData();
+        uploadFormData.append('file', file);
+        uploadFormData.append('folder', 'gallery');
+        uploadFormData.append('therapistId', therapist.id);
 
-      const uploadData = await uploadRes.json();
+        const uploadRes = await fetch('/api/admin/media/upload', {
+          method: 'POST',
+          body: uploadFormData,
+        });
 
-      if (!uploadRes.ok || !uploadData.success) {
-        setPhotoMsg({ type: 'error', text: uploadData.error || 'Failed to upload photo to Cloudflare R2.' });
-        return;
-      }
+        const uploadData = await uploadRes.json();
 
-      // 2. Add photo record to database
-      const res = await addTherapistPhotoAction(therapist.id, {
-        url: uploadData.url,
-        altText: newPhotoAlt.trim() || undefined,
-        sortOrder: therapist.photos.length,
-      });
+        if (!uploadRes.ok || !uploadData.success) {
+          console.error(`Failed to upload file ${file.name}:`, uploadData.error);
+          failCount++;
+          continue;
+        }
 
-      if (!res.success) {
-        setPhotoMsg({ type: 'error', text: res.error || 'Failed to save photo record.' });
-        return;
-      }
+        // 2. Add photo record to database
+        const res = await addTherapistPhotoAction(therapist.id, {
+          url: uploadData.url,
+          altText: newPhotoAlt.trim() || undefined,
+          sortOrder: therapist.photos.length + newAddedPhotos.length,
+        });
 
-      if (res.photo) {
-        const addedPhoto: PhotoData = {
+        if (!res.success || !res.photo) {
+          console.error(`Failed to create database record for ${file.name}:`, res.error);
+          failCount++;
+          continue;
+        }
+
+        newAddedPhotos.push({
           id: res.photo.id,
           url: res.photo.url,
           altText: res.photo.altText,
           sortOrder: res.photo.sortOrder,
-        };
+        });
+        successCount++;
+      }
+
+      // Update state by appending newly added photos to existing gallery
+      if (newAddedPhotos.length > 0) {
         setTherapist((prev) => ({
           ...prev,
-          photos: [...prev.photos, addedPhoto].sort((a, b) => a.sortOrder - b.sortOrder),
+          photos: [...prev.photos, ...newAddedPhotos].sort((a, b) => a.sortOrder - b.sortOrder),
         }));
       }
 
-      setGalleryFile(null);
-      setGalleryPreview(null);
+      setGalleryFiles([]);
+      setGalleryPreviews([]);
       setNewPhotoAlt('');
-      setPhotoMsg({ type: 'success', text: 'Photo uploaded to R2 and added to gallery!' });
+      setUploadProgress(null);
+
+      if (failCount === 0) {
+        setPhotoMsg({
+          type: 'success',
+          text: successCount === 1
+            ? 'Photo uploaded to R2 and added to gallery!'
+            : `All ${successCount} photos uploaded to R2 and added to gallery!`,
+        });
+      } else if (successCount > 0) {
+        setPhotoMsg({
+          type: 'error',
+          text: `Uploaded ${successCount} photo(s) successfully, but ${failCount} file(s) failed.`,
+        });
+      } else {
+        setPhotoMsg({
+          type: 'error',
+          text: 'Failed to upload selected gallery photos. Please try again.',
+        });
+      }
+
       router.refresh();
     } catch (err) {
-      console.error('Error adding gallery photo:', err);
+      console.error('Error adding gallery photos:', err);
       setPhotoMsg({ type: 'error', text: 'An unexpected error occurred during photo upload.' });
     } finally {
       setPhotoSaving(false);
+      setUploadProgress(null);
     }
   };
 
@@ -1083,7 +1129,7 @@ export function EditTherapistForm({
       {activeTab === 'photos' && (
         <div className="space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs max-w-3xl space-y-4">
-            <h2 className="text-lg font-bold text-slate-900">Upload Gallery Photo</h2>
+            <h2 className="text-lg font-bold text-slate-900">Upload Gallery Photos</h2>
 
             {photoMsg && (
               <div
@@ -1097,26 +1143,25 @@ export function EditTherapistForm({
               </div>
             )}
 
-            <form onSubmit={handleAddPhoto} className="space-y-4">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
-                {/* Gallery Image Preview */}
-                <div className="w-28 h-20 rounded-xl border border-slate-200 overflow-hidden bg-slate-200 shrink-0 flex items-center justify-center">
-                  {galleryPreview ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
-                      src={galleryPreview}
-                      alt="Gallery preview"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <span className="text-xs text-slate-400 font-semibold">Preview</span>
-                  )}
-                </div>
+            <form onSubmit={handleAddPhotos} className="space-y-4">
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                {/* Gallery Previews Grid */}
+                {galleryPreviews.length > 0 ? (
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 pb-2">
+                    {galleryPreviews.map((prevUrl, idx) => (
+                      <div key={idx} className="relative w-full h-20 rounded-lg overflow-hidden border border-slate-200 bg-slate-200">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={prevUrl} alt={`Selected ${idx + 1}`} className="w-full h-full object-cover" />
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
 
                 <div className="space-y-2 flex-1 w-full">
                   <input
                     type="file"
-                    id="gallery-photo-upload"
+                    id="gallery-photos-upload"
+                    multiple
                     accept="image/jpeg,image/png,image/webp"
                     onChange={handleGalleryFileChange}
                     disabled={photoSaving}
@@ -1125,29 +1170,31 @@ export function EditTherapistForm({
 
                   <div className="flex flex-wrap items-center gap-2">
                     <label
-                      htmlFor="gallery-photo-upload"
+                      htmlFor="gallery-photos-upload"
                       className="px-4 py-2 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors cursor-pointer inline-flex items-center gap-1.5"
                     >
                       <span>📷</span>
-                      <span>{galleryFile ? 'Change Photo' : 'Choose Gallery Photo'}</span>
+                      <span>
+                        {galleryFiles.length > 0
+                          ? `Selected ${galleryFiles.length} File(s) - Click to Change`
+                          : 'Choose Gallery Photos (Multiple Allowed)'}
+                      </span>
                     </label>
 
-                    {galleryFile && (
+                    {galleryFiles.length > 0 && (
                       <button
                         type="button"
-                        onClick={() => {
-                          setGalleryFile(null);
-                          setGalleryPreview(null);
-                        }}
+                        onClick={handleClearGallerySelection}
+                        disabled={photoSaving}
                         className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-red-700 border border-slate-200 transition-colors cursor-pointer"
                       >
-                        Remove
+                        Clear Selection
                       </button>
                     )}
                   </div>
 
                   <p className="text-[11px] text-slate-500">
-                    Select JPEG, PNG, or WebP photo to store directly in Cloudflare R2 bucket.
+                    Select one or multiple JPEG, PNG, or WebP photos from your device (max 10 MB per file). Uploading appends to existing gallery.
                   </p>
                 </div>
               </div>
@@ -1155,7 +1202,7 @@ export function EditTherapistForm({
               <div className="flex flex-col sm:flex-row gap-3 items-end">
                 <div className="flex-1 w-full">
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Alt Caption / Description
+                    Alt Caption / Description (Optional)
                   </label>
                   <input
                     type="text"
@@ -1168,10 +1215,12 @@ export function EditTherapistForm({
 
                 <button
                   type="submit"
-                  disabled={photoSaving || !galleryFile}
+                  disabled={photoSaving || galleryFiles.length === 0}
                   className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shrink-0 shadow-xs"
                 >
-                  {photoSaving ? 'Uploading to R2...' : 'Upload & Save Photo'}
+                  {photoSaving
+                    ? uploadProgress || 'Uploading to R2...'
+                    : `Upload & Add ${galleryFiles.length > 1 ? `${galleryFiles.length} Photos` : 'Photo'}`}
                 </button>
               </div>
             </form>

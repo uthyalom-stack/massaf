@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { verifyAdminApiKey } from '@/lib/admin-guard';
-import { uploadToR2, deleteFromR2, generateObjectKey } from '@/lib/r2';
+import { uploadToR2, generateObjectKey } from '@/lib/r2';
+import { db } from '@/lib/db';
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -10,6 +11,8 @@ const ALLOWED_MIME_TYPES: Record<string, string> = {
   'image/png': 'png',
   'image/webp': 'webp',
 };
+
+const ALLOWED_FOLDERS = new Set(['profile', 'gallery']);
 
 /**
  * Inspects buffer magic bytes to ensure file content actually matches an allowed image format.
@@ -63,9 +66,8 @@ export async function POST(request: Request) {
   try {
     const formData = await request.formData();
     const file = formData.get('file');
-    const folder = (formData.get('folder') as string) || 'profile';
-    const therapistId = (formData.get('therapistId') as string) || 'temp';
-    const oldUrl = formData.get('oldUrl') as string | null;
+    const folderInput = (formData.get('folder') as string) || 'profile';
+    const therapistIdInput = (formData.get('therapistId') as string) || 'temp';
 
     if (!file || !(file instanceof File)) {
       return NextResponse.json(
@@ -74,7 +76,44 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2. Validate file size
+    // 2. Validate and restrict folder namespace strictly to 'profile' or 'gallery'
+    const folder = folderInput.trim().toLowerCase();
+    if (!ALLOWED_FOLDERS.has(folder)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid target folder. Only "profile" and "gallery" folders are supported.',
+        },
+        { status: 400 }
+      );
+    }
+
+    // 3. Validate therapist reference ID format and DB existence if not 'temp'
+    const therapistId = therapistIdInput.trim();
+    const idPattern = /^[a-zA-Z0-9_-]+$/;
+
+    if (!therapistId || !idPattern.test(therapistId) || therapistId.includes('..')) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid therapist reference identifier.' },
+        { status: 400 }
+      );
+    }
+
+    if (therapistId !== 'temp') {
+      const therapistExists = await db.therapist.findUnique({
+        where: { id: therapistId },
+        select: { id: true },
+      });
+
+      if (!therapistExists) {
+        return NextResponse.json(
+          { success: false, error: 'Referenced therapist profile was not found.' },
+          { status: 404 }
+        );
+      }
+    }
+
+    // 4. Validate file size (10 MB limit)
     if (file.size > MAX_FILE_SIZE_BYTES) {
       return NextResponse.json(
         {
@@ -85,7 +124,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Validate client MIME type
+    // 5. Validate client MIME type
     const clientType = file.type.toLowerCase();
     if (!ALLOWED_MIME_TYPES[clientType]) {
       return NextResponse.json(
@@ -101,7 +140,7 @@ export async function POST(request: Request) {
     const arrayBuffer = await file.arrayBuffer();
     const fileBuffer = Buffer.from(arrayBuffer);
 
-    // 4. Server-side magic bytes validation
+    // 6. Server-side magic bytes validation
     const magicCheck = validateImageMagicBytes(fileBuffer);
     if (!magicCheck.valid) {
       return NextResponse.json(
@@ -113,30 +152,21 @@ export async function POST(request: Request) {
       );
     }
 
-    // Use detected or matched file extension
+    // Use detected format
     const contentType = magicCheck.format || clientType;
     const extension = ALLOWED_MIME_TYPES[contentType] || ALLOWED_MIME_TYPES[clientType] || 'webp';
 
-    // 5. Generate safe unique key
+    // 7. Generate safe unique object key (server-authoritative)
     const key = generateObjectKey(folder, therapistId, extension);
 
-    // 6. Upload file to R2
+    // 8. Upload file to Cloudflare R2
     const uploadResult = await uploadToR2({
       fileBuffer,
       contentType,
       key,
     });
 
-    // 7. If replacing an existing image, safely delete old image if it belongs to R2 bucket
-    if (oldUrl) {
-      try {
-        await deleteFromR2(oldUrl);
-      } catch (delErr) {
-        console.error('Non-critical error deleting old image from R2:', delErr);
-      }
-    }
-
-    // 8. Return safe JSON response
+    // 9. Return safe JSON response
     return NextResponse.json({
       success: true,
       url: uploadResult.url,
@@ -147,7 +177,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         success: false,
-        error: err instanceof Error ? err.message : 'An unexpected server error occurred during image upload.',
+        error: 'An unexpected server error occurred during image upload. Please try again.',
       },
       { status: 500 }
     );
