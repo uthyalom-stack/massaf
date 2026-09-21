@@ -76,8 +76,24 @@ export default async function ProtectedAdminLayout({
               </nav>
             </div>
 
-            {/* Quick Actions / Link back to site */}
+            {/* Quick Actions / Session status / Link back to site */}
             <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-400 hidden sm:inline-block">
+                Signed in as <strong className="text-slate-200">{session.email}</strong> ({session.role})
+              </span>
+              <form action={async () => {
+                'use server';
+                const { clearAdminSessionCookie } = await import('@/lib/auth-session');
+                await clearAdminSessionCookie();
+                redirect('/admin/login');
+              }}>
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 hover:text-red-400 hover:bg-slate-800 transition-colors border border-slate-700"
+                >
+                  Sign Out
+                </button>
+              </form>
               <Link
                 href="/"
                 target="_blank"

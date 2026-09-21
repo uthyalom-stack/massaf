@@ -10,6 +10,7 @@ import { generateVerificationToken, consumeVerificationToken } from '@/lib/verif
 import { POST as postReviewRoute } from '@/app/api/reviews/route';
 import { GET as getBookingDetailsRoute } from '@/app/api/bookings/details/route';
 import { POST as postAvailabilityRoute } from '@/app/api/admin/therapists/[id]/availability/route';
+import { POST as postAdminVerifyRoute } from '@/app/api/auth/admin/verify/route';
 
 async function runPhase20SecurityTests() {
   console.log('====================================================');
@@ -323,6 +324,56 @@ async function runPhase20SecurityTests() {
 
     const consume2 = await consumeVerificationToken(rawToken, 'THERAPIST_LOGIN');
     assert(consume2 === null, '12b. Second token consumption fails (single-use guarantee)');
+
+    // 13. Admin Login API Verification Tests
+    // 13a. Nonexistent admin email rejected with 401
+    const badAdminLoginReq = new Request('http://localhost:3000/api/auth/admin/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: `nonexistent-${timestamp}@massaf.com` }),
+    });
+    const badAdminLoginRes = await postAdminVerifyRoute(badAdminLoginReq);
+    assert(badAdminLoginRes.status === 401, '13a. Nonexistent admin email rejected with 401');
+
+    // 13b. Customer email (non-User) rejected with 401
+    const custAsAdminLoginReq = new Request('http://localhost:3000/api/auth/admin/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: testCustAEmail }),
+    });
+    const custAsAdminLoginRes = await postAdminVerifyRoute(custAsAdminLoginReq);
+    assert(custAsAdminLoginRes.status === 401, '13b. Non-admin customer account rejected for admin login with 401');
+
+    // 13c. Valid admin email accepted with 200 and sets massaf_admin_session cookie
+    const validAdminLoginReq = new Request('http://localhost:3000/api/auth/admin/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: testAdminEmail }),
+    });
+    const validAdminLoginRes = await postAdminVerifyRoute(validAdminLoginReq);
+    assert(validAdminLoginRes.status === 200, '13c. Valid admin user authenticated with 200');
+    const adminSessionData = await validAdminLoginRes.json();
+    assert(adminSessionData.redirectUrl === '/admin', '13d. Admin authentication returned redirectUrl /admin');
+
+    // 13e. Valid staff user authenticated with 200
+    const validStaffLoginReq = new Request('http://localhost:3000/api/auth/admin/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: testStaffEmail }),
+    });
+    const validStaffLoginRes = await postAdminVerifyRoute(validStaffLoginReq);
+    assert(validStaffLoginRes.status === 200, '13e. Valid STAFF user authenticated with 200');
+
+    // 13f. Admin Logout endpoint clears admin session cookie
+    const logoutReq = new Request('http://localhost:3000/api/auth/admin/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'logout' }),
+    });
+    const logoutRes = await postAdminVerifyRoute(logoutReq);
+    assert(logoutRes.status === 200, '13f. Admin logout request succeeded with 200');
+    const logoutData = await logoutRes.json();
+    assert(logoutData.message === 'Logged out successfully', '13g. Admin logout returned successful message');
 
     // Clean up test records from DB
     await db.review.deleteMany({ where: { bookingId: bookingA.id } });
