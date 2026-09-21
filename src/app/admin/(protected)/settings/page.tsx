@@ -1,6 +1,8 @@
 import React from 'react';
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
+import { getVerifiedAdminSession } from '@/lib/auth-session';
 
 export const metadata = {
   title: 'Settings | MASSAF Admin',
@@ -16,6 +18,11 @@ function maskWalletAddress(address: string | undefined): string {
 }
 
 export default async function AdminSettingsPage() {
+  const session = await getVerifiedAdminSession();
+  if (session?.role === 'STAFF') {
+    redirect('/admin/marketer');
+  }
+
   // 1. Environment & App URL
   const environment = process.env.NODE_ENV || 'production';
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || null;

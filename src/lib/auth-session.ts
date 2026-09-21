@@ -229,13 +229,13 @@ export async function getVerifiedAdminSession(reqCookieHeader?: string): Promise
       return { ...payload, email: configuredEmail, role: 'SUPER_ADMIN' };
     }
 
-    // Database revalidation: Confirm Admin User entity exists and has an administrative role
+    // Database revalidation: Confirm Admin User entity exists, is active, and has an administrative role
     const adminUser = await db.user.findUnique({
       where: { id: payload.entityId },
-      select: { id: true, email: true, role: true },
+      select: { id: true, email: true, role: true, isActive: true },
     });
 
-    if (!adminUser) return null;
+    if (!adminUser || !adminUser.isActive) return null;
 
     // Strict Authoritative Role Verification (SUPER_ADMIN, ADMIN, STAFF)
     const allowedRoles = ['SUPER_ADMIN', 'ADMIN', 'STAFF'];

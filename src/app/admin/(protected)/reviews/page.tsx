@@ -1,5 +1,7 @@
 import React from 'react';
+import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
+import { getVerifiedAdminSession } from '@/lib/auth-session';
 import { ReviewList, SerializedReview, TherapistOption } from '@/components/admin/ReviewList';
 import { ReviewStatus } from '@prisma/client';
 
@@ -19,12 +21,16 @@ interface PageProps {
 }
 
 export default async function AdminReviewsPage({ searchParams }: PageProps) {
+  const session = await getVerifiedAdminSession();
+  if (session?.role === 'STAFF') {
+    redirect('/admin/marketer');
+  }
+
   const params = await searchParams;
   const search = params.search || '';
   const statusParam = params.status || 'ALL';
   const therapistIdParam = params.therapistId || 'ALL';
 
-  // Build Prisma query filter
   const whereClause: {
     status?: ReviewStatus;
     therapistId?: string;

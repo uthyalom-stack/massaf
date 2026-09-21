@@ -1,5 +1,7 @@
 import React from 'react';
+import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
+import { getVerifiedAdminSession } from '@/lib/auth-session';
 import BookingList, { AdminBookingListItem } from '@/components/admin/BookingList';
 import { BookingStatus, Prisma } from '@prisma/client';
 
@@ -19,6 +21,11 @@ interface BookingsPageProps {
 }
 
 export default async function AdminBookingsPage({ searchParams }: BookingsPageProps) {
+  const session = await getVerifiedAdminSession();
+  if (session?.role === 'STAFF') {
+    redirect('/admin/marketer');
+  }
+
   const resolvedParams = await searchParams;
   const search = resolvedParams?.search || '';
   const statusFilter = resolvedParams?.status || 'ALL';
