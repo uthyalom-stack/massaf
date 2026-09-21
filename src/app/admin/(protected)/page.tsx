@@ -1,6 +1,8 @@
 import React from 'react';
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
+import { getVerifiedAdminSession } from '@/lib/auth-session';
 
 export const metadata = {
   title: 'Dashboard | MASSAF Admin',
@@ -10,6 +12,11 @@ export const metadata = {
 export const dynamic = 'force-dynamic';
 
 export default async function AdminDashboardPage() {
+  const session = await getVerifiedAdminSession();
+  if (session?.role === 'STAFF') {
+    redirect('/admin/marketer');
+  }
+
   let totalTherapists = 0;
   let activeTherapists = 0;
   let inactiveTherapists = 0;

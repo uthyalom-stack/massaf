@@ -19,7 +19,7 @@ import { POST as postAdminVerifyRoute } from '@/app/api/auth/admin/verify/route'
 
 async function runMarketerTestSuite() {
   console.log('====================================================');
-  console.log('  STARTING STAGE 2 + 3 MARKETER & REFERRAL SUITE    ');
+  console.log('  STARTING STAGE 2 + 3 + 4 MARKETER & LEADERBOARD SUITE');
   console.log('====================================================');
 
   let passed = 0;
@@ -192,23 +192,32 @@ async function runMarketerTestSuite() {
     });
     assert(!staffTherapistRes.success && String(staffTherapistRes.error).includes('Unauthorized'), '12. STAFF cannot perform privileged normal-admin actions');
 
-    // 13. STAFF can access their own marketing resources & create their marketing link
+    // 13. STAFF A creates their own marketing link
     const linkCodeA = `code-a-${timestamp}`;
     const staffCreateLinkRes = await createMarketingLinkAction({
       name: 'Marketer A Link',
       code: linkCodeA,
     });
-    assert(staffCreateLinkRes.success && staffCreateLinkRes.marketingLink?.userId === staffUserA.id, '13. STAFF can create their own marketing link');
+    assert(staffCreateLinkRes.success && staffCreateLinkRes.marketingLink?.userId === staffUserA.id, '13. STAFF A can create their own marketing link');
 
     const createdLinkA = staffCreateLinkRes.marketingLink!;
 
-    // 14. STAFF cannot modify another marketer's link
+    // 13b. STAFF B creates their own marketing link
     globalThis.__TEST_ADMIN_SESSION_TOKEN__ = staffTokenB;
+    const linkCodeB = `code-b-${timestamp}`;
+    const staffBCreateLinkRes = await createMarketingLinkAction({
+      name: 'Marketer B Link',
+      code: linkCodeB,
+    });
+    assert(staffBCreateLinkRes.success && staffBCreateLinkRes.marketingLink?.userId === staffUserB.id, '13b. STAFF B can create their own marketing link');
+    const createdLinkB = staffBCreateLinkRes.marketingLink!;
+
+    // 14. STAFF B cannot modify Marketer A's link
     const updateOtherLinkRes = await updateMarketingLinkAction({
       id: createdLinkA.id,
       name: 'Tampered Name',
     });
-    assert(!updateOtherLinkRes.success && String(updateOtherLinkRes.error).includes('Unauthorized'), '14. STAFF cannot modify another marketer\'s link');
+    assert(!updateOtherLinkRes.success && String(updateOtherLinkRes.error).includes('Unauthorized'), '14. STAFF B cannot modify Marketer A\'s link');
 
     // 15. Valid ?ref=code increments clicks
     const trackRes = await trackMarketingClickAction(linkCodeA);
@@ -235,7 +244,7 @@ async function runMarketerTestSuite() {
     const attributedLink = await db.marketingLink.findUnique({ where: { code: linkCodeA } });
     assert(attributedLink !== null && attributedLink.id === createdLinkA.id && attributedLink.isActive === true, '18. Valid referral code maps to active MarketingLink ID');
 
-    // 19. Booking stores correct marketingLinkId
+    // 19. Seed bookings for Marketer A and Marketer B
     const customer = await db.customer.create({
       data: {
         name: 'Test Customer',
@@ -260,9 +269,10 @@ async function runMarketerTestSuite() {
       },
     });
 
-    const attributedBooking = await db.booking.create({
+    // Marketer A: 1 PAID booking ($150)
+    const bookingA1 = await db.booking.create({
       data: {
-        bookingNumber: `MKT-BK-${timestamp}`,
+        bookingNumber: `MKT-BK-A1-${timestamp}`,
         customerId: customer.id,
         therapistId: therapist.id,
         serviceId: service.id,
@@ -274,7 +284,37 @@ async function runMarketerTestSuite() {
         paymentStatus: 'PAID',
       },
     });
-    assert(attributedBooking.marketingLinkId === createdLinkA.id, '19. Booking stores correct marketingLinkId');
+
+    // Marketer B: 1 PAID booking ($250) + 1 UNPAID booking ($100)
+    const bookingB1 = await db.booking.create({
+      data: {
+        bookingNumber: `MKT-BK-B1-${timestamp}`,
+        customerId: customer.id,
+        therapistId: therapist.id,
+        serviceId: service.id,
+        marketingLinkId: createdLinkB.id,
+        appointmentDateTime: new Date(),
+        durationMinutes: 60,
+        amount: 250.0,
+        status: 'COMPLETED',
+        paymentStatus: 'PAID',
+      },
+    });
+
+    const bookingB2 = await db.booking.create({
+      data: {
+        bookingNumber: `MKT-BK-B2-${timestamp}`,
+        customerId: customer.id,
+        therapistId: therapist.id,
+        serviceId: service.id,
+        marketingLinkId: createdLinkB.id,
+        appointmentDateTime: new Date(),
+        durationMinutes: 60,
+        amount: 100.0,
+        status: 'PENDING',
+        paymentStatus: 'UNPAID',
+      },
+    });
 
     // 20. Booking without referral keeps marketingLinkId = null
     const nonAttributedBooking = await db.booking.create({
@@ -293,7 +333,47 @@ async function runMarketerTestSuite() {
     });
     assert(nonAttributedBooking.marketingLinkId === null, '20. Booking without referral keeps marketingLinkId = null');
 
-    // 21. Deleting marketer deactivates their link
+    // 21. PHASE 4 TEST: Data Isolation - Marketer A stats contain ONLY Marketer A's metrics
+    globalThis.__TEST_ADMIN_SESSION_TOKEN__ = staffTokenA;
+    // Marketer A passes staffUserB.id as parameter, but server-side isolation forces targetUserId = staffUserA.id!
+    const staffAStats = await getMarketerStatsAction(staffUserB.id);
+    assert(
+      staffAStats.success &&
+        staffAStats.stats?.paidRevenue === 150.0 &&
+        staffAStats.stats?.totalBookings === 1,
+      '21. PHASE 4 DATA ISOLATION: Marketer A stats returns only Marketer A data ($150) even if requesting Marketer B ID'
+    );
+
+    // 22. PHASE 4 TEST: Revenue calculation excludes UNPAID bookings for Marketer B ($250 paid, $100 unpaid -> paidRevenue = $250)
+    globalThis.__TEST_ADMIN_SESSION_TOKEN__ = staffTokenB;
+    const staffBStats = await getMarketerStatsAction(staffUserB.id);
+    assert(
+      staffBStats.success &&
+        staffBStats.stats?.paidRevenue === 250.0 &&
+        staffBStats.stats?.totalBookings === 2 &&
+        staffBStats.stats?.paidBookings === 1,
+      '22. PHASE 4 REVENUE CALCULATION: Unpaid booking ($100) excluded from paid revenue ($250 total paid)'
+    );
+
+    // 23. PHASE 4 TEST: Leaderboard ordering (Marketer B with $250 > Marketer A with $150)
+    const leaderboardRes = await getMarketerLeaderboardAction();
+    assert(
+      leaderboardRes.success &&
+        Array.isArray(leaderboardRes.leaderboard) &&
+        leaderboardRes.leaderboard.length >= 2,
+      '23a. Leaderboard query succeeds'
+    );
+
+    if (leaderboardRes.success && leaderboardRes.leaderboard) {
+      const rankB = leaderboardRes.leaderboard.findIndex((m) => m.userId === staffUserB.id);
+      const rankA = leaderboardRes.leaderboard.findIndex((m) => m.userId === staffUserA.id);
+      assert(
+        rankB !== -1 && rankA !== -1 && rankB < rankA,
+        '23b. Leaderboard orders Marketer B (#1 with $250) ahead of Marketer A (#2 with $150)'
+      );
+    }
+
+    // 24. Deleting marketer deactivates their link
     globalThis.__TEST_ADMIN_SESSION_TOKEN__ = superAdminToken;
     const marketerToDelete = await db.user.create({
       data: {
@@ -331,40 +411,28 @@ async function runMarketerTestSuite() {
     await deleteMarketerAction(marketerToDelete.id);
 
     const recheckedDelLink = await db.marketingLink.findUnique({ where: { id: delLink.id } });
-    assert(recheckedDelLink !== null && recheckedDelLink.isActive === false, '21. Deleting marketer deactivates their link');
+    assert(recheckedDelLink !== null && recheckedDelLink.isActive === false, '24. Deleting marketer deactivates their link');
 
-    // 22. Historical bookings remain after marketer deletion
+    // 25. Historical bookings remain after marketer deletion
     const recheckedDelBooking = await db.booking.findUnique({ where: { id: delBooking.id } });
-    assert(recheckedDelBooking !== null && recheckedDelBooking.marketingLinkId === delLink.id, '22. Historical bookings remain intact after marketer deletion');
+    assert(recheckedDelBooking !== null && recheckedDelBooking.marketingLinkId === delLink.id, '25. Historical bookings remain intact after marketer deletion');
 
-    // 23. Historical MarketingLink record remains after marketer deletion with userId = null
-    assert(recheckedDelLink !== null && recheckedDelLink.userId === null, '23. Historical MarketingLink remains after marketer deletion with userId = null');
+    // 26. Historical MarketingLink record remains after marketer deletion with userId = null
+    assert(recheckedDelLink !== null && recheckedDelLink.userId === null, '26. Historical MarketingLink remains after marketer deletion with userId = null');
 
-    // 24. Deleted marketer's old link does not generate new attribution
+    // 27. Deleted marketer's old link does not generate new attribution
     const postDelTrackRes = await trackMarketingClickAction(delLinkCode);
-    assert(!postDelTrackRes.success, '24. Deleted marketer\'s old link does not generate new attribution');
-
-    // 25. A successfully paid attributed booking remains associated with the correct MarketingLink
-    assert(attributedBooking.paymentStatus === 'PAID' && attributedBooking.marketingLinkId === createdLinkA.id, '25. Successfully paid booking remains associated with MarketingLink');
-
-    // 26. Failed/unpaid bookings do not become paid marketer revenue data
-    globalThis.__TEST_ADMIN_SESSION_TOKEN__ = staffTokenA;
-    const statsRes = await getMarketerStatsAction(staffUserA.id);
-    assert(statsRes.success && statsRes.stats?.paidRevenue === 150.0 && statsRes.stats?.totalBookings === 1, '26. Marketer stats count only PAID bookings ($150) as paid revenue');
-
-    // 27. Leaderboard includes marketer A with $150 revenue
-    const leaderboardRes = await getMarketerLeaderboardAction();
-    assert(leaderboardRes.success && Array.isArray(leaderboardRes.leaderboard) && leaderboardRes.leaderboard.some((m) => m.userId === staffUserA.id && m.paidRevenue === 150.0), '27. Leaderboard correctly ranks marketer with paid revenue');
+    assert(!postDelTrackRes.success, '27. Deleted marketer\'s old link does not generate new attribution');
 
     // Cleanup test records
     delete globalThis.__TEST_ADMIN_SESSION_TOKEN__;
     await db.booking.deleteMany({
       where: {
-        id: { in: [attributedBooking.id, nonAttributedBooking.id, delBooking.id] },
+        id: { in: [bookingA1.id, bookingB1.id, bookingB2.id, nonAttributedBooking.id, delBooking.id] },
       },
     });
     await db.marketingLink.deleteMany({
-      where: { id: { in: [createdLinkA.id, inactiveLinkRes.marketingLink?.id || '', delLink.id] } },
+      where: { id: { in: [createdLinkA.id, createdLinkB.id, inactiveLinkRes.marketingLink?.id || '', delLink.id] } },
     });
     await db.therapist.delete({ where: { id: therapist.id } });
     await db.service.delete({ where: { id: service.id } });

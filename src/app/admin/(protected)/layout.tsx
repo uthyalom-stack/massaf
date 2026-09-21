@@ -13,6 +13,26 @@ export default async function ProtectedAdminLayout({
     redirect('/admin/login');
   }
 
+  const isMarketer = session.role === 'STAFF';
+
+  const navLinks = isMarketer
+    ? [
+        { label: 'Dashboard', href: '/admin/marketer' },
+        { label: 'Leaderboard', href: '/admin/leaderboard' },
+        { label: 'My Links', href: '/admin/marketing-links' },
+      ]
+    : [
+        { label: 'Dashboard', href: '/admin' },
+        { label: 'Therapists', href: '/admin/therapists' },
+        { label: 'Bookings', href: '/admin/bookings' },
+        { label: 'Reviews', href: '/admin/reviews' },
+        { label: 'Marketing Links', href: '/admin/marketing-links' },
+        { label: 'Leaderboard', href: '/admin/leaderboard' },
+        { label: 'Settings', href: '/admin/settings' },
+      ];
+
+  const brandHref = isMarketer ? '/admin/marketer' : '/admin';
+
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900">
       {/* Main Admin Header / Nav */}
@@ -21,7 +41,7 @@ export default async function ProtectedAdminLayout({
           <div className="flex items-center justify-between h-16">
             {/* Logo / Brand */}
             <div className="flex items-center gap-6">
-              <Link href="/admin" className="flex items-center gap-2.5 group">
+              <Link href={brandHref} className="flex items-center gap-2.5 group">
                 <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-black text-lg group-hover:bg-emerald-500 transition-colors">
                   M
                 </div>
@@ -30,49 +50,22 @@ export default async function ProtectedAdminLayout({
                     MASSAF
                   </span>
                   <span className="text-[10px] text-emerald-400 font-semibold tracking-wider uppercase leading-tight">
-                    Admin Portal
+                    {isMarketer ? 'Marketer Portal' : 'Admin Portal'}
                   </span>
                 </div>
               </Link>
 
               {/* Desktop Nav */}
               <nav className="hidden md:flex items-center space-x-1 pl-6 border-l border-slate-800">
-                <Link
-                  href="/admin"
-                  className="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
-                >
-                  Dashboard
-                </Link>
-                <Link
-                  href="/admin/therapists"
-                  className="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
-                >
-                  Therapists
-                </Link>
-                <Link
-                  href="/admin/bookings"
-                  className="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
-                >
-                  Bookings
-                </Link>
-                <Link
-                  href="/admin/reviews"
-                  className="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
-                >
-                  Reviews
-                </Link>
-                <Link
-                  href="/admin/marketing-links"
-                  className="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
-                >
-                  Marketing Links
-                </Link>
-                <Link
-                  href="/admin/settings"
-                  className="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
-                >
-                  Settings
-                </Link>
+                {navLinks.map((link) => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
+                  >
+                    {link.label}
+                  </Link>
+                ))}
               </nav>
             </div>
 
@@ -110,42 +103,15 @@ export default async function ProtectedAdminLayout({
 
         {/* Mobile Navigation Bar */}
         <div className="md:hidden border-t border-slate-800 px-4 py-2 flex items-center space-x-2 overflow-x-auto text-xs">
-          <Link
-            href="/admin"
-            className="px-3 py-1.5 rounded-md font-medium text-slate-200 hover:bg-slate-800 shrink-0"
-          >
-            Dashboard
-          </Link>
-          <Link
-            href="/admin/therapists"
-            className="px-3 py-1.5 rounded-md font-medium text-slate-200 hover:bg-slate-800 shrink-0"
-          >
-            Therapists
-          </Link>
-          <Link
-            href="/admin/bookings"
-            className="px-3 py-1.5 rounded-md font-medium text-slate-200 hover:bg-slate-800 shrink-0"
-          >
-            Bookings
-          </Link>
-          <Link
-            href="/admin/reviews"
-            className="px-3 py-1.5 rounded-md font-medium text-slate-200 hover:bg-slate-800 shrink-0"
-          >
-            Reviews
-          </Link>
-          <Link
-            href="/admin/marketing-links"
-            className="px-3 py-1.5 rounded-md font-medium text-slate-200 hover:bg-slate-800 shrink-0"
-          >
-            Marketing Links
-          </Link>
-          <Link
-            href="/admin/settings"
-            className="px-3 py-1.5 rounded-md font-medium text-slate-200 hover:bg-slate-800 shrink-0"
-          >
-            Settings
-          </Link>
+          {navLinks.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="px-3 py-1.5 rounded-md font-medium text-slate-200 hover:bg-slate-800 shrink-0"
+            >
+              {link.label}
+            </Link>
+          ))}
         </div>
       </header>
 
@@ -156,7 +122,7 @@ export default async function ProtectedAdminLayout({
 
       {/* Admin Footer */}
       <footer className="bg-slate-900 text-slate-400 border-t border-slate-800 text-xs py-4 px-6 text-center">
-        MASSAF Admin Console
+        MASSAF Platform Console
       </footer>
     </div>
   );
