@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { NavItem } from '@/types/customer';
+import { MobileBottomNav } from '@/components/customer/MobileBottomNav';
 
 interface HeaderProps {
   navLinks: NavItem[];
@@ -118,6 +119,9 @@ export function Header({ navLinks }: HeaderProps) {
           </div>
         </div>
       )}
+
+      {/* Accessible Mobile Bottom Navigation Bar */}
+      <MobileBottomNav />
     </header>
   );
 }

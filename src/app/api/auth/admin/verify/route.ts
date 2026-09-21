@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { setAdminSessionCookie, clearAdminSessionCookie } from '@/lib/auth-session';
 import { checkRateLimit } from '@/lib/auth-rate-limit';
+import { verifyPassword } from '@/lib/auth-password';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { action, email } = body;
+    const { action, email, password } = body;
 
     if (action === 'logout') {
       await clearAdminSessionCookie();
@@ -48,6 +49,19 @@ export async function POST(request: Request) {
     const allowedRoles = ['SUPER_ADMIN', 'ADMIN', 'STAFF'];
     if (!user || !user.role || !allowedRoles.includes(user.role)) {
       // Uniform generic rejection message to prevent user/email enumeration
+      return NextResponse.json(
+        { error: 'Invalid authentication credentials provided' },
+        { status: 401 }
+      );
+    }
+
+    // Password verification: strictly require passwordHash, password, and valid scrypt verification
+    if (
+      !user.passwordHash ||
+      !password ||
+      typeof password !== 'string' ||
+      !verifyPassword(password, user.passwordHash)
+    ) {
       return NextResponse.json(
         { error: 'Invalid authentication credentials provided' },
         { status: 401 }

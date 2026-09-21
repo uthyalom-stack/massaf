@@ -87,6 +87,244 @@ export async function createTherapistAction(input: unknown) {
   }
 }
 
+// --- Service Categories & Global Services ---
+
+export async function createServiceCategoryAction(input: unknown) {
+  try {
+    await checkServerAdminAuth();
+    const data = input as { name: string; description?: string; imageUrl?: string; sortOrder?: number; isActive?: boolean };
+    if (!data.name || data.name.trim().length < 2) {
+      return { success: false, error: 'Category name must be at least 2 characters.' };
+    }
+
+    const category = await db.serviceCategory.create({
+      data: {
+        name: data.name.trim(),
+        description: data.description || null,
+        imageUrl: data.imageUrl || null,
+        sortOrder: data.sortOrder ?? 0,
+        isActive: data.isActive ?? true,
+      },
+    });
+
+    safeRevalidatePath('/admin/categories');
+    safeRevalidatePath('/services');
+    return { success: true, category };
+  } catch (err: unknown) {
+    console.error('Error in createServiceCategoryAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to create service category.' };
+  }
+}
+
+export async function updateServiceCategoryAction(id: string, input: unknown) {
+  try {
+    await checkServerAdminAuth();
+    const data = input as { name?: string; description?: string; imageUrl?: string; sortOrder?: number; isActive?: boolean };
+    const updated = await db.serviceCategory.update({
+      where: { id },
+      data: {
+        ...(data.name !== undefined && { name: data.name.trim() }),
+        ...(data.description !== undefined && { description: data.description || null }),
+        ...(data.imageUrl !== undefined && { imageUrl: data.imageUrl || null }),
+        ...(data.sortOrder !== undefined && { sortOrder: data.sortOrder }),
+        ...(data.isActive !== undefined && { isActive: data.isActive }),
+      },
+    });
+
+    safeRevalidatePath('/admin/categories');
+    safeRevalidatePath('/services');
+    return { success: true, category: updated };
+  } catch (err: unknown) {
+    console.error('Error in updateServiceCategoryAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to update service category.' };
+  }
+}
+
+export async function deleteServiceCategoryAction(id: string) {
+  try {
+    await checkServerAdminAuth();
+    // Unassign category from services before deleting category
+    await db.service.updateMany({
+      where: { categoryId: id },
+      data: { categoryId: null },
+    });
+
+    await db.serviceCategory.delete({ where: { id } });
+
+    safeRevalidatePath('/admin/categories');
+    safeRevalidatePath('/services');
+    return { success: true };
+  } catch (err: unknown) {
+    console.error('Error in deleteServiceCategoryAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to delete service category.' };
+  }
+}
+
+export async function createGlobalServiceAction(input: unknown) {
+  try {
+    await checkServerAdminAuth();
+    const data = input as {
+      name: string;
+      description?: string;
+      durationMinutes: number;
+      price: number;
+      categoryId?: string;
+      isActive?: boolean;
+    };
+
+    if (!data.name || data.name.trim().length < 2) {
+      return { success: false, error: 'Service name must be at least 2 characters.' };
+    }
+
+    const service = await db.service.create({
+      data: {
+        name: data.name.trim(),
+        description: data.description || null,
+        durationMinutes: Number(data.durationMinutes),
+        price: Number(data.price),
+        categoryId: data.categoryId || null,
+        isActive: data.isActive ?? true,
+      },
+    });
+
+    safeRevalidatePath('/admin/services');
+    safeRevalidatePath('/services');
+    return { success: true, service };
+  } catch (err: unknown) {
+    console.error('Error in createGlobalServiceAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to create global service.' };
+  }
+}
+
+export async function updateGlobalServiceAction(id: string, input: unknown) {
+  try {
+    await checkServerAdminAuth();
+    const data = input as {
+      name?: string;
+      description?: string;
+      durationMinutes?: number;
+      price?: number;
+      categoryId?: string;
+      isActive?: boolean;
+    };
+
+    const updated = await db.service.update({
+      where: { id },
+      data: {
+        ...(data.name !== undefined && { name: data.name.trim() }),
+        ...(data.description !== undefined && { description: data.description || null }),
+        ...(data.durationMinutes !== undefined && { durationMinutes: Number(data.durationMinutes) }),
+        ...(data.price !== undefined && { price: Number(data.price) }),
+        ...(data.categoryId !== undefined && { categoryId: data.categoryId || null }),
+        ...(data.isActive !== undefined && { isActive: data.isActive }),
+      },
+    });
+
+    safeRevalidatePath('/admin/services');
+    safeRevalidatePath('/services');
+    return { success: true, service: updated };
+  } catch (err: unknown) {
+    console.error('Error in updateGlobalServiceAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to update global service.' };
+  }
+}
+
+// --- Testimonials (Admin Promotional Reviews) ---
+
+export async function createTestimonialAction(input: unknown) {
+  try {
+    await checkServerAdminAuth();
+    const data = input as {
+      authorName: string;
+      authorLocation?: string;
+      rating: number;
+      comment: string;
+      therapistId: string;
+      isPublished?: boolean;
+    };
+
+    if (!data.authorName || !data.comment || !data.therapistId) {
+      return { success: false, error: 'Author name, comment, and therapist selection are required.' };
+    }
+
+    const testimonial = await db.testimonial.create({
+      data: {
+        authorName: data.authorName.trim(),
+        authorLocation: data.authorLocation ? data.authorLocation.trim() : null,
+        rating: Math.min(5, Math.max(1, Number(data.rating))),
+        comment: data.comment.trim(),
+        therapistId: data.therapistId,
+        isPublished: data.isPublished ?? true,
+      },
+    });
+
+    safeRevalidatePath('/admin/reviews');
+    if (data.therapistId) safeRevalidatePath(`/therapists/${data.therapistId}`);
+    return { success: true, testimonial };
+  } catch (err: unknown) {
+    console.error('Error in createTestimonialAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to create testimonial.' };
+  }
+}
+
+export async function toggleTestimonialPublishedAction(id: string, isPublished: boolean) {
+  try {
+    await checkServerAdminAuth();
+    const updated = await db.testimonial.update({
+      where: { id },
+      data: { isPublished },
+    });
+
+    safeRevalidatePath('/admin/reviews');
+    if (updated.therapistId) safeRevalidatePath(`/therapists/${updated.therapistId}`);
+    return { success: true, testimonial: updated };
+  } catch (err: unknown) {
+    console.error('Error in toggleTestimonialPublishedAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to update testimonial.' };
+  }
+}
+
+export async function deleteTestimonialAction(id: string) {
+  try {
+    await checkServerAdminAuth();
+    const testimonial = await db.testimonial.findUnique({ where: { id } });
+    if (!testimonial) return { success: false, error: 'Testimonial not found.' };
+
+    await db.testimonial.delete({ where: { id } });
+
+    safeRevalidatePath('/admin/reviews');
+    if (testimonial.therapistId) safeRevalidatePath(`/therapists/${testimonial.therapistId}`);
+    return { success: true };
+  } catch (err: unknown) {
+    console.error('Error in deleteTestimonialAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to delete testimonial.' };
+  }
+}
+
+// --- Site Content CMS ---
+
+export async function updateSiteContentAction(key: string, title: string, content: string) {
+  try {
+    await checkServerAdminAuth();
+    if (!key || !title || !content) {
+      return { success: false, error: 'Key, title, and content are required.' };
+    }
+
+    const updated = await db.siteContent.upsert({
+      where: { key },
+      update: { title, content },
+      create: { key, title, content },
+    });
+
+    safeRevalidatePath(`/${key}`);
+    safeRevalidatePath('/admin/content');
+    return { success: true, content: updated };
+  } catch (err: unknown) {
+    console.error('Error in updateSiteContentAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to update site content.' };
+  }
+}
+
 // --- Marketing Links ---
 
 export async function createMarketingLinkAction(input: unknown) {
@@ -872,30 +1110,58 @@ export async function addServiceAreaAction(therapistId: string, input: unknown) 
 
     const validated = serviceAreaSchema.parse(input);
 
-    const existingArea = await db.serviceArea.findFirst({
-      where: {
-        therapistId,
-        cityName: { equals: validated.cityName },
-        state: { equals: validated.state },
-        zipCode: { equals: validated.zipCode },
-      },
-    });
+    // Support bulk ZIP codes separated by commas, spaces, or newlines
+    const rawZips = validated.zipCode.split(/[\s,;\n\r]+/).map((z) => z.trim()).filter((z) => z.length >= 3);
 
-    if (existingArea) {
-      return { success: false, error: 'Service coverage area already exists for this therapist.' };
+    if (rawZips.length === 0) {
+      return { success: false, error: 'Please provide at least one valid ZIP code.' };
     }
 
-    const serviceArea = await db.serviceArea.create({
-      data: {
-        therapistId,
-        cityName: validated.cityName,
-        state: validated.state,
-        zipCode: validated.zipCode,
-      },
-    });
+    const createdAreas = [];
+    let duplicateCount = 0;
+
+    for (const zip of rawZips) {
+      const existingArea = await db.serviceArea.findFirst({
+        where: {
+          therapistId,
+          cityName: { equals: validated.cityName },
+          state: { equals: validated.state },
+          zipCode: { equals: zip },
+        },
+      });
+
+      if (existingArea) {
+        duplicateCount++;
+        continue;
+      }
+
+      const serviceArea = await db.serviceArea.create({
+        data: {
+          therapistId,
+          cityName: validated.cityName,
+          state: validated.state,
+          zipCode: zip,
+        },
+      });
+      createdAreas.push(serviceArea);
+    }
+
+    if (createdAreas.length === 0) {
+      return {
+        success: false,
+        error: duplicateCount > 0
+          ? 'All specified ZIP codes already exist in coverage for this therapist.'
+          : 'Failed to add service coverage areas.',
+      };
+    }
 
     safeRevalidatePath(`/admin/therapists/${therapistId}`);
-    return { success: true, serviceArea };
+    return {
+      success: true,
+      serviceArea: createdAreas[0],
+      serviceAreas: createdAreas,
+      count: createdAreas.length,
+    };
   } catch (err: unknown) {
     console.error('Error in addServiceAreaAction:', err);
     return {
@@ -930,6 +1196,23 @@ export async function removeServiceAreaAction(therapistId: string, areaId: strin
 
 // --- Availability ---
 
+function expandDayRange(startDay: number, endDay: number): number[] {
+  const days: number[] = [];
+  if (startDay <= endDay) {
+    for (let d = startDay; d <= endDay; d++) {
+      days.push(d);
+    }
+  } else {
+    for (let d = startDay; d <= 6; d++) {
+      days.push(d);
+    }
+    for (let d = 0; d <= endDay; d++) {
+      days.push(d);
+    }
+  }
+  return days;
+}
+
 export async function addTherapistAvailabilityAction(therapistId: string, input: unknown) {
   try {
     await checkServerAdminAuth();
@@ -946,44 +1229,79 @@ export async function addTherapistAvailabilityAction(therapistId: string, input:
       return { success: false, error: 'Start time must be strictly before end time.' };
     }
 
-    if (validated.dayOfWeek !== undefined && validated.dayOfWeek !== null) {
-      if (validated.dayOfWeek < 0 || validated.dayOfWeek > 6) {
-        return { success: false, error: 'Invalid day of week (must be between 0 and 6).' };
-      }
+    // Determine target days (single day or day range expansion)
+    let targetDays: Array<number | null> = [];
+
+    if (
+      validated.startDayOfWeek !== undefined &&
+      validated.startDayOfWeek !== null &&
+      validated.endDayOfWeek !== undefined &&
+      validated.endDayOfWeek !== null
+    ) {
+      targetDays = expandDayRange(validated.startDayOfWeek, validated.endDayOfWeek);
+    } else if (validated.dayOfWeek !== undefined && validated.dayOfWeek !== null) {
+      targetDays = [validated.dayOfWeek];
+    } else {
+      targetDays = [null];
     }
 
     const specDate = validated.specificDate ? new Date(validated.specificDate) : null;
-    const existing = await db.therapistAvailability.findMany({
-      where: {
-        therapistId,
-        dayOfWeek: validated.dayOfWeek ?? null,
-        specificDate: specDate,
-      },
-    });
+    const createdAvailabilities = [];
+    let overlapCount = 0;
 
-    const hasOverlap = existing.some((e) => {
-      const eStart = parseTimeStringToMinutes(e.startTime);
-      const eEnd = parseTimeStringToMinutes(e.endTime);
-      return startMins < eEnd && endMins > eStart;
-    });
+    for (const day of targetDays) {
+      if (day !== null && (day < 0 || day > 6)) {
+        continue;
+      }
 
-    if (hasOverlap) {
-      return { success: false, error: 'This time range overlaps with an existing availability entry.' };
+      const existing = await db.therapistAvailability.findMany({
+        where: {
+          therapistId,
+          dayOfWeek: day,
+          specificDate: specDate,
+        },
+      });
+
+      const hasOverlap = existing.some((e) => {
+        const eStart = parseTimeStringToMinutes(e.startTime);
+        const eEnd = parseTimeStringToMinutes(e.endTime);
+        return startMins < eEnd && endMins > eStart;
+      });
+
+      if (hasOverlap) {
+        overlapCount++;
+        continue;
+      }
+
+      const availability = await db.therapistAvailability.create({
+        data: {
+          therapistId,
+          dayOfWeek: day,
+          specificDate: specDate,
+          startTime: validated.startTime,
+          endTime: validated.endTime,
+          isUnavailable: validated.isUnavailable,
+        },
+      });
+      createdAvailabilities.push(availability);
     }
 
-    const availability = await db.therapistAvailability.create({
-      data: {
-        therapistId,
-        dayOfWeek: validated.dayOfWeek ?? null,
-        specificDate: specDate,
-        startTime: validated.startTime,
-        endTime: validated.endTime,
-        isUnavailable: validated.isUnavailable,
-      },
-    });
+    if (createdAvailabilities.length === 0) {
+      return {
+        success: false,
+        error: overlapCount > 0
+          ? 'Selected working hours overlap with existing schedule rules.'
+          : 'Failed to add availability schedule rule.',
+      };
+    }
 
     safeRevalidatePath(`/admin/therapists/${therapistId}`);
-    return { success: true, availability };
+    return {
+      success: true,
+      availability: createdAvailabilities[0],
+      availabilities: createdAvailabilities,
+      count: createdAvailabilities.length,
+    };
   } catch (err: unknown) {
     console.error('Error in addTherapistAvailabilityAction:', err);
     return {

@@ -58,12 +58,13 @@ enum ReviewStatus {
 
 /// Internal administrative users
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String?
-  role      Role     @default(ADMIN)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String?
+  passwordHash String?
+  role         Role     @default(ADMIN)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 /// Customers who book massage appointments
@@ -140,6 +141,7 @@ model Therapist {
   serviceAreas   ServiceArea[]
   bookings       Booking[]
   reviews        Review[]
+  testimonials   Testimonial[]
   favoritedBy    CustomerFavorite[]
 
   @@index([isActive])
@@ -160,6 +162,22 @@ model TherapistPhoto {
   @@index([therapistId])
 }
 
+/// Categories for massage services (e.g. Swedish, Deep Tissue, Sports)
+model ServiceCategory {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  description String?
+  imageUrl    String?
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  services    Service[]
+
+  @@index([isActive])
+}
+
 /// Offered massage services
 model Service {
   id              String   @id @default(uuid())
@@ -168,13 +186,16 @@ model Service {
   durationMinutes Int
   price           Float
   isActive        Boolean  @default(true)
+  categoryId      String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  category   ServiceCategory?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   therapists TherapistService[]
   bookings   Booking[]
 
   @@index([isActive])
+  @@index([categoryId])
 }
 
 /// Junction model establishing therapist-service mappings and custom overrides
@@ -340,4 +361,35 @@ model AuthRateLimit {
 
   @@unique([identifier, action])
   @@index([identifier, action])
+}
+
+/// Admin-editable support, help, safety, and legal content pages
+model SiteContent {
+  id        String   @id @default(uuid())
+  key       String   @unique // e.g. "terms", "privacy", "cancellation-policy", "accessibility", "support", "help", "contact", "therapist-verification", "safety"
+  title     String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([key])
+}
+
+/// Promotional testimonials created by administrators (distinguished from verified customer reviews)
+model Testimonial {
+  id             String    @id @default(uuid())
+  therapistId    String
+  authorName     String
+  authorLocation String?
+  rating         Int       @default(5)
+  comment        String
+  isPublished    Boolean   @default(true)
+  sortOrder      Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  therapist      Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+
+  @@index([therapistId])
+  @@index([isPublished])
 }

@@ -3,6 +3,7 @@ import {
   createSessionToken,
   verifySessionToken,
 } from '@/lib/auth-session';
+import { hashPassword } from '@/lib/auth-password';
 import { createTherapistAction } from '@/app/admin/actions';
 import { verifyAdminApiKey } from '@/lib/admin-guard';
 import { confirmVerifiedPayLioPayment } from '@/lib/paylio';
@@ -41,18 +42,22 @@ async function runPhase20SecurityTests() {
     const testCustBEmail = `sec-cust-b-${timestamp}@massaf.com`;
 
     // Seed test users in DB
+    const adminPass = 'SecAdminPass123!';
     const adminUser = await db.user.create({
       data: {
         email: testAdminEmail,
         name: 'Super Admin',
+        passwordHash: hashPassword(adminPass),
         role: 'SUPER_ADMIN',
       },
     });
 
+    const staffPass = 'SecStaffPass123!';
     const staffUser = await db.user.create({
       data: {
         email: testStaffEmail,
         name: 'Staff User',
+        passwordHash: hashPassword(staffPass),
         role: 'STAFF',
       },
     });
@@ -344,11 +349,11 @@ async function runPhase20SecurityTests() {
     const custAsAdminLoginRes = await postAdminVerifyRoute(custAsAdminLoginReq);
     assert(custAsAdminLoginRes.status === 401, '13b. Non-admin customer account rejected for admin login with 401');
 
-    // 13c. Valid admin email accepted with 200 and sets massaf_admin_session cookie
+    // 13c. Valid admin email and password accepted with 200 and sets massaf_admin_session cookie
     const validAdminLoginReq = new Request('http://localhost:3000/api/auth/admin/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: testAdminEmail }),
+      body: JSON.stringify({ email: testAdminEmail, password: adminPass }),
     });
     const validAdminLoginRes = await postAdminVerifyRoute(validAdminLoginReq);
     assert(validAdminLoginRes.status === 200, '13c. Valid admin user authenticated with 200');
@@ -359,7 +364,7 @@ async function runPhase20SecurityTests() {
     const validStaffLoginReq = new Request('http://localhost:3000/api/auth/admin/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: testStaffEmail }),
+      body: JSON.stringify({ email: testStaffEmail, password: staffPass }),
     });
     const validStaffLoginRes = await postAdminVerifyRoute(validStaffLoginReq);
     assert(validStaffLoginRes.status === 200, '13e. Valid STAFF user authenticated with 200');
