@@ -939,11 +939,43 @@ export async function addTherapistAvailabilityAction(therapistId: string, input:
 
     const validated = availabilitySchema.parse(input);
 
+    const { parseTimeStringToMinutes } = await import('@/lib/availability');
+    const startMins = parseTimeStringToMinutes(validated.startTime);
+    const endMins = parseTimeStringToMinutes(validated.endTime);
+    if (startMins >= endMins) {
+      return { success: false, error: 'Start time must be strictly before end time.' };
+    }
+
+    if (validated.dayOfWeek !== undefined && validated.dayOfWeek !== null) {
+      if (validated.dayOfWeek < 0 || validated.dayOfWeek > 6) {
+        return { success: false, error: 'Invalid day of week (must be between 0 and 6).' };
+      }
+    }
+
+    const specDate = validated.specificDate ? new Date(validated.specificDate) : null;
+    const existing = await db.therapistAvailability.findMany({
+      where: {
+        therapistId,
+        dayOfWeek: validated.dayOfWeek ?? null,
+        specificDate: specDate,
+      },
+    });
+
+    const hasOverlap = existing.some((e) => {
+      const eStart = parseTimeStringToMinutes(e.startTime);
+      const eEnd = parseTimeStringToMinutes(e.endTime);
+      return startMins < eEnd && endMins > eStart;
+    });
+
+    if (hasOverlap) {
+      return { success: false, error: 'This time range overlaps with an existing availability entry.' };
+    }
+
     const availability = await db.therapistAvailability.create({
       data: {
         therapistId,
         dayOfWeek: validated.dayOfWeek ?? null,
-        specificDate: validated.specificDate ? new Date(validated.specificDate) : null,
+        specificDate: specDate,
         startTime: validated.startTime,
         endTime: validated.endTime,
         isUnavailable: validated.isUnavailable,
@@ -979,15 +1011,52 @@ export async function updateTherapistAvailabilityAction(therapistId: string, inp
       return { success: false, error: 'Availability entry not found for this therapist.' };
     }
 
+    const targetDayOfWeek = validated.dayOfWeek !== undefined ? validated.dayOfWeek : existingAvailability.dayOfWeek;
+    const targetSpecDate = validated.specificDate !== undefined
+      ? (validated.specificDate ? new Date(validated.specificDate) : null)
+      : existingAvailability.specificDate;
+    const targetStartTime = validated.startTime ?? existingAvailability.startTime;
+    const targetEndTime = validated.endTime ?? existingAvailability.endTime;
+
+    const { parseTimeStringToMinutes } = await import('@/lib/availability');
+    const startMins = parseTimeStringToMinutes(targetStartTime);
+    const endMins = parseTimeStringToMinutes(targetEndTime);
+    if (startMins >= endMins) {
+      return { success: false, error: 'Start time must be strictly before end time.' };
+    }
+
+    if (targetDayOfWeek !== undefined && targetDayOfWeek !== null) {
+      if (targetDayOfWeek < 0 || targetDayOfWeek > 6) {
+        return { success: false, error: 'Invalid day of week (must be between 0 and 6).' };
+      }
+    }
+
+    const existing = await db.therapistAvailability.findMany({
+      where: {
+        therapistId,
+        id: { not: validated.availabilityId },
+        dayOfWeek: targetDayOfWeek,
+        specificDate: targetSpecDate,
+      },
+    });
+
+    const hasOverlap = existing.some((e) => {
+      const eStart = parseTimeStringToMinutes(e.startTime);
+      const eEnd = parseTimeStringToMinutes(e.endTime);
+      return startMins < eEnd && endMins > eStart;
+    });
+
+    if (hasOverlap) {
+      return { success: false, error: 'This time range overlaps with an existing availability entry.' };
+    }
+
     const updated = await db.therapistAvailability.update({
       where: { id: validated.availabilityId },
       data: {
-        dayOfWeek: validated.dayOfWeek !== undefined ? validated.dayOfWeek : existingAvailability.dayOfWeek,
-        specificDate: validated.specificDate !== undefined
-          ? (validated.specificDate ? new Date(validated.specificDate) : null)
-          : existingAvailability.specificDate,
-        startTime: validated.startTime ?? existingAvailability.startTime,
-        endTime: validated.endTime ?? existingAvailability.endTime,
+        dayOfWeek: targetDayOfWeek,
+        specificDate: targetSpecDate,
+        startTime: targetStartTime,
+        endTime: targetEndTime,
         isUnavailable: validated.isUnavailable !== undefined ? validated.isUnavailable : existingAvailability.isUnavailable,
       },
     });

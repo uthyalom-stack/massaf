@@ -1,16 +1,31 @@
 import React from 'react';
 import Link from 'next/link';
+import { headers } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { getVerifiedAdminSession } from '@/lib/auth-session';
 
 export const metadata = {
   title: 'Admin Portal | MASSAF',
   description: 'MASSAF Massage Therapy Platform Administration',
 };
 
-export default function AdminLayout({
+export default async function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const headerList = await headers();
+  const pathname = headerList.get('x-pathname') || headerList.get('next-url') || headerList.get('x-invoke-path') || '';
+
+  const isLoginPage = pathname.includes('/admin/login');
+
+  if (!isLoginPage) {
+    const session = await getVerifiedAdminSession();
+    if (!session) {
+      redirect('/admin/login');
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900">
       {/* Main Admin Header / Nav */}

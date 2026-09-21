@@ -236,7 +236,7 @@ export async function POST(request: Request) {
         },
       });
 
-      return { booking: createdBooking };
+      return { booking: createdBooking, customerId: customer.id, customerEmail: customer.email };
     });
 
     if (!('booking' in bookingResult) || !bookingResult.booking) {
@@ -247,6 +247,14 @@ export async function POST(request: Request) {
     }
 
     const createdBooking = bookingResult.booking;
+
+    // Set signed HTTP-only customer session cookie for seamless checkout confirmation
+    try {
+      const { setCustomerSessionCookie } = await import('@/lib/auth-session');
+      await setCustomerSessionCookie(bookingResult.customerId, bookingResult.customerEmail);
+    } catch (sessionErr) {
+      console.warn('Unable to set customer session cookie upon booking creation:', sessionErr);
+    }
 
     // Await notification dispatch with failure isolation
     try {

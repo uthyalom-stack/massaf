@@ -232,13 +232,19 @@ export async function getVerifiedAdminSession(): Promise<SessionPayload | null> 
     const payload = verifySessionToken(token, 'ADMIN');
     if (!payload) return null;
 
-    // Database revalidation: Confirm Admin User entity exists and has an admin role
+    // Database revalidation: Confirm Admin User entity exists and has an administrative role
     const adminUser = await db.user.findUnique({
       where: { id: payload.entityId },
       select: { id: true, email: true, role: true },
     });
 
     if (!adminUser) return null;
+
+    // Strict Authoritative Role Verification (SUPER_ADMIN, ADMIN, STAFF)
+    const allowedRoles = ['SUPER_ADMIN', 'ADMIN', 'STAFF'];
+    if (!allowedRoles.includes(String(adminUser.role))) {
+      return null;
+    }
 
     return {
       ...payload,

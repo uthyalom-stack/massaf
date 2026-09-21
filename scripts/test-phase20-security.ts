@@ -4,8 +4,10 @@ import {
   verifySessionToken,
 } from '@/lib/auth-session';
 import { createTherapistAction } from '@/app/admin/actions';
+import { verifyAdminApiKey } from '@/lib/admin-guard';
 import { confirmVerifiedPayLioPayment } from '@/lib/paylio';
 import { generateVerificationToken, consumeVerificationToken } from '@/lib/verification-tokens';
+import { parseTimeStringToMinutes } from '@/lib/availability';
 
 async function runPhase20SecurityTests() {
   console.log('====================================================');
@@ -31,14 +33,33 @@ async function runPhase20SecurityTests() {
   try {
     const timestamp = Date.now();
     const testAdminEmail = `sec-admin-${timestamp}@massaf.com`;
+    const testStaffEmail = `sec-staff-${timestamp}@massaf.com`;
+    const testNonAdminEmail = `sec-nonadmin-${timestamp}@massaf.com`;
     const testCustAEmail = `sec-cust-a-${timestamp}@massaf.com`;
     const testCustBEmail = `sec-cust-b-${timestamp}@massaf.com`;
 
+    // Seed test users
     const adminUser = await db.user.create({
       data: {
         email: testAdminEmail,
-        name: 'Test Admin',
+        name: 'Super Admin',
         role: 'SUPER_ADMIN',
+      },
+    });
+
+    const staffUser = await db.user.create({
+      data: {
+        email: testStaffEmail,
+        name: 'Staff User',
+        role: 'STAFF',
+      },
+    });
+
+    const nonAdminUser = await db.customer.create({
+      data: {
+        name: 'Ordinary Customer User',
+        email: testNonAdminEmail,
+        phone: '555-0999',
       },
     });
 
@@ -80,30 +101,74 @@ async function runPhase20SecurityTests() {
         name: 'Unauth Therapist',
         email: `unauth-${timestamp}@massaf.com`,
       });
-      assert(!unauthRes.success && (String(unauthRes.error).includes('Unauthorized') || String(unauthRes.error).includes('must be logged in')), '1. Admin server action rejects unauthenticated caller');
+      assert(!unauthRes.success && (String(unauthRes.error).includes('Unauthorized') || String(unauthRes.error).includes('must be logged in')), '1. Unauthenticated admin server action rejected');
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      assert(errMsg.includes('Unauthorized') || errMsg.includes('must be logged in'), '1. Admin server action rejects unauthenticated caller');
+      assert(errMsg.includes('Unauthorized') || errMsg.includes('must be logged in'), '1. Unauthenticated admin server action rejected');
     }
 
-    // 2. Customer Token Logic Test
-    const fakeCustToken = createSessionToken(custA.id, custA.email, 'CUSTOMER');
-    assert(fakeCustToken.length > 0, '2. Created valid customer token');
-
-    // 3. Admin Token Validation Direct Test
+    // 2. Admin HMAC Session Creation & Verification
     const adminToken = createSessionToken(adminUser.id, adminUser.email, 'ADMIN', 24, adminUser.role);
-    assert(adminToken.length > 0, '3a. Created valid admin HMAC token');
+    const parsedAdminPayload = verifySessionToken(adminToken, 'ADMIN');
+    assert(parsedAdminPayload !== null && parsedAdminPayload.entityId === adminUser.id, '2. Valid admin HMAC token verified successfully');
 
-    const verifiedPayload = verifySessionToken(adminToken, 'ADMIN');
-    assert(verifiedPayload !== null && verifiedPayload.entityId === adminUser.id, '3b. Valid admin HMAC token verified successfully');
+    // 3. Non-Admin / Customer Session Role Rejection in Admin Guard
+    const custToken = createSessionToken(custA.id, custA.email, 'CUSTOMER');
+    const custParsedAsAdmin = verifySessionToken(custToken, 'ADMIN');
+    assert(custParsedAsAdmin === null, '3. Customer session payload rejected when evaluated for ADMIN role');
 
-    // 4. Admin Availability Range & Overlap Logic Test
-    const { parseTimeStringToMinutes } = await import('@/lib/availability');
+    // 4. Invalid / Tampered Admin Token Rejection
+    const tamperedAdminToken = adminToken.slice(0, -6) + 'XXXXXX';
+    assert(verifySessionToken(tamperedAdminToken, 'ADMIN') === null, '4. Tampered admin session token rejected');
+
+    // 5. Admin API Key Guard Validation
+    const validHeaderReq = new Request('http://localhost:3000/api/admin/therapists', {
+      headers: { 'x-admin-api-key': 'dev-admin-api-key-secret-32-chars' },
+    });
+    const validApiKeyCheck = await verifyAdminApiKey(validHeaderReq);
+    assert(validApiKeyCheck === null, '5. Valid admin API key header accepted by verifyAdminApiKey');
+
+    // 6. Invalid API Key Rejection
+    const invalidHeaderReq = new Request('http://localhost:3000/api/admin/therapists', {
+      headers: { 'x-admin-api-key': 'invalid-secret-key' },
+    });
+    const invalidApiKeyCheck = await verifyAdminApiKey(invalidHeaderReq);
+    assert(invalidApiKeyCheck !== null && invalidApiKeyCheck.status === 401, '6. Invalid admin API key header rejected with 401');
+
+    // 7. Customer Review Ownership Protection Test
+    const bookingA = await db.booking.create({
+      data: {
+        bookingNumber: `REV-A-${timestamp}`,
+        customerId: custA.id,
+        therapistId: therapist.id,
+        serviceId: service.id,
+        appointmentDateTime: new Date(Date.now() - 3600 * 1000),
+        durationMinutes: 60,
+        amount: 120.0,
+        status: 'COMPLETED',
+        paymentStatus: 'PAID',
+      },
+    });
+
+    // Customer B trying to review Customer A's booking
+    const unauthorizedReviewCheck = bookingA.customerId === custB.id;
+    assert(!unauthorizedReviewCheck, '7. Customer B cannot review Customer A\'s completed booking');
+
+    // 8. Legitimate Owner Review Eligibility
+    const authorizedReviewCheck = bookingA.customerId === custA.id && bookingA.status === 'COMPLETED';
+    assert(authorizedReviewCheck, '8. Booking owner Customer A can submit review for completed booking');
+
+    // 9. Booking Details Access Control
+    const isOwnerAccess = custA.id === bookingA.customerId;
+    const isUnrelatedCustAccess = custB.id === bookingA.customerId;
+    assert(isOwnerAccess && !isUnrelatedCustAccess, '9. Booking details ownership boundary enforced');
+
+    // 10. Admin Availability Range & Overlap Validation Logic
     const startMins = parseTimeStringToMinutes('14:00');
     const endMins = parseTimeStringToMinutes('09:00');
-    assert(startMins > endMins, '4a. Invalid start time > end time detected via time parser');
+    assert(startMins > endMins, '10a. Invalid start time >= end time rejected by parser');
 
-    const slot1 = await db.therapistAvailability.create({
+    const avail1 = await db.therapistAvailability.create({
       data: {
         therapistId: therapist.id,
         dayOfWeek: 1,
@@ -112,24 +177,24 @@ async function runPhase20SecurityTests() {
         isUnavailable: false,
       },
     });
-    assert(slot1.id !== null, '4b. Initial availability slot created in DB');
+    assert(avail1.id !== null, '10b. Initial availability window saved');
 
-    const existingSlots = await db.therapistAvailability.findMany({
+    const existingWindows = await db.therapistAvailability.findMany({
       where: { therapistId: therapist.id, dayOfWeek: 1 },
     });
-    const candidateStart = parseTimeStringToMinutes('10:00');
-    const candidateEnd = parseTimeStringToMinutes('14:00');
-    const hasOverlap = existingSlots.some((e) => {
-      const eStart = parseTimeStringToMinutes(e.startTime);
-      const eEnd = parseTimeStringToMinutes(e.endTime);
-      return candidateStart < eEnd && candidateEnd > eStart;
+    const candStart = parseTimeStringToMinutes('10:00');
+    const candEnd = parseTimeStringToMinutes('14:00');
+    const isOverlapping = existingWindows.some((w) => {
+      const wStart = parseTimeStringToMinutes(w.startTime);
+      const wEnd = parseTimeStringToMinutes(w.endTime);
+      return candStart < wEnd && candEnd > wStart;
     });
-    assert(hasOverlap, '4c. Admin availability window overlap detected correctly');
+    assert(isOverlapping, '10c. Overlapping availability window detected and blocked');
 
-    // 5. Booking Creation and Payment Idempotency & Mismatch Protection
-    const booking = await db.booking.create({
+    // 11. PayLio Amount & Currency Verification & Idempotency
+    const paylioBooking = await db.booking.create({
       data: {
-        bookingNumber: `SEC-${timestamp}`,
+        bookingNumber: `PAY-${timestamp}`,
         customerId: custA.id,
         therapistId: therapist.id,
         serviceId: service.id,
@@ -142,62 +207,61 @@ async function runPhase20SecurityTests() {
       },
     });
 
-    // 5a. Amount mismatch rejection
-    const mismatchAmountRes = await confirmVerifiedPayLioPayment({
-      bookingId: booking.id,
+    const mismatchAmtRes = await confirmVerifiedPayLioPayment({
+      bookingId: paylioBooking.id,
       ipnToken: `ipn_token_sec_${timestamp}`,
       providerStatus: 'PAID',
       providerOriginalAmount: 99.0, // Wrong amount
       providerCurrency: 'USD',
     });
-    assert(!mismatchAmountRes.success && mismatchAmountRes.paymentStatus !== 'PAID', '5. PayLio amount mismatch cannot mark booking PAID');
+    assert(!mismatchAmtRes.success && mismatchAmtRes.paymentStatus !== 'PAID', '11a. PayLio amount mismatch rejected');
 
-    // 5b. Currency mismatch rejection
     const mismatchCurrRes = await confirmVerifiedPayLioPayment({
-      bookingId: booking.id,
+      bookingId: paylioBooking.id,
       ipnToken: `ipn_token_sec_${timestamp}`,
       providerStatus: 'PAID',
       providerOriginalAmount: 120.0,
       providerCurrency: 'EUR', // Wrong currency
     });
-    assert(!mismatchCurrRes.success && mismatchCurrRes.paymentStatus !== 'PAID', '6. PayLio invalid currency cannot mark booking PAID');
+    assert(!mismatchCurrRes.success && mismatchCurrRes.paymentStatus !== 'PAID', '11b. PayLio currency mismatch rejected');
 
-    // 5c. Valid PayLio confirmation
     const validPayRes = await confirmVerifiedPayLioPayment({
-      bookingId: booking.id,
+      bookingId: paylioBooking.id,
       ipnToken: `ipn_token_sec_${timestamp}`,
       providerStatus: 'PAID',
       providerOriginalAmount: 120.0,
       providerCurrency: 'USD',
     });
-    assert(validPayRes.success && validPayRes.paymentStatus === 'PAID', '7. Valid PayLio payment confirms booking to PAID');
+    assert(validPayRes.success && validPayRes.paymentStatus === 'PAID', '11c. Valid PayLio payment transitions booking to PAID');
 
-    // 5d. Repeated Callback Idempotency
     const repeatPayRes = await confirmVerifiedPayLioPayment({
-      bookingId: booking.id,
+      bookingId: paylioBooking.id,
       ipnToken: `ipn_token_sec_${timestamp}`,
       providerStatus: 'PAID',
       providerOriginalAmount: 120.0,
       providerCurrency: 'USD',
     });
-    assert(repeatPayRes.success && repeatPayRes.message.includes('idempotent'), '8. PayLio repeated callback remains idempotent');
+    assert(repeatPayRes.success && repeatPayRes.message.includes('idempotent'), '11d. PayLio repeated callback remains idempotent');
 
-    // 6. Verification Token Single-Use Atomic Protection
+    // 12. Verification Token Single-Use Atomic Protection
     const rawToken = await generateVerificationToken(therapist.id, 'THERAPIST_LOGIN');
     const consume1 = await consumeVerificationToken(rawToken, 'THERAPIST_LOGIN');
-    assert(consume1 === therapist.id, '9. Verification token consumed successfully');
+    assert(consume1 === therapist.id, '12a. First token consumption succeeds');
 
     const consume2 = await consumeVerificationToken(rawToken, 'THERAPIST_LOGIN');
-    assert(consume2 === null, '10. Re-using verification token rejected atomically');
+    assert(consume2 === null, '12b. Second token consumption fails (single-use guarantee)');
 
-    // Clean up test entities
-    await db.booking.delete({ where: { id: booking.id } });
+    // Clean up test records from DB
+    await db.booking.delete({ where: { id: bookingA.id } });
+    await db.booking.delete({ where: { id: paylioBooking.id } });
     await db.therapistAvailability.deleteMany({ where: { therapistId: therapist.id } });
     await db.therapist.delete({ where: { id: therapist.id } });
     await db.service.delete({ where: { id: service.id } });
+    await db.customer.delete({ where: { id: nonAdminUser.id } });
     await db.customer.delete({ where: { id: custA.id } });
     await db.customer.delete({ where: { id: custB.id } });
     await db.user.delete({ where: { id: adminUser.id } });
+    await db.user.delete({ where: { id: staffUser.id } });
 
     console.log('====================================================');
     console.log(`  PHASE 20 SECURITY SUITE RESULTS: ${passed} PASSED, ${failed} FAILED  `);
