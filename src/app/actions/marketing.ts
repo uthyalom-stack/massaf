@@ -1,10 +1,18 @@
 'use server';
 
 import { db } from '@/lib/db';
-import { cookies } from 'next/headers';
 
 const MARKETING_COOKIE_NAME = 'massaf_marketing_ref';
 const COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 days in seconds
+
+async function safeGetCookieStore() {
+  try {
+    const { cookies } = await import('next/headers');
+    return await cookies();
+  } catch {
+    return null;
+  }
+}
 
 export async function trackMarketingClickAction(code: string): Promise<{ success: boolean }> {
   if (!code || typeof code !== 'string') {
@@ -17,8 +25,8 @@ export async function trackMarketingClickAction(code: string): Promise<{ success
   }
 
   try {
-    const cookieStore = await cookies();
-    const existingRef = cookieStore.get(MARKETING_COOKIE_NAME)?.value;
+    const cookieStore = await safeGetCookieStore();
+    const existingRef = cookieStore?.get(MARKETING_COOKIE_NAME)?.value;
 
     // Step 1: If an existing cookie value exists, verify if it corresponds to a VALID ACTIVE marketing link in the database.
     if (existingRef) {
@@ -52,13 +60,15 @@ export async function trackMarketingClickAction(code: string): Promise<{ success
       },
     });
 
-    // Step 4: Set/overwrite cookie with this first valid marketing reference code
-    cookieStore.set(MARKETING_COOKIE_NAME, newMarketingLink.code, {
-      maxAge: COOKIE_MAX_AGE,
-      path: '/',
-      httpOnly: false, // allow client presence check
-      sameSite: 'lax',
-    });
+    // Step 4: Set/overwrite cookie if cookieStore is available
+    if (cookieStore) {
+      cookieStore.set(MARKETING_COOKIE_NAME, newMarketingLink.code, {
+        maxAge: COOKIE_MAX_AGE,
+        path: '/',
+        httpOnly: false, // allow client presence check
+        sameSite: 'lax',
+      });
+    }
 
     return { success: true };
   } catch (error) {
@@ -69,8 +79,8 @@ export async function trackMarketingClickAction(code: string): Promise<{ success
 
 export async function getAttributedMarketingLink(): Promise<string | null> {
   try {
-    const cookieStore = await cookies();
-    const ref = cookieStore.get(MARKETING_COOKIE_NAME)?.value;
+    const cookieStore = await safeGetCookieStore();
+    const ref = cookieStore?.get(MARKETING_COOKIE_NAME)?.value;
     if (!ref) return null;
 
     const link = await db.marketingLink.findUnique({

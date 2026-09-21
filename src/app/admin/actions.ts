@@ -27,15 +27,25 @@ import {
 import { deleteFromR2 } from '@/lib/r2';
 import { getVerifiedAdminSession } from '@/lib/auth-session';
 import { parseTimeStringToMinutes } from '@/lib/availability';
+import { hashPassword } from '@/lib/auth-password';
 
 /**
- * Server-side authorization check ensuring caller holds a valid, verified admin session.
+ * Server-side authorization check ensuring caller holds a valid, verified admin session
+ * and optionally belongs to one of the specified allowed roles.
  */
-async function checkServerAdminAuth() {
+async function checkServerAdminAuth(allowedRoles?: string[]) {
   const adminSession = await getVerifiedAdminSession();
   if (!adminSession) {
     throw new Error('Unauthorized: You must be logged in as an administrator to perform this action.');
   }
+
+  if (allowedRoles && allowedRoles.length > 0) {
+    const userRole = adminSession.role || 'ADMIN';
+    if (!allowedRoles.includes(userRole)) {
+      throw new Error(`Unauthorized: Role '${userRole}' is not permitted to perform this operation.`);
+    }
+  }
+
   return adminSession;
 }
 
@@ -47,9 +57,11 @@ function safeRevalidatePath(path: string) {
   }
 }
 
+// --- Therapist Management ---
+
 export async function createTherapistAction(input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const validated = therapistBaseSchema.parse(input);
 
     if (validated.email) {
@@ -87,11 +99,141 @@ export async function createTherapistAction(input: unknown) {
   }
 }
 
+// --- Marketer Account Management (SUPER_ADMIN) ---
+
+export async function createMarketerAction(input: { name?: string; email: string; password: string }) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN']);
+
+    if (!input.email || typeof input.email !== 'string' || !input.email.trim()) {
+      return { success: false, error: 'Email address is required.' };
+    }
+
+    if (!input.password || typeof input.password !== 'string' || input.password.length < 6) {
+      return { success: false, error: 'Password must be at least 6 characters long.' };
+    }
+
+    const cleanEmail = input.email.trim().toLowerCase();
+
+    const existing = await db.user.findUnique({
+      where: { email: cleanEmail },
+    });
+
+    if (existing) {
+      return { success: false, error: 'A user account with this email address already exists.' };
+    }
+
+    const passwordHash = hashPassword(input.password);
+
+    const marketer = await db.user.create({
+      data: {
+        name: input.name ? input.name.trim() : null,
+        email: cleanEmail,
+        passwordHash,
+        role: 'STAFF',
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/marketers');
+    return { success: true, marketer };
+  } catch (err: unknown) {
+    console.error('Error in createMarketerAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to create marketer account.',
+    };
+  }
+}
+
+export async function listMarketersAction() {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const marketers = await db.user.findMany({
+      where: { role: 'STAFF' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+        marketingLinks: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            isActive: true,
+            clicks: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return { success: true, marketers };
+  } catch (err: unknown) {
+    console.error('Error in listMarketersAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to retrieve marketers list.',
+    };
+  }
+}
+
+export async function deleteMarketerAction(userId: string) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN']);
+
+    const user = await db.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      return { success: false, error: 'Marketer account not found.' };
+    }
+
+    if (user.role !== 'STAFF') {
+      return { success: false, error: 'Only STAFF (marketer) accounts can be deleted with this action.' };
+    }
+
+    // 1. Deactivate all referral links owned by this marketer
+    await db.marketingLink.updateMany({
+      where: { userId },
+      data: { isActive: false },
+    });
+
+    // 2. Delete the user record (MarketingLink.userId will become null due to onDelete: SetNull)
+    await db.user.delete({
+      where: { id: userId },
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/marketers');
+    return { success: true };
+  } catch (err: unknown) {
+    console.error('Error in deleteMarketerAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to delete marketer account.',
+    };
+  }
+}
+
 // --- Service Categories & Global Services ---
 
 export async function createServiceCategoryAction(input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const data = input as { name: string; description?: string; imageUrl?: string; sortOrder?: number; isActive?: boolean };
     if (!data.name || data.name.trim().length < 2) {
       return { success: false, error: 'Category name must be at least 2 characters.' };
@@ -118,7 +260,7 @@ export async function createServiceCategoryAction(input: unknown) {
 
 export async function updateServiceCategoryAction(id: string, input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const data = input as { name?: string; description?: string; imageUrl?: string; sortOrder?: number; isActive?: boolean };
     const updated = await db.serviceCategory.update({
       where: { id },
@@ -142,7 +284,7 @@ export async function updateServiceCategoryAction(id: string, input: unknown) {
 
 export async function deleteServiceCategoryAction(id: string) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     // Unassign category from services before deleting category
     await db.service.updateMany({
       where: { categoryId: id },
@@ -162,7 +304,7 @@ export async function deleteServiceCategoryAction(id: string) {
 
 export async function createGlobalServiceAction(input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const data = input as {
       name: string;
       description?: string;
@@ -198,7 +340,7 @@ export async function createGlobalServiceAction(input: unknown) {
 
 export async function updateGlobalServiceAction(id: string, input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const data = input as {
       name?: string;
       description?: string;
@@ -233,7 +375,7 @@ export async function updateGlobalServiceAction(id: string, input: unknown) {
 
 export async function createTestimonialAction(input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const data = input as {
       authorName: string;
       authorLocation?: string;
@@ -269,7 +411,7 @@ export async function createTestimonialAction(input: unknown) {
 
 export async function toggleTestimonialPublishedAction(id: string, isPublished: boolean) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const updated = await db.testimonial.update({
       where: { id },
       data: { isPublished },
@@ -286,7 +428,7 @@ export async function toggleTestimonialPublishedAction(id: string, isPublished: 
 
 export async function deleteTestimonialAction(id: string) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const testimonial = await db.testimonial.findUnique({ where: { id } });
     if (!testimonial) return { success: false, error: 'Testimonial not found.' };
 
@@ -305,7 +447,7 @@ export async function deleteTestimonialAction(id: string) {
 
 export async function updateSiteContentAction(key: string, title: string, content: string) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     if (!key || !title || !content) {
       return { success: false, error: 'Key, title, and content are required.' };
     }
@@ -329,7 +471,7 @@ export async function updateSiteContentAction(key: string, title: string, conten
 
 export async function createMarketingLinkAction(input: unknown) {
   try {
-    await checkServerAdminAuth();
+    const session = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'STAFF']);
     const validated = createMarketingLinkSchema.parse(input);
 
     // Enforce code uniqueness server-side
@@ -344,12 +486,20 @@ export async function createMarketingLinkAction(input: unknown) {
       };
     }
 
+    let targetUserId: string | null = null;
+    if (session.role === 'STAFF') {
+      targetUserId = session.entityId;
+    } else if (validated.userId) {
+      targetUserId = validated.userId;
+    }
+
     const marketingLink = await db.marketingLink.create({
       data: {
         name: validated.name,
         code: validated.code,
         destinationUrl: validated.destinationUrl || '/',
         isActive: validated.isActive ?? true,
+        userId: targetUserId,
       },
     });
 
@@ -367,7 +517,7 @@ export async function createMarketingLinkAction(input: unknown) {
 
 export async function updateMarketingLinkAction(input: unknown) {
   try {
-    await checkServerAdminAuth();
+    const session = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'STAFF']);
     const validated = updateMarketingLinkSchema.parse(input);
 
     const existing = await db.marketingLink.findUnique({
@@ -376,6 +526,13 @@ export async function updateMarketingLinkAction(input: unknown) {
 
     if (!existing) {
       return { success: false, error: 'Marketing link not found.' };
+    }
+
+    if (session.role === 'STAFF' && existing.userId !== session.entityId) {
+      return {
+        success: false,
+        error: 'Unauthorized: You can only modify your own marketing links.',
+      };
     }
 
     if (validated.code && validated.code !== existing.code) {
@@ -397,6 +554,7 @@ export async function updateMarketingLinkAction(input: unknown) {
         ...(validated.code !== undefined && { code: validated.code }),
         ...(validated.destinationUrl !== undefined && { destinationUrl: validated.destinationUrl }),
         ...(validated.isActive !== undefined && { isActive: validated.isActive }),
+        ...(session.role !== 'STAFF' && validated.userId !== undefined && { userId: validated.userId }),
       },
     });
 
@@ -417,20 +575,135 @@ export async function toggleMarketingLinkActiveAction(id: string, isActive: bool
   return updateMarketingLinkAction({ id, isActive });
 }
 
+export async function getMarketerStatsAction(userId?: string) {
+  try {
+    const session = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'STAFF']);
+    const targetUserId = session.role === 'STAFF' ? session.entityId : (userId || session.entityId);
+
+    const links = await db.marketingLink.findMany({
+      where: { userId: targetUserId },
+      select: {
+        id: true,
+        clicks: true,
+      },
+    });
+
+    const linkIds = links.map((l) => l.id);
+    const totalClicks = links.reduce((sum, l) => sum + l.clicks, 0);
+
+    let totalBookings = 0;
+    let paidBookings = 0;
+    let paidRevenue = 0.0;
+
+    if (linkIds.length > 0) {
+      const bookings = await db.booking.findMany({
+        where: {
+          marketingLinkId: { in: linkIds },
+        },
+        select: {
+          id: true,
+          amount: true,
+          paymentStatus: true,
+        },
+      });
+
+      totalBookings = bookings.length;
+
+      const paidList = bookings.filter((b) => b.paymentStatus === 'PAID');
+      paidBookings = paidList.length;
+      paidRevenue = paidList.reduce((sum, b) => sum + b.amount, 0);
+    }
+
+    return {
+      success: true,
+      stats: {
+        clicks: totalClicks,
+        totalBookings,
+        paidBookings,
+        paidRevenue: Math.round(paidRevenue * 100) / 100,
+      },
+    };
+  } catch (err: unknown) {
+    console.error('Error in getMarketerStatsAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to retrieve marketer stats.',
+    };
+  }
+}
+
+export async function getMarketerLeaderboardAction() {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'STAFF']);
+
+    const marketers = await db.user.findMany({
+      where: { role: 'STAFF' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        marketingLinks: {
+          select: {
+            id: true,
+            clicks: true,
+            bookings: {
+              select: {
+                amount: true,
+                paymentStatus: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const leaderboard = marketers.map((m) => {
+      let clicks = 0;
+      let totalBookings = 0;
+      let paidRevenue = 0.0;
+
+      for (const link of m.marketingLinks) {
+        clicks += link.clicks;
+        totalBookings += link.bookings.length;
+        for (const b of link.bookings) {
+          if (b.paymentStatus === 'PAID') {
+            paidRevenue += b.amount;
+          }
+        }
+      }
+
+      return {
+        userId: m.id,
+        name: m.name || m.email,
+        email: m.email,
+        clicks,
+        totalBookings,
+        paidRevenue: Math.round(paidRevenue * 100) / 100,
+      };
+    });
+
+    leaderboard.sort((a, b) => b.paidRevenue - a.paidRevenue);
+
+    return { success: true, leaderboard };
+  } catch (err: unknown) {
+    console.error('Error in getMarketerLeaderboardAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to retrieve marketer leaderboard.',
+    };
+  }
+}
+
 // --- Reviews Moderation ---
 
-/**
- * Validates whether a transition between ReviewStatus values is permissible.
- */
 function isValidReviewStatusTransition(currentStatus: ReviewStatus, newStatus: ReviewStatus): boolean {
   if (currentStatus === newStatus) return true;
-  // All transitions between PENDING, APPROVED, and REJECTED are valid for admin moderation
   return ['PENDING', 'APPROVED', 'REJECTED'].includes(newStatus);
 }
 
 export async function updateReviewStatusAction(input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const validated = updateReviewStatusSchema.parse(input);
 
     const review = await db.review.findUnique({
@@ -450,7 +723,6 @@ export async function updateReviewStatusAction(input: unknown) {
 
     const isPublished = validated.status === 'APPROVED';
 
-    // Execute review status update and therapist rating aggregate update in a transaction so both succeed or fail together
     const updated = await db.$transaction(async (tx) => {
       const updatedReview = await tx.review.update({
         where: { id: validated.reviewId },
@@ -510,9 +782,6 @@ export async function updateReviewStatusAction(input: unknown) {
 
 // --- Bookings ---
 
-/**
- * Validates whether a transition from currentStatus to newStatus is permissible.
- */
 function isValidStatusTransition(currentStatus: BookingStatus, newStatus: BookingStatus): boolean {
   if (currentStatus === newStatus) return true;
 
@@ -539,7 +808,7 @@ function isValidStatusTransition(currentStatus: BookingStatus, newStatus: Bookin
 
 export async function updateBookingStatusAction(input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const validated = updateBookingStatusSchema.parse(input);
 
     const booking = await db.booking.findUnique({
@@ -562,7 +831,6 @@ export async function updateBookingStatusAction(input: unknown) {
       data: { status: validated.status },
     });
 
-    // Dispatch lifecycle notifications with failure isolation
     try {
       if (validated.status === 'CONFIRMED' && booking.status !== 'CONFIRMED') {
         await notifyBookingConfirmed(updated.id);
@@ -590,7 +858,7 @@ export async function updateBookingStatusAction(input: unknown) {
 
 export async function assignBookingTherapistAction(input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const validated = assignBookingTherapistSchema.parse(input);
 
     const booking = await db.booking.findUnique({
@@ -611,7 +879,6 @@ export async function assignBookingTherapistAction(input: unknown) {
       };
     }
 
-    // Check therapist existence & eligibility in database
     const therapist = await db.therapist.findUnique({
       where: { id: validated.therapistId },
       include: {
@@ -620,11 +887,7 @@ export async function assignBookingTherapistAction(input: unknown) {
       },
     });
 
-    if (!therapist) {
-      return { success: false, error: 'This therapist cannot be assigned to this booking.' };
-    }
-
-    if (!therapist.isActive) {
+    if (!therapist || !therapist.isActive) {
       return { success: false, error: 'This therapist cannot be assigned to this booking.' };
     }
 
@@ -642,7 +905,6 @@ export async function assignBookingTherapistAction(input: unknown) {
       };
     }
 
-    // Check service compatibility strictly against active TherapistService DB records
     const offersService = therapist.services.some(
       (ts) => ts.serviceId === booking.serviceId && ts.isActive
     );
@@ -654,7 +916,6 @@ export async function assignBookingTherapistAction(input: unknown) {
       };
     }
 
-    // Check service area for IN_HOME bookings if therapist has serviceAreas configured
     if (booking.locationType === 'IN_HOME' && booking.zipCode && therapist.serviceAreas.length > 0) {
       const coversZip = therapist.serviceAreas.some(
         (sa) => sa.zipCode.trim() === booking.zipCode?.trim()
@@ -692,7 +953,7 @@ export async function assignBookingTherapistAction(input: unknown) {
 
 export async function cancelBookingAction(input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const validated = cancelBookingSchema.parse(input);
 
     const booking = await db.booking.findUnique({
@@ -722,7 +983,6 @@ export async function cancelBookingAction(input: unknown) {
       },
     });
 
-    // Dispatch cancellation notification with failure isolation
     try {
       await notifyBookingCancelled(updated.id, validated.reason || 'Cancelled by admin');
     } catch (notifErr) {
@@ -746,7 +1006,7 @@ export async function updateTherapistAction(id: string, input: unknown) {
   let newlyUploadedUrl: string | null = null;
 
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const therapist = await db.therapist.findUnique({ where: { id } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -775,7 +1035,6 @@ export async function updateTherapistAction(id: string, input: unknown) {
       }
     }
 
-    // 1. Execute DB update FIRST
     const updated = await db.therapist.update({
       where: { id },
       data: {
@@ -792,7 +1051,6 @@ export async function updateTherapistAction(id: string, input: unknown) {
       },
     });
 
-    // 2. Only after DB update succeeds, safely delete old profile image if replaced or cleared
     if (oldProfileImage && oldProfileImage !== updated.profileImage) {
       try {
         await deleteFromR2(oldProfileImage);
@@ -807,7 +1065,6 @@ export async function updateTherapistAction(id: string, input: unknown) {
   } catch (err: unknown) {
     console.error('Error in updateTherapistAction:', err);
 
-    // Rollback cleanup: if DB update failed and a new R2 object was uploaded, delete newly uploaded object
     if (newlyUploadedUrl) {
       try {
         await deleteFromR2(newlyUploadedUrl);
@@ -829,7 +1086,7 @@ export async function toggleTherapistActiveAction(id: string, isActive: boolean)
 
 export async function deleteTherapistAction(id: string) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const therapist = await db.therapist.findUnique({
       where: { id },
       include: {
@@ -854,10 +1111,8 @@ export async function deleteTherapistAction(id: string) {
       };
     }
 
-    // Delete DB record first
     await db.therapist.delete({ where: { id } });
 
-    // Clean up associated R2 media objects (profile image and gallery photos)
     if (therapist.profileImage) {
       await deleteFromR2(therapist.profileImage);
     }
@@ -883,7 +1138,7 @@ export async function addTherapistPhotoAction(therapistId: string, input: unknow
   let uploadedUrl: string | null = null;
 
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
 
     if (typeof input === 'object' && input !== null && 'url' in input && typeof (input as { url: unknown }).url === 'string') {
       uploadedUrl = (input as { url: string }).url;
@@ -904,7 +1159,6 @@ export async function addTherapistPhotoAction(therapistId: string, input: unknow
     const validated = photoSchema.parse(input);
     uploadedUrl = validated.url;
 
-    // Create DB record
     const photo = await db.therapistPhoto.create({
       data: {
         therapistId,
@@ -919,7 +1173,6 @@ export async function addTherapistPhotoAction(therapistId: string, input: unknow
   } catch (err: unknown) {
     console.error('Error in addTherapistPhotoAction:', err);
 
-    // If DB insertion fails, delete newly uploaded R2 object to prevent orphaned storage
     if (uploadedUrl) {
       try {
         await deleteFromR2(uploadedUrl);
@@ -937,7 +1190,7 @@ export async function addTherapistPhotoAction(therapistId: string, input: unknow
 
 export async function updateTherapistPhotoOrderAction(therapistId: string, input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -975,7 +1228,7 @@ export async function updateTherapistPhotoOrderAction(therapistId: string, input
 
 export async function removeTherapistPhotoAction(therapistId: string, photoId: string) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const photo = await db.therapistPhoto.findFirst({
       where: { id: photoId, therapistId },
     });
@@ -984,10 +1237,8 @@ export async function removeTherapistPhotoAction(therapistId: string, photoId: s
       return { success: false, error: 'Photo not found for this therapist.' };
     }
 
-    // 1. Delete DB record FIRST
     await db.therapistPhoto.delete({ where: { id: photoId } });
 
-    // 2. Only if DB deletion succeeds, delete corresponding R2 object if it matches MASSAF R2 domain
     if (photo.url) {
       try {
         await deleteFromR2(photo.url);
@@ -1007,11 +1258,11 @@ export async function removeTherapistPhotoAction(therapistId: string, photoId: s
   }
 }
 
-// --- Services ---
+// --- Services Assignments ---
 
 export async function assignTherapistServiceAction(therapistId: string, input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -1064,7 +1315,7 @@ export async function assignTherapistServiceAction(therapistId: string, input: u
 
 export async function removeTherapistServiceAction(therapistId: string, serviceId: string) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const therapistService = await db.therapistService.findUnique({
       where: {
         therapistId_serviceId: {
@@ -1102,7 +1353,7 @@ export async function removeTherapistServiceAction(therapistId: string, serviceI
 
 export async function addServiceAreaAction(therapistId: string, input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -1110,7 +1361,6 @@ export async function addServiceAreaAction(therapistId: string, input: unknown) 
 
     const validated = serviceAreaSchema.parse(input);
 
-    // Support bulk ZIP codes separated by commas, spaces, or newlines
     const rawZips = validated.zipCode.split(/[\s,;\n\r]+/).map((z) => z.trim()).filter((z) => z.length >= 3);
 
     if (rawZips.length === 0) {
@@ -1173,7 +1423,7 @@ export async function addServiceAreaAction(therapistId: string, input: unknown) 
 
 export async function removeServiceAreaAction(therapistId: string, areaId: string) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const serviceArea = await db.serviceArea.findFirst({
       where: { id: areaId, therapistId },
     });
@@ -1215,7 +1465,7 @@ function expandDayRange(startDay: number, endDay: number): number[] {
 
 export async function addTherapistAvailabilityAction(therapistId: string, input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -1229,7 +1479,6 @@ export async function addTherapistAvailabilityAction(therapistId: string, input:
       return { success: false, error: 'Start time must be strictly before end time.' };
     }
 
-    // Determine target days (single day or day range expansion)
     let targetDays: Array<number | null> = [];
 
     if (
@@ -1313,7 +1562,7 @@ export async function addTherapistAvailabilityAction(therapistId: string, input:
 
 export async function updateTherapistAvailabilityAction(therapistId: string, input: unknown) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -1391,7 +1640,7 @@ export async function updateTherapistAvailabilityAction(therapistId: string, inp
 
 export async function removeTherapistAvailabilityAction(therapistId: string, availabilityId: string) {
   try {
-    await checkServerAdminAuth();
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
     const availability = await db.therapistAvailability.findFirst({
       where: { id: availabilityId, therapistId },
     });

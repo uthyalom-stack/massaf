@@ -10,6 +10,7 @@ export const createMarketingLinkSchema = z.object({
     .regex(/^[a-zA-Z0-9_-]+$/, 'Code can only contain letters, numbers, hyphens, and underscores'),
   destinationUrl: z.string().trim().optional().default('/'),
   isActive: z.boolean().optional().default(true),
+  userId: z.string().optional().nullable(),
 });
 
 export const updateMarketingLinkSchema = z.object({
@@ -24,6 +25,7 @@ export const updateMarketingLinkSchema = z.object({
     .optional(),
   destinationUrl: z.string().trim().optional(),
   isActive: z.boolean().optional(),
+  userId: z.string().optional().nullable(),
 });
 
 export type CreateMarketingLinkInput = z.infer<typeof createMarketingLinkSchema>;

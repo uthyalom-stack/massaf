@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 
 export default function AdminLoginPage() {
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
@@ -18,6 +19,11 @@ export default function AdminLoginPage() {
       return;
     }
 
+    if (!password) {
+      setError('Please enter your password.');
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -26,7 +32,10 @@ export default function AdminLoginPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email: email.trim() }),
+        body: JSON.stringify({
+          email: email.trim(),
+          password,
+        }),
       });
 
       const data = await response.json();
@@ -37,7 +46,7 @@ export default function AdminLoginPage() {
         return;
       }
 
-      // Successful authentication, redirect to admin dashboard
+      // Successful authentication, redirect to admin portal
       router.push(data.redirectUrl || '/admin');
       router.refresh();
     } catch {
@@ -57,7 +66,7 @@ export default function AdminLoginPage() {
             Admin Portal Access
           </h2>
           <p className="mt-2 text-sm text-slate-400">
-            Enter your administrator account email to access management tools
+            Enter your credentials to access the administrative system
           </p>
         </div>
 
@@ -71,22 +80,38 @@ export default function AdminLoginPage() {
           <div className="rounded-md shadow-sm space-y-4">
             <div>
               <label htmlFor="email-address" className="block text-sm font-medium text-slate-300 mb-1">
-                Admin Email Address
+                Email Address
               </label>
-              <div className="relative rounded-md shadow-sm">
-                <input
-                  id="email-address"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="block w-full px-3 py-2.5 border border-slate-700 rounded-lg bg-slate-900 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-                  placeholder="admin@massaf.com"
-                  disabled={isLoading}
-                />
-              </div>
+              <input
+                id="email-address"
+                name="email"
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="block w-full px-3 py-2.5 border border-slate-700 rounded-lg bg-slate-900 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                placeholder="admin@massaf.com"
+                disabled={isLoading}
+              />
+            </div>
+
+            <div>
+              <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-1">
+                Password
+              </label>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="block w-full px-3 py-2.5 border border-slate-700 rounded-lg bg-slate-900 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                placeholder="••••••••"
+                disabled={isLoading}
+              />
             </div>
           </div>
 
