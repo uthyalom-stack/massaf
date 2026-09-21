@@ -5,7 +5,7 @@ import { therapistServiceSchema } from '@/lib/validations/admin-therapist';
 import { verifyAdminApiKey } from '@/lib/admin-guard';
 
 export async function GET(request: Request) {
-  const authError = verifyAdminApiKey(request);
+  const authError = await verifyAdminApiKey(request);
   if (authError) return authError;
 
   try {
@@ -27,7 +27,7 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authError = verifyAdminApiKey(request);
+  const authError = await verifyAdminApiKey(request);
   if (authError) return authError;
 
   const { id } = await params;
@@ -99,7 +99,7 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authError = verifyAdminApiKey(request);
+  const authError = await verifyAdminApiKey(request);
   if (authError) return authError;
 
   const { id } = await params;

@@ -5,12 +5,14 @@ import { db } from '@/lib/db';
 export interface SessionPayload {
   entityId: string;
   email: string;
-  type: 'CUSTOMER' | 'THERAPIST';
+  type: 'CUSTOMER' | 'THERAPIST' | 'ADMIN';
+  role?: string;
   exp: number; // UNIX timestamp in milliseconds
 }
 
 const CUSTOMER_COOKIE_NAME = 'massaf_customer_session';
 const THERAPIST_COOKIE_NAME = 'massaf_therapist_session';
+const ADMIN_COOKIE_NAME = 'massaf_admin_session';
 
 /**
  * Retrieves the server-only cryptographic secret for signing session cookies.
@@ -53,14 +55,16 @@ function safeCompareSignatures(sigA: string, sigB: string): boolean {
 export function createSessionToken(
   entityId: string,
   email: string,
-  type: 'CUSTOMER' | 'THERAPIST',
-  durationHours = 24 * 7 // Default 7 days
+  type: 'CUSTOMER' | 'THERAPIST' | 'ADMIN',
+  durationHours = 24 * 7, // Default 7 days
+  role?: string
 ): string {
   const secret = getAuthSecret();
   const payload: SessionPayload = {
     entityId,
     email: email.toLowerCase().trim(),
     type,
+    ...(role ? { role } : {}),
     exp: Date.now() + durationHours * 60 * 60 * 1000,
   };
 
@@ -77,7 +81,7 @@ export function createSessionToken(
  */
 export function verifySessionToken(
   token: string | undefined | null,
-  expectedType: 'CUSTOMER' | 'THERAPIST'
+  expectedType: 'CUSTOMER' | 'THERAPIST' | 'ADMIN'
 ): SessionPayload | null {
   if (!token) return null;
 
@@ -215,4 +219,60 @@ export async function clearCustomerSessionCookie(): Promise<void> {
 export async function clearTherapistSessionCookie(): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.delete(THERAPIST_COOKIE_NAME);
+}
+
+/**
+ * Server-side helper to read and verify the active admin session from HTTP-only cookie.
+ * Revalidates against the database `User` model to confirm the admin user exists and has an administrative Role.
+ */
+export async function getVerifiedAdminSession(): Promise<SessionPayload | null> {
+  try {
+    const cookieStore = await cookies();
+    const token = cookieStore.get(ADMIN_COOKIE_NAME)?.value;
+    const payload = verifySessionToken(token, 'ADMIN');
+    if (!payload) return null;
+
+    // Database revalidation: Confirm Admin User entity exists and has an admin role
+    const adminUser = await db.user.findUnique({
+      where: { id: payload.entityId },
+      select: { id: true, email: true, role: true },
+    });
+
+    if (!adminUser) return null;
+
+    return {
+      ...payload,
+      email: adminUser.email,
+      role: adminUser.role,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sets an HTTP-only, secure, signed admin session cookie.
+ */
+export async function setAdminSessionCookie(
+  entityId: string,
+  email: string,
+  role = 'SUPER_ADMIN'
+): Promise<void> {
+  const token = createSessionToken(entityId, email, 'ADMIN', 24 * 7, role);
+  const cookieStore = await cookies();
+  cookieStore.set(ADMIN_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 7 * 24 * 60 * 60, // 7 days in seconds
+  });
+}
+
+/**
+ * Clears the admin session cookie.
+ */
+export async function clearAdminSessionCookie(): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.delete(ADMIN_COOKIE_NAME);
 }

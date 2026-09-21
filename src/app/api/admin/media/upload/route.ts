@@ -61,7 +61,7 @@ function validateImageMagicBytes(buffer: Buffer): { valid: boolean; format?: str
 
 export async function POST(request: Request) {
   // 1. Verify authorization (admin OR verified therapist session)
-  const adminAuthError = verifyAdminApiKey(request);
+  const adminAuthError = await verifyAdminApiKey(request);
   const therapistSession = await getVerifiedTherapistSession();
 
   if (adminAuthError && !therapistSession) {

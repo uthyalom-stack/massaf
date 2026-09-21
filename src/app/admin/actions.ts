@@ -25,15 +25,17 @@ import {
   notifyBookingCompleted,
 } from '@/lib/notifications';
 import { deleteFromR2 } from '@/lib/r2';
+import { getVerifiedAdminSession } from '@/lib/auth-session';
 
 /**
- * Server-side authorization check ensuring MASSAF_ADMIN_API_KEY is configured on the server.
+ * Server-side authorization check ensuring caller holds a valid, verified admin session.
  */
-function checkServerAdminAuth() {
-  const adminKey = process.env.MASSAF_ADMIN_API_KEY;
-  if (!adminKey) {
-    throw new Error('Server authorization configuration error: MASSAF_ADMIN_API_KEY is not configured.');
+async function checkServerAdminAuth() {
+  const adminSession = await getVerifiedAdminSession();
+  if (!adminSession) {
+    throw new Error('Unauthorized: You must be logged in as an administrator to perform this action.');
   }
+  return adminSession;
 }
 
 function safeRevalidatePath(path: string) {
@@ -46,7 +48,7 @@ function safeRevalidatePath(path: string) {
 
 export async function createTherapistAction(input: unknown) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const validated = therapistBaseSchema.parse(input);
 
     if (validated.email) {
@@ -88,7 +90,7 @@ export async function createTherapistAction(input: unknown) {
 
 export async function createMarketingLinkAction(input: unknown) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const validated = createMarketingLinkSchema.parse(input);
 
     // Enforce code uniqueness server-side
@@ -126,7 +128,7 @@ export async function createMarketingLinkAction(input: unknown) {
 
 export async function updateMarketingLinkAction(input: unknown) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const validated = updateMarketingLinkSchema.parse(input);
 
     const existing = await db.marketingLink.findUnique({
@@ -189,7 +191,7 @@ function isValidReviewStatusTransition(currentStatus: ReviewStatus, newStatus: R
 
 export async function updateReviewStatusAction(input: unknown) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const validated = updateReviewStatusSchema.parse(input);
 
     const review = await db.review.findUnique({
@@ -298,7 +300,7 @@ function isValidStatusTransition(currentStatus: BookingStatus, newStatus: Bookin
 
 export async function updateBookingStatusAction(input: unknown) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const validated = updateBookingStatusSchema.parse(input);
 
     const booking = await db.booking.findUnique({
@@ -349,7 +351,7 @@ export async function updateBookingStatusAction(input: unknown) {
 
 export async function assignBookingTherapistAction(input: unknown) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const validated = assignBookingTherapistSchema.parse(input);
 
     const booking = await db.booking.findUnique({
@@ -451,7 +453,7 @@ export async function assignBookingTherapistAction(input: unknown) {
 
 export async function cancelBookingAction(input: unknown) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const validated = cancelBookingSchema.parse(input);
 
     const booking = await db.booking.findUnique({
@@ -505,7 +507,7 @@ export async function updateTherapistAction(id: string, input: unknown) {
   let newlyUploadedUrl: string | null = null;
 
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const therapist = await db.therapist.findUnique({ where: { id } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -588,7 +590,7 @@ export async function toggleTherapistActiveAction(id: string, isActive: boolean)
 
 export async function deleteTherapistAction(id: string) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const therapist = await db.therapist.findUnique({
       where: { id },
       include: {
@@ -642,7 +644,7 @@ export async function addTherapistPhotoAction(therapistId: string, input: unknow
   let uploadedUrl: string | null = null;
 
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
 
     if (typeof input === 'object' && input !== null && 'url' in input && typeof (input as { url: unknown }).url === 'string') {
       uploadedUrl = (input as { url: string }).url;
@@ -696,7 +698,7 @@ export async function addTherapistPhotoAction(therapistId: string, input: unknow
 
 export async function updateTherapistPhotoOrderAction(therapistId: string, input: unknown) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -734,7 +736,7 @@ export async function updateTherapistPhotoOrderAction(therapistId: string, input
 
 export async function removeTherapistPhotoAction(therapistId: string, photoId: string) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const photo = await db.therapistPhoto.findFirst({
       where: { id: photoId, therapistId },
     });
@@ -770,7 +772,7 @@ export async function removeTherapistPhotoAction(therapistId: string, photoId: s
 
 export async function assignTherapistServiceAction(therapistId: string, input: unknown) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -823,7 +825,7 @@ export async function assignTherapistServiceAction(therapistId: string, input: u
 
 export async function removeTherapistServiceAction(therapistId: string, serviceId: string) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const therapistService = await db.therapistService.findUnique({
       where: {
         therapistId_serviceId: {
@@ -861,7 +863,7 @@ export async function removeTherapistServiceAction(therapistId: string, serviceI
 
 export async function addServiceAreaAction(therapistId: string, input: unknown) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -904,7 +906,7 @@ export async function addServiceAreaAction(therapistId: string, input: unknown) 
 
 export async function removeServiceAreaAction(therapistId: string, areaId: string) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const serviceArea = await db.serviceArea.findFirst({
       where: { id: areaId, therapistId },
     });
@@ -929,7 +931,7 @@ export async function removeServiceAreaAction(therapistId: string, areaId: strin
 
 export async function addTherapistAvailabilityAction(therapistId: string, input: unknown) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -961,7 +963,7 @@ export async function addTherapistAvailabilityAction(therapistId: string, input:
 
 export async function updateTherapistAvailabilityAction(therapistId: string, input: unknown) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -1003,7 +1005,7 @@ export async function updateTherapistAvailabilityAction(therapistId: string, inp
 
 export async function removeTherapistAvailabilityAction(therapistId: string, availabilityId: string) {
   try {
-    checkServerAdminAuth();
+    await checkServerAdminAuth();
     const availability = await db.therapistAvailability.findFirst({
       where: { id: availabilityId, therapistId },
     });

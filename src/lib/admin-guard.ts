@@ -1,13 +1,32 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
+import { getVerifiedAdminSession } from '@/lib/auth-session';
 
 /**
- * Temporary Admin Guard for Phase 7 Admin Mutation API Routes.
- * Note: Full authentication & authorization layer (OAuth/Auth.js/RBAC) is intentionally
- * deferred to a future phase. This guard relies on a server-side environment variable key
- * (`MASSAF_ADMIN_API_KEY`) to prevent unauthorized public access to mutation endpoints.
+ * Admin Guard for API Routes & Server Actions.
+ * Validates either:
+ * 1. An active, cryptographically signed admin session cookie (`massaf_admin_session`), or
+ * 2. A valid administrative API key supplied in `x-admin-api-key` or `Authorization: Bearer <key>`.
  */
-export function verifyAdminApiKey(request: Request): NextResponse | null {
+export async function verifyAdminApiKey(request?: Request): Promise<NextResponse | null> {
+  // 1. First check active signed admin session cookie if cookies are available
+  try {
+    const adminSession = await getVerifiedAdminSession();
+    if (adminSession) {
+      return null; // Authorization successful via session cookie
+    }
+  } catch {
+    // Continue to check API key headers if cookie check is inapplicable or fails
+  }
+
+  // 2. Fall back to header / bearer API key check if request object is provided
+  if (!request) {
+    return NextResponse.json(
+      { success: false, error: 'Unauthorized: Valid administrator authentication required.' },
+      { status: 401 }
+    );
+  }
+
   const expectedKey = process.env.MASSAF_ADMIN_API_KEY;
 
   if (!expectedKey) {
@@ -35,7 +54,7 @@ export function verifyAdminApiKey(request: Request): NextResponse | null {
     return NextResponse.json(
       {
         success: false,
-        error: 'Unauthorized: Missing required admin API key header (x-admin-api-key or Authorization Bearer token).',
+        error: 'Unauthorized: Missing required admin authentication (session cookie or x-admin-api-key / Bearer token).',
       },
       { status: 401 }
     );
