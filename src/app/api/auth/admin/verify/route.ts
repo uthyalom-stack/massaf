@@ -55,14 +55,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // Password verification: require valid proof of identity if passwordHash is set on account
-    if (user.passwordHash) {
-      if (!password || typeof password !== 'string' || !verifyPassword(password, user.passwordHash)) {
-        return NextResponse.json(
-          { error: 'Invalid authentication credentials provided' },
-          { status: 401 }
-        );
-      }
+    // Password verification: strictly require passwordHash, password, and valid scrypt verification
+    if (
+      !user.passwordHash ||
+      !password ||
+      typeof password !== 'string' ||
+      !verifyPassword(password, user.passwordHash)
+    ) {
+      return NextResponse.json(
+        { error: 'Invalid authentication credentials provided' },
+        { status: 401 }
+      );
     }
 
     // Set signed HTTP-only admin session cookie

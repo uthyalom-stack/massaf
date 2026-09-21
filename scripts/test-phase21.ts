@@ -66,6 +66,41 @@ async function runPhase21Tests() {
       console.log('✓ Test 2 Passed: Wrong password rejected with 401');
     }
 
+    // Test 2b: Missing password rejected with 401
+    {
+      const req = new Request('http://localhost:3000/api/auth/admin/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: testAdminEmail }),
+      });
+      const res = await postAdminVerifyRoute(req);
+      assert.strictEqual(res.status, 401, 'Missing password must return 401');
+      console.log('✓ Test 2b Passed: Missing password rejected with 401');
+    }
+
+    // Test 2c: Null passwordHash account rejected with 401 even if password is supplied
+    const nullHashAdmin = await db.user.create({
+      data: {
+        email: `null-hash-${timestamp}@massaf.com`,
+        name: 'Legacy Admin Without Password Hash',
+        passwordHash: null,
+        role: 'ADMIN',
+      },
+    });
+
+    {
+      const req = new Request('http://localhost:3000/api/auth/admin/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: nullHashAdmin.email, password: 'AnyPassword123!' }),
+      });
+      const res = await postAdminVerifyRoute(req);
+      assert.strictEqual(res.status, 401, 'Account with null passwordHash must return 401');
+      console.log('✓ Test 2c Passed: Account with passwordHash = null strictly rejected with 401');
+    }
+
+    await db.user.delete({ where: { id: nullHashAdmin.id } });
+
     // Test 3: Public Therapist Privacy Stripping
     const therapist = await db.therapist.create({
       data: {
