@@ -63,10 +63,13 @@ model User {
   name         String?
   passwordHash String?
   role         Role     @default(ADMIN)
+  isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   marketingLinks MarketingLink[]
+
+  @@index([isActive])
 }
 
 /// Customers who book massage appointments

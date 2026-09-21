@@ -6,6 +6,7 @@ import {
 import { hashPassword } from '@/lib/auth-password';
 import {
   createMarketerAction,
+  toggleMarketerActiveAction,
   listMarketersAction,
   deleteMarketerAction,
   createTherapistAction,
@@ -55,6 +56,7 @@ async function runMarketerTestSuite() {
         name: 'Super Admin',
         passwordHash: hashPassword(superAdminPass),
         role: 'SUPER_ADMIN',
+        isActive: true,
       },
     });
 
@@ -64,6 +66,7 @@ async function runMarketerTestSuite() {
         name: 'Normal Admin',
         passwordHash: hashPassword(adminPass),
         role: 'ADMIN',
+        isActive: true,
       },
     });
 
@@ -73,6 +76,7 @@ async function runMarketerTestSuite() {
         name: 'Marketer A',
         passwordHash: hashPassword(staffPass),
         role: 'STAFF',
+        isActive: true,
       },
     });
 
@@ -82,6 +86,7 @@ async function runMarketerTestSuite() {
         name: 'Marketer B',
         passwordHash: hashPassword(staffPass),
         role: 'STAFF',
+        isActive: true,
       },
     });
 
@@ -141,6 +146,7 @@ async function runMarketerTestSuite() {
         name: 'Temp Marketer',
         passwordHash: hashPassword(staffPass),
         role: 'STAFF',
+        isActive: true,
       },
     });
     const tempToken = createSessionToken(tempStaff.id, tempStaff.email, 'ADMIN', 24, tempStaff.role);
@@ -157,7 +163,7 @@ async function runMarketerTestSuite() {
     const staffTokenA = createSessionToken(staffUserA.id, staffUserA.email, 'ADMIN', 24, 'STAFF');
     const staffTokenB = createSessionToken(staffUserB.id, staffUserB.email, 'ADMIN', 24, 'STAFF');
 
-    // 8. SUPER_ADMIN can create marketer
+    // 8. SUPER_ADMIN can create marketer atomically
     globalThis.__TEST_ADMIN_SESSION_TOKEN__ = superAdminToken;
     const createMarketerRes = await createMarketerAction({
       name: 'Created Marketer C',
@@ -167,10 +173,61 @@ async function runMarketerTestSuite() {
         Boolean(createMarketerRes.credentials?.loginId) &&
         Boolean(createMarketerRes.credentials?.password) &&
         Boolean(createMarketerRes.credentials?.referralCode),
-      '8. SUPER_ADMIN can create marketer with auto-generated credentials'
+      '8. SUPER_ADMIN can create marketer atomically with auto-generated credentials'
     );
 
+    const createdMarketerId = createMarketerRes.credentials!.id!;
+    const createdLoginId = createMarketerRes.credentials!.loginId;
+    const createdPassword = createMarketerRes.credentials!.password!;
+    const createdReferralCode = createMarketerRes.credentials!.referralCode!;
+
+    // 28. Newly created marketer can log in
+    const newMarketerLoginReq = new Request('http://localhost:3000/api/auth/admin/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: createdLoginId, password: createdPassword }),
+    });
+    const newMarketerLoginRes = await postAdminVerifyRoute(newMarketerLoginReq);
+    assert(newMarketerLoginRes.status === 200, '28. Newly created marketer can log in');
+
+    // 29. SUPER_ADMIN can deactivate marketer
+    globalThis.__TEST_ADMIN_SESSION_TOKEN__ = superAdminToken;
+    const deactivateRes = await toggleMarketerActiveAction(createdMarketerId, false);
+    assert(deactivateRes.success, '29. SUPER_ADMIN can deactivate marketer');
+
+    // 30. Deactivated marketer CANNOT log in
+    const deactLoginReq = new Request('http://localhost:3000/api/auth/admin/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: createdLoginId, password: createdPassword }),
+    });
+    const deactLoginRes = await postAdminVerifyRoute(deactLoginReq);
+    assert(deactLoginRes.status === 401, '30. Deactivated marketer cannot log in');
+
+    // 31. Deactivated marketer's referral link does not track clicks
+    const deactTrackRes = await trackMarketingClickAction(createdReferralCode);
+    assert(!deactTrackRes.success, '31. Deactivated marketer\'s referral link does not track clicks');
+
+    // 32. SUPER_ADMIN can reactivate marketer
+    const reactivateRes = await toggleMarketerActiveAction(createdMarketerId, true);
+    assert(reactivateRes.success, '32. SUPER_ADMIN can reactivate marketer');
+
+    // 33. Reactivated marketer CAN log in again
+    const reactLoginReq = new Request('http://localhost:3000/api/auth/admin/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: createdLoginId, password: createdPassword }),
+    });
+    const reactLoginRes = await postAdminVerifyRoute(reactLoginReq);
+    assert(reactLoginRes.status === 200, '33. Reactivated marketer can log in again');
+
+    // 34. STAFF cannot deactivate themselves or another marketer
+    globalThis.__TEST_ADMIN_SESSION_TOKEN__ = staffTokenA;
+    const staffDeactRes = await toggleMarketerActiveAction(createdMarketerId, false);
+    assert(!staffDeactRes.success && String(staffDeactRes.error).includes('Unauthorized'), '34. STAFF cannot deactivate marketers');
+
     // 9. SUPER_ADMIN can list marketers
+    globalThis.__TEST_ADMIN_SESSION_TOKEN__ = superAdminToken;
     const listMarketersRes = await listMarketersAction();
     assert(listMarketersRes.success && Array.isArray(listMarketersRes.marketers) && listMarketersRes.marketers.length >= 3, '9. SUPER_ADMIN can list marketers');
 
@@ -383,6 +440,7 @@ async function runMarketerTestSuite() {
         name: 'To Delete',
         passwordHash: hashPassword(staffPass),
         role: 'STAFF',
+        isActive: true,
       },
     });
     const delLinkCode = `del-link-${timestamp}`;

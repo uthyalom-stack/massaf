@@ -124,25 +124,29 @@ export async function createMarketerAction(input: { name: string }) {
     // 4. Hash password with Node scrypt algorithm
     const passwordHash = hashPassword(generatedPassword);
 
-    // 5. Create user record with role STAFF (marketer)
-    const user = await db.user.create({
-      data: {
-        name: rawName,
-        email: loginId,
-        passwordHash,
-        role: 'STAFF',
-      },
-    });
+    // 5. Atomically create User record and primary MarketingLink in a database transaction
+    const { user, link } = await db.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
+        data: {
+          name: rawName,
+          email: loginId,
+          passwordHash,
+          role: 'STAFF',
+          isActive: true,
+        },
+      });
 
-    // 6. Automatically create assigned MarketingLink record for the marketer
-    const link = await db.marketingLink.create({
-      data: {
-        userId: user.id,
-        name: `${rawName}'s Referral Link`,
-        code: referralCode,
-        destinationUrl: '/',
-        isActive: true,
-      },
+      const newLink = await tx.marketingLink.create({
+        data: {
+          userId: newUser.id,
+          name: `${rawName}'s Referral Link`,
+          code: referralCode,
+          destinationUrl: '/',
+          isActive: true,
+        },
+      });
+
+      return { user: newUser, link: newLink };
     });
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
@@ -168,6 +172,44 @@ export async function createMarketerAction(input: { name: string }) {
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to create marketer account.',
+    };
+  }
+}
+
+export async function toggleMarketerActiveAction(userId: string, isActive: boolean) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN']);
+
+    const user = await db.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user || user.role !== 'STAFF') {
+      return { success: false, error: 'Marketer account not found.' };
+    }
+
+    await db.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { isActive },
+      });
+
+      await tx.marketingLink.updateMany({
+        where: { userId },
+        data: { isActive },
+      });
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/marketers');
+    safeRevalidatePath('/admin/marketing-links');
+
+    return { success: true };
+  } catch (err: unknown) {
+    console.error('Error in toggleMarketerActiveAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to update marketer active status.',
     };
   }
 }
@@ -223,6 +265,7 @@ export async function listMarketersAction() {
         name: true,
         email: true,
         role: true,
+        isActive: true,
         createdAt: true,
         updatedAt: true,
         marketingLinks: {
@@ -267,6 +310,7 @@ export async function listMarketersAction() {
         name: m.name || m.email,
         email: m.email,
         role: m.role,
+        isActive: m.isActive,
         createdAt: m.createdAt,
         marketingLinks: m.marketingLinks.map((l) => ({
           id: l.id,

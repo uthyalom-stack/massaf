@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import {
   createMarketerAction,
+  toggleMarketerActiveAction,
   regenerateMarketerPasswordAction,
   deleteMarketerAction,
 } from '@/app/admin/actions';
@@ -21,6 +22,7 @@ interface MarketerItem {
   name: string | null;
   email: string;
   role: string;
+  isActive: boolean;
   createdAt: Date | string;
   marketingLinks: MarketerLink[];
   clicks: number;
@@ -57,6 +59,7 @@ export default function MarketerManagementClient({ initialMarketers, userRole }:
   const [isDeleting, setIsDeleting] = useState(false);
 
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,6 +87,7 @@ export default function MarketerManagementClient({ initialMarketers, userRole }:
         name: res.credentials!.name,
         email: res.credentials!.loginId,
         role: 'STAFF',
+        isActive: true,
         createdAt: new Date(),
         marketingLinks: [
           {
@@ -101,6 +105,31 @@ export default function MarketerManagementClient({ initialMarketers, userRole }:
       },
       ...prev,
     ]);
+  };
+
+  const handleToggleActive = async (userId: string, targetActive: boolean) => {
+    setTogglingId(userId);
+    setErrorMsg(null);
+
+    const res = await toggleMarketerActiveAction(userId, targetActive);
+    setTogglingId(null);
+
+    if (!res.success) {
+      setErrorMsg(res.error || 'Failed to update marketer active status');
+      return;
+    }
+
+    setMarketers((prev) =>
+      prev.map((m) =>
+        m.id === userId
+          ? {
+              ...m,
+              isActive: targetActive,
+              marketingLinks: m.marketingLinks.map((l) => ({ ...l, isActive: targetActive })),
+            }
+          : m
+      )
+    );
   };
 
   const handleRegeneratePassword = async (userId: string) => {
@@ -297,7 +326,18 @@ export default function MarketerManagementClient({ initialMarketers, userRole }:
                 {marketers.map((m) => (
                   <tr key={m.id} className="hover:bg-slate-50">
                     <td className="px-6 py-4">
-                      <div className="font-semibold text-slate-900">{m.name || m.email}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-900">{m.name || m.email}</span>
+                        {m.isActive ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                            Active
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600">
+                            Inactive
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-slate-500 font-mono">{m.email}</div>
                     </td>
                     <td className="px-6 py-4">
@@ -322,9 +362,24 @@ export default function MarketerManagementClient({ initialMarketers, userRole }:
                     {isSuperAdmin && (
                       <td className="px-6 py-4 text-right space-x-2 whitespace-nowrap">
                         <button
+                          onClick={() => handleToggleActive(m.id, !m.isActive)}
+                          disabled={togglingId === m.id}
+                          className={`px-2.5 py-1 text-xs font-medium rounded transition-colors border ${
+                            m.isActive
+                              ? 'text-amber-800 bg-amber-50 hover:bg-amber-100 border-amber-200'
+                              : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
+                          }`}
+                        >
+                          {togglingId === m.id
+                            ? 'Saving...'
+                            : m.isActive
+                            ? 'Deactivate'
+                            : 'Activate'}
+                        </button>
+                        <button
                           onClick={() => handleRegeneratePassword(m.id)}
                           disabled={regeneratingId === m.id}
-                          className="px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded transition-colors"
+                          className="px-2.5 py-1 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded transition-colors"
                         >
                           {regeneratingId === m.id ? 'Resetting...' : 'Reset Pass'}
                         </button>

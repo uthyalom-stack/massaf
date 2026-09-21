@@ -52,6 +52,13 @@ export async function POST(request: Request) {
     });
 
     if (dbUser) {
+      if (!dbUser.isActive) {
+        return NextResponse.json(
+          { error: 'Account is deactivated' },
+          { status: 401 }
+        );
+      }
+
       if (!dbUser.passwordHash || !verifyPassword(password, dbUser.passwordHash)) {
         return NextResponse.json(
           { error: 'Invalid authentication credentials provided' },

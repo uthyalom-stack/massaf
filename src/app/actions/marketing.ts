@@ -32,10 +32,15 @@ export async function trackMarketingClickAction(code: string): Promise<{ success
     if (existingRef) {
       const existingLink = await db.marketingLink.findUnique({
         where: { code: existingRef },
+        include: {
+          user: {
+            select: { isActive: true },
+          },
+        },
       });
 
-      // Retain first VALID marketing reference
-      if (existingLink && existingLink.isActive) {
+      // Retain first VALID marketing reference (link must be active and owner user, if any, must be active)
+      if (existingLink && existingLink.isActive && (!existingLink.user || existingLink.user.isActive)) {
         return { success: true };
       }
       // If the existing cookie is stale/invalid/inactive, we proceed below to check the new incoming code!
@@ -44,9 +49,14 @@ export async function trackMarketingClickAction(code: string): Promise<{ success
     // Step 2: Validate the incoming code against active marketing links
     const newMarketingLink = await db.marketingLink.findUnique({
       where: { code: cleanCode },
+      include: {
+        user: {
+          select: { isActive: true },
+        },
+      },
     });
 
-    if (!newMarketingLink || !newMarketingLink.isActive) {
+    if (!newMarketingLink || !newMarketingLink.isActive || (newMarketingLink.user && !newMarketingLink.user.isActive)) {
       return { success: false };
     }
 
@@ -85,9 +95,14 @@ export async function getAttributedMarketingLink(): Promise<string | null> {
 
     const link = await db.marketingLink.findUnique({
       where: { code: ref },
+      include: {
+        user: {
+          select: { isActive: true },
+        },
+      },
     });
 
-    if (link && link.isActive) {
+    if (link && link.isActive && (!link.user || link.user.isActive)) {
       return link.id;
     }
     return null;
