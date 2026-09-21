@@ -59,6 +59,8 @@ const timeFormatRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
 
 export const availabilitySchema = z.object({
   dayOfWeek: z.number().int().min(0).max(6).optional().nullable(),
+  startDayOfWeek: z.number().int().min(0).max(6).optional().nullable(),
+  endDayOfWeek: z.number().int().min(0).max(6).optional().nullable(),
   specificDate: z.string().optional().nullable(),
   startTime: z.string().regex(timeFormatRegex, 'Start time must be in HH:mm format (e.g. 09:00)'),
   endTime: z.string().regex(timeFormatRegex, 'End time must be in HH:mm format (e.g. 17:00)'),

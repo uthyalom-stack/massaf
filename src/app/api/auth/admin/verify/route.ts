@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { setAdminSessionCookie, clearAdminSessionCookie } from '@/lib/auth-session';
 import { checkRateLimit } from '@/lib/auth-rate-limit';
+import { verifyPassword } from '@/lib/auth-password';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { action, email } = body;
+    const { action, email, password } = body;
 
     if (action === 'logout') {
       await clearAdminSessionCookie();
@@ -52,6 +53,16 @@ export async function POST(request: Request) {
         { error: 'Invalid authentication credentials provided' },
         { status: 401 }
       );
+    }
+
+    // Password verification: require valid proof of identity if passwordHash is set on account
+    if (user.passwordHash) {
+      if (!password || typeof password !== 'string' || !verifyPassword(password, user.passwordHash)) {
+        return NextResponse.json(
+          { error: 'Invalid authentication credentials provided' },
+          { status: 401 }
+        );
+      }
     }
 
     // Set signed HTTP-only admin session cookie
