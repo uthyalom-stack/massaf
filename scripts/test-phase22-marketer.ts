@@ -19,7 +19,7 @@ import { POST as postAdminVerifyRoute } from '@/app/api/auth/admin/verify/route'
 
 async function runMarketerTestSuite() {
   console.log('====================================================');
-  console.log('  STARTING STAGE 2 + 3 + 4 MARKETER & LEADERBOARD SUITE');
+  console.log('  STARTING STAGE 2 + 3 + 4 + 5 MARKETER & LEADERBOARD SUITE');
   console.log('====================================================');
 
   let passed = 0;
@@ -161,18 +161,22 @@ async function runMarketerTestSuite() {
     globalThis.__TEST_ADMIN_SESSION_TOKEN__ = superAdminToken;
     const createMarketerRes = await createMarketerAction({
       name: 'Created Marketer C',
-      email: `created-staff-c-${timestamp}@massaf.com`,
-      password: 'CreatedStaffPass123!',
     });
-    assert(createMarketerRes.success && createMarketerRes.marketer?.role === 'STAFF', '8. SUPER_ADMIN can create marketer');
+    assert(
+      createMarketerRes.success &&
+        Boolean(createMarketerRes.credentials?.loginId) &&
+        Boolean(createMarketerRes.credentials?.password) &&
+        Boolean(createMarketerRes.credentials?.referralCode),
+      '8. SUPER_ADMIN can create marketer with auto-generated credentials'
+    );
 
     // 9. SUPER_ADMIN can list marketers
     const listMarketersRes = await listMarketersAction();
     assert(listMarketersRes.success && Array.isArray(listMarketersRes.marketers) && listMarketersRes.marketers.length >= 3, '9. SUPER_ADMIN can list marketers');
 
     // 10. SUPER_ADMIN can delete marketer
-    if (createMarketerRes.marketer) {
-      const deleteRes = await deleteMarketerAction(createMarketerRes.marketer.id);
+    if (createMarketerRes.credentials?.id) {
+      const deleteRes = await deleteMarketerAction(createMarketerRes.credentials.id);
       assert(deleteRes.success, '10. SUPER_ADMIN can delete marketer');
     }
 
@@ -180,8 +184,6 @@ async function runMarketerTestSuite() {
     globalThis.__TEST_ADMIN_SESSION_TOKEN__ = adminToken;
     const adminCreateMarketerRes = await createMarketerAction({
       name: 'Admin Attempt Marketer',
-      email: `admin-attempt-${timestamp}@massaf.com`,
-      password: 'Password123!',
     });
     assert(!adminCreateMarketerRes.success && String(adminCreateMarketerRes.error).includes('Unauthorized'), '11. ADMIN cannot execute SUPER_ADMIN marketer creation');
 

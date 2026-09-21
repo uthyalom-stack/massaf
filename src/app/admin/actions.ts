@@ -28,6 +28,7 @@ import { deleteFromR2 } from '@/lib/r2';
 import { getVerifiedAdminSession } from '@/lib/auth-session';
 import { parseTimeStringToMinutes } from '@/lib/availability';
 import { hashPassword } from '@/lib/auth-password';
+import { generateLoginId, generateSecurePassword, generateReferralCode } from '@/lib/marketer-utils';
 
 /**
  * Server-side authorization check ensuring caller holds a valid, verified admin session
@@ -101,55 +102,112 @@ export async function createTherapistAction(input: unknown) {
 
 // --- Marketer Account Management (SUPER_ADMIN) ---
 
-export async function createMarketerAction(input: { name?: string; email: string; password: string }) {
+export async function createMarketerAction(input: { name: string }) {
   try {
     await checkServerAdminAuth(['SUPER_ADMIN']);
 
-    if (!input.email || typeof input.email !== 'string' || !input.email.trim()) {
-      return { success: false, error: 'Email address is required.' };
+    if (!input || !input.name || typeof input.name !== 'string' || input.name.trim().length < 2) {
+      return { success: false, error: 'Marketer name must be at least 2 characters long.' };
     }
 
-    if (!input.password || typeof input.password !== 'string' || input.password.length < 6) {
-      return { success: false, error: 'Password must be at least 6 characters long.' };
-    }
+    const rawName = input.name.trim();
 
-    const cleanEmail = input.email.trim().toLowerCase();
+    // 1. Automatically derive unique login ID (e.g., john.doe@massaf.com)
+    const loginId = await generateLoginId(rawName);
 
-    const existing = await db.user.findUnique({
-      where: { email: cleanEmail },
-    });
+    // 2. Automatically generate cryptographically secure password
+    const generatedPassword = generateSecurePassword(12);
 
-    if (existing) {
-      return { success: false, error: 'A user account with this email address already exists.' };
-    }
+    // 3. Automatically derive unique referral code (e.g., JOHNDOE)
+    const referralCode = await generateReferralCode(rawName);
 
-    const passwordHash = hashPassword(input.password);
+    // 4. Hash password with Node scrypt algorithm
+    const passwordHash = hashPassword(generatedPassword);
 
-    const marketer = await db.user.create({
+    // 5. Create user record with role STAFF (marketer)
+    const user = await db.user.create({
       data: {
-        name: input.name ? input.name.trim() : null,
-        email: cleanEmail,
+        name: rawName,
+        email: loginId,
         passwordHash,
         role: 'STAFF',
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        createdAt: true,
-        updatedAt: true,
+    });
+
+    // 6. Automatically create assigned MarketingLink record for the marketer
+    const link = await db.marketingLink.create({
+      data: {
+        userId: user.id,
+        name: `${rawName}'s Referral Link`,
+        code: referralCode,
+        destinationUrl: '/',
+        isActive: true,
       },
     });
 
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+    const referralUrl = baseUrl ? `${baseUrl}/?ref=${link.code}` : `/?ref=${link.code}`;
+
     safeRevalidatePath('/admin');
     safeRevalidatePath('/admin/marketers');
-    return { success: true, marketer };
+    safeRevalidatePath('/admin/marketing-links');
+
+    return {
+      success: true,
+      credentials: {
+        id: user.id,
+        name: user.name,
+        loginId: user.email,
+        password: generatedPassword,
+        referralCode: link.code,
+        referralUrl,
+      },
+    };
   } catch (err: unknown) {
     console.error('Error in createMarketerAction:', err);
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to create marketer account.',
+    };
+  }
+}
+
+export async function regenerateMarketerPasswordAction(userId: string) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN']);
+
+    const user = await db.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user || user.role !== 'STAFF') {
+      return { success: false, error: 'Marketer account not found.' };
+    }
+
+    const newPassword = generateSecurePassword(12);
+    const newPasswordHash = hashPassword(newPassword);
+
+    await db.user.update({
+      where: { id: userId },
+      data: { passwordHash: newPasswordHash },
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/marketers');
+
+    return {
+      success: true,
+      credentials: {
+        name: user.name || user.email,
+        loginId: user.email,
+        newPassword,
+      },
+    };
+  } catch (err: unknown) {
+    console.error('Error in regenerateMarketerPasswordAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to regenerate marketer password.',
     };
   }
 }
@@ -174,13 +232,57 @@ export async function listMarketersAction() {
             code: true,
             isActive: true,
             clicks: true,
+            bookings: {
+              select: {
+                id: true,
+                amount: true,
+                paymentStatus: true,
+              },
+            },
           },
         },
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    return { success: true, marketers };
+    const formattedMarketers = marketers.map((m) => {
+      let clicks = 0;
+      let totalBookings = 0;
+      let paidBookings = 0;
+      let paidRevenue = 0.0;
+
+      for (const link of m.marketingLinks) {
+        clicks += link.clicks;
+        totalBookings += link.bookings.length;
+        for (const b of link.bookings) {
+          if (b.paymentStatus === 'PAID') {
+            paidBookings++;
+            paidRevenue += b.amount;
+          }
+        }
+      }
+
+      return {
+        id: m.id,
+        name: m.name || m.email,
+        email: m.email,
+        role: m.role,
+        createdAt: m.createdAt,
+        marketingLinks: m.marketingLinks.map((l) => ({
+          id: l.id,
+          name: l.name,
+          code: l.code,
+          isActive: l.isActive,
+          clicks: l.clicks,
+        })),
+        clicks,
+        totalBookings,
+        paidBookings,
+        paidRevenue: Math.round(paidRevenue * 100) / 100,
+      };
+    });
+
+    return { success: true, marketers: formattedMarketers };
   } catch (err: unknown) {
     console.error('Error in listMarketersAction:', err);
     return {
