@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getVerifiedCustomerSession, getVerifiedTherapistSession, getVerifiedAdminSession } from '@/lib/auth-session';
 
 export async function GET(request: Request) {
   try {
@@ -26,6 +27,24 @@ export async function GET(request: Request) {
       return NextResponse.json(
         { error: 'Booking not found' },
         { status: 404 }
+      );
+    }
+
+    // Access control check: Must be authenticated customer (owning booking), therapist assigned, admin, or recently created PENDING/UNPAID booking within 15-minute checkout window
+    const cookieHeader = request.headers.get('cookie') || undefined;
+    const customerSession = await getVerifiedCustomerSession(cookieHeader);
+    const therapistSession = await getVerifiedTherapistSession(cookieHeader);
+    const adminSession = await getVerifiedAdminSession(cookieHeader);
+
+    const isCustomerOwner = customerSession && customerSession.entityId === booking.customerId;
+    const isAssignedTherapist = therapistSession && therapistSession.entityId === booking.therapistId;
+    const isAdmin = Boolean(adminSession);
+    const isRecentUnpaidCheckout = booking.paymentStatus === 'UNPAID' && (Date.now() - booking.createdAt.getTime() <= 15 * 60 * 1000);
+
+    if (!isCustomerOwner && !isAssignedTherapist && !isAdmin && !isRecentUnpaidCheckout) {
+      return NextResponse.json(
+        { error: 'Unauthorized: Access to booking details is restricted' },
+        { status: 401 }
       );
     }
 

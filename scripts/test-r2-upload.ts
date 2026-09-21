@@ -1,18 +1,19 @@
 import assert from 'assert';
-import { POST as mediaUploadRoute } from '../src/app/api/admin/media/upload/route';
+import { POST as mediaUploadRoute } from '@/app/api/admin/media/upload/route';
 import {
   deleteFromR2,
   clearMockStorage,
   getMockStorageItem,
   extractAndValidateR2Key,
-} from '../src/lib/r2';
-import { db } from '../src/lib/db';
+} from '@/lib/r2';
+import { db } from '@/lib/db';
+import { createSessionToken } from '@/lib/auth-session';
 import {
   createTherapistAction,
   updateTherapistAction,
   addTherapistPhotoAction,
   removeTherapistPhotoAction,
-} from '../src/app/admin/actions';
+} from '@/app/admin/actions';
 
 async function runR2UploadTests() {
   console.log('--- RUNNING CLOUDFLARE R2 MEDIA UPLOAD TEST SUITE ---');
@@ -20,6 +21,7 @@ async function runR2UploadTests() {
 
   const originalAdminKey = process.env.MASSAF_ADMIN_API_KEY;
   process.env.MASSAF_ADMIN_API_KEY = 'test-admin-api-key';
+  process.env.MASSAF_AUTH_SECRET = 'dev-secret-key-32-chars-minimum-length-for-hmac-sha256';
 
   try {
     // Setup test therapist in DB
@@ -72,7 +74,7 @@ async function runR2UploadTests() {
       const req = new Request('http://localhost:3000/api/admin/media/upload', {
         method: 'POST',
       });
-      const res = await mediaUploadRoute(req);
+      const res = (await mediaUploadRoute(req))!;
       assert.strictEqual(res.status, 401, 'Unauthenticated upload must return HTTP 401');
       const data = await res.json();
       assert.strictEqual(data.success, false);
@@ -87,15 +89,32 @@ async function runR2UploadTests() {
           'x-admin-api-key': 'invalid-key',
         },
       });
-      const res = await mediaUploadRoute(req);
+      const res = (await mediaUploadRoute(req))!;
       assert.strictEqual(res.status, 401, 'Invalid API key upload must return HTTP 401');
       console.log('✓ Test 2 Passed: Invalid admin API key rejected with 401');
     }
 
+    // Setup test admin user in DB and set test session token for authenticated tests
+    const testAdmin = await db.user.create({
+      data: {
+        email: `r2-admin-${Date.now()}@example.com`,
+        name: 'R2 Test Admin',
+        role: 'SUPER_ADMIN',
+      },
+    });
+
+    globalThis.__TEST_ADMIN_SESSION_TOKEN__ = createSessionToken(
+      testAdmin.id,
+      testAdmin.email,
+      'ADMIN',
+      24,
+      testAdmin.role
+    );
+
     // Test 3: Valid JPEG upload accepted
     {
       const req = createUploadRequest(createJpegFile(), 'profile', testTherapist.id);
-      const res = await mediaUploadRoute(req);
+      const res = (await mediaUploadRoute(req))!;
       assert.strictEqual(res.status, 200, 'Valid JPEG upload should return 200');
       const data = await res.json();
       assert.strictEqual(data.success, true);
@@ -107,7 +126,7 @@ async function runR2UploadTests() {
     // Test 4: Valid PNG upload accepted
     {
       const req = createUploadRequest(createPngFile(), 'gallery', testTherapist.id);
-      const res = await mediaUploadRoute(req);
+      const res = (await mediaUploadRoute(req))!;
       assert.strictEqual(res.status, 200, 'Valid PNG upload should return 200');
       const data = await res.json();
       assert.strictEqual(data.success, true);
@@ -118,7 +137,7 @@ async function runR2UploadTests() {
     // Test 5: Valid WebP upload accepted
     {
       const req = createUploadRequest(createWebpFile(), 'profile', testTherapist.id);
-      const res = await mediaUploadRoute(req);
+      const res = (await mediaUploadRoute(req))!;
       assert.strictEqual(res.status, 200, 'Valid WebP upload should return 200');
       const data = await res.json();
       assert.strictEqual(data.success, true);
@@ -130,7 +149,7 @@ async function runR2UploadTests() {
       const badBuffer = Buffer.from('<html><body>Malicious HTML</body></html>');
       const badFile = new File([badBuffer], 'script.html', { type: 'text/html' });
       const req = createUploadRequest(badFile, 'profile', testTherapist.id);
-      const res = await mediaUploadRoute(req);
+      const res = (await mediaUploadRoute(req))!;
       assert.strictEqual(res.status, 400, 'HTML upload must be rejected with 400');
       const data = await res.json();
       assert.strictEqual(data.success, false);
@@ -143,7 +162,7 @@ async function runR2UploadTests() {
       const fakeBuffer = Buffer.from('<html><body>Fake JPEG</body></html>');
       const fakeFile = new File([fakeBuffer], 'fake.jpg', { type: 'image/jpeg' });
       const req = createUploadRequest(fakeFile, 'profile', testTherapist.id);
-      const res = await mediaUploadRoute(req);
+      const res = (await mediaUploadRoute(req))!;
       assert.strictEqual(res.status, 400, 'Spoofed image file must be rejected by magic bytes check');
       const data = await res.json();
       assert.strictEqual(data.success, false);
@@ -159,7 +178,7 @@ async function runR2UploadTests() {
       largeBuffer[2] = 0xff;
       const largeFile = new File([largeBuffer], 'large.jpg', { type: 'image/jpeg' });
       const req = createUploadRequest(largeFile, 'profile', testTherapist.id);
-      const res = await mediaUploadRoute(req);
+      const res = (await mediaUploadRoute(req))!;
       assert.strictEqual(res.status, 400, 'Oversized file must be rejected with 400');
       const data = await res.json();
       assert.strictEqual(data.success, false);
@@ -170,7 +189,7 @@ async function runR2UploadTests() {
     // Test 9: Folder namespace restriction enforcement
     {
       const req = createUploadRequest(createJpegFile(), 'unauthorized_folder', testTherapist.id);
-      const res = await mediaUploadRoute(req);
+      const res = (await mediaUploadRoute(req))!;
       assert.strictEqual(res.status, 400, 'Unauthorized folder namespace must be rejected with 400');
       const data = await res.json();
       assert.strictEqual(data.success, false);
@@ -181,7 +200,7 @@ async function runR2UploadTests() {
     // Test 10: Nonexistent therapist reference validation
     {
       const req = createUploadRequest(createJpegFile(), 'profile', 'nonexistent-therapist-id-99999');
-      const res = await mediaUploadRoute(req);
+      const res = (await mediaUploadRoute(req))!;
       assert.strictEqual(res.status, 404, 'Upload for nonexistent therapist must return 404');
       const data = await res.json();
       assert.strictEqual(data.success, false);
@@ -189,9 +208,8 @@ async function runR2UploadTests() {
       console.log('✓ Test 10 Passed: Upload for nonexistent therapist rejected');
     }
 
-    // Test 11: Add Therapist image selected before creation does not create uncontrolled R2 object
+    // Test 11: Add Therapist image selected before creation via createTherapistAction & updateTherapistAction
     {
-      // Form selecting image file creates 0 R2 objects until submit
       const newEmail = `deferred-${Date.now()}@example.com`;
       const createRes = await createTherapistAction({
         name: 'Deferred Upload Therapist',
@@ -203,7 +221,7 @@ async function runR2UploadTests() {
 
       // Now upload with real therapist ID
       const uploadReq = createUploadRequest(createJpegFile('profile.jpg'), 'profile', createdId);
-      const uploadRes = await mediaUploadRoute(uploadReq);
+      const uploadRes = (await mediaUploadRoute(uploadReq))!;
       const uploadData = await uploadRes.json();
       assert.strictEqual(uploadData.success, true);
 
@@ -218,7 +236,7 @@ async function runR2UploadTests() {
       console.log('✓ Test 11 Passed: Deferred profile image selection creates 0 R2 objects before creation and uses real therapist ID after creation');
     }
 
-    // Test 12: Therapist creation fails -> no orphaned R2 objects
+    // Test 12: Therapist creation fails via createTherapistAction -> no orphaned R2 objects
     {
       const duplicateEmail = testTherapist.email!;
       const failRes = await createTherapistAction({
@@ -243,7 +261,7 @@ async function runR2UploadTests() {
       // Simulate failed image upload (HTML bad file)
       const badFile = new File([Buffer.from('<html>bad</body>')], 'bad.html', { type: 'text/html' });
       const badUploadReq = createUploadRequest(badFile, 'profile', createdId);
-      const badUploadRes = await mediaUploadRoute(badUploadReq);
+      const badUploadRes = (await mediaUploadRoute(badUploadReq))!;
       assert.strictEqual(badUploadRes.status, 400);
 
       // Verify therapist record remains preserved with profileImage = null
@@ -256,11 +274,11 @@ async function runR2UploadTests() {
       console.log('✓ Test 13 Passed: Therapist created and preserved with profileImage = null when image upload fails');
     }
 
-    // Test 14: Existing profile replacement (DB succeeds -> old R2 deleted)
+    // Test 14: Existing profile replacement via updateTherapistAction (DB succeeds -> old R2 deleted)
     {
       // 1. Upload profile image 1
       const req1 = createUploadRequest(createJpegFile('profile1.jpg'), 'profile', testTherapist.id);
-      const res1 = await mediaUploadRoute(req1);
+      const res1 = (await mediaUploadRoute(req1))!;
       const data1 = await res1.json();
       const url1 = data1.url;
       const key1 = extractAndValidateR2Key(url1)!;
@@ -271,7 +289,7 @@ async function runR2UploadTests() {
 
       // 2. Upload profile image 2 and replace
       const req2 = createUploadRequest(createJpegFile('profile2.jpg'), 'profile', testTherapist.id);
-      const res2 = await mediaUploadRoute(req2);
+      const res2 = (await mediaUploadRoute(req2))!;
       const data2 = await res2.json();
       const url2 = data2.url;
       const key2 = extractAndValidateR2Key(url2)!;
@@ -286,7 +304,7 @@ async function runR2UploadTests() {
       console.log('✓ Test 14 Passed: Existing profile replacement deleted old R2 image after DB update succeeded');
     }
 
-    // Test 15: Profile replacement DB failure (old image remains, new R2 cleaned up, DB still references old image)
+    // Test 15: Profile replacement DB failure via updateTherapistAction (old image remains, new R2 cleaned up)
     {
       const currentDbTherapist = await db.therapist.findUnique({ where: { id: testTherapist.id } });
       const currentUrl = currentDbTherapist?.profileImage;
@@ -295,7 +313,7 @@ async function runR2UploadTests() {
 
       // Upload new image
       const reqNew = createUploadRequest(createJpegFile('new-profile.jpg'), 'profile', testTherapist.id);
-      const resNew = await mediaUploadRoute(reqNew);
+      const resNew = (await mediaUploadRoute(reqNew))!;
       const dataNew = await resNew.json();
       const newUrl = dataNew.url;
 
@@ -321,7 +339,7 @@ async function runR2UploadTests() {
       console.log('✓ Test 15 Passed: Profile replacement DB failure preserved old R2 image and cleaned up new R2 object');
     }
 
-    // Test 16: Profile image clearing (DB succeeds -> old R2 object deleted)
+    // Test 16: Profile image clearing via updateTherapistAction (DB succeeds -> old R2 object deleted)
     {
       const currentDbTherapist = await db.therapist.findUnique({ where: { id: testTherapist.id } });
       const currentUrl = currentDbTherapist?.profileImage;
@@ -337,13 +355,13 @@ async function runR2UploadTests() {
       console.log('✓ Test 16 Passed: Profile image clearing updated DB first and deleted old R2 object');
     }
 
-    // Test 17: Test G — Multi-photo gallery regression check (upload 1, then 2+3, then 4+5 -> 5 gallery photos total; deleting photo 3 leaves other 4 intact)
+    // Test 17: Test G — Multi-photo gallery regression check via addTherapistPhotoAction and removeTherapistPhotoAction
     {
       const galleryUrls: string[] = [];
 
       // Batch 1: Upload photo 1
       const reqB1 = createUploadRequest(createJpegFile('photo-1.jpg'), 'gallery', testTherapist.id);
-      const resB1 = await mediaUploadRoute(reqB1);
+      const resB1 = (await mediaUploadRoute(reqB1))!;
       const dataB1 = await resB1.json();
       const p1 = await addTherapistPhotoAction(testTherapist.id, { url: dataB1.url, sortOrder: 0 });
       assert.strictEqual(p1.success, true);
@@ -352,18 +370,20 @@ async function runR2UploadTests() {
       // Batch 2: Upload photos 2 & 3
       for (let i = 2; i <= 3; i++) {
         const reqB = createUploadRequest(createJpegFile(`photo-${i}.jpg`), 'gallery', testTherapist.id);
-        const resB = await mediaUploadRoute(reqB);
+        const resB = (await mediaUploadRoute(reqB))!;
         const dataB = await resB.json();
-        await addTherapistPhotoAction(testTherapist.id, { url: dataB.url, sortOrder: i - 1 });
+        const p = await addTherapistPhotoAction(testTherapist.id, { url: dataB.url, sortOrder: i - 1 });
+        assert.strictEqual(p.success, true);
         galleryUrls.push(dataB.url);
       }
 
       // Batch 3: Upload photos 4 & 5
       for (let i = 4; i <= 5; i++) {
         const reqB = createUploadRequest(createJpegFile(`photo-${i}.jpg`), 'gallery', testTherapist.id);
-        const resB = await mediaUploadRoute(reqB);
+        const resB = (await mediaUploadRoute(reqB))!;
         const dataB = await resB.json();
-        await addTherapistPhotoAction(testTherapist.id, { url: dataB.url, sortOrder: i - 1 });
+        const p = await addTherapistPhotoAction(testTherapist.id, { url: dataB.url, sortOrder: i - 1 });
+        assert.strictEqual(p.success, true);
         galleryUrls.push(dataB.url);
       }
 
@@ -396,7 +416,7 @@ async function runR2UploadTests() {
       console.log('✓ Test 17 Passed: Multi-photo gallery regression confirmed (5 appended photos, deleting photo 3 preserved remaining 4)');
     }
 
-    // Test 18: External URL deletion safety
+    // Test 18: External URL deletion safety via removeTherapistPhotoAction
     {
       const externalUrl = 'https://images.unsplash.com/photo-1544005313-94ddf0286df2';
       const extPhoto = await db.therapistPhoto.create({
@@ -431,7 +451,7 @@ async function runR2UploadTests() {
     // Test 20: Security check — Credentials are never exposed in API responses
     {
       const req = createUploadRequest(createJpegFile('sec.jpg'), 'profile', testTherapist.id);
-      const res = await mediaUploadRoute(req);
+      const res = (await mediaUploadRoute(req))!;
       const data = await res.json();
       const rawText = JSON.stringify(data);
       assert.ok(!rawText.includes('R2_ACCESS_KEY_ID'));
@@ -440,9 +460,10 @@ async function runR2UploadTests() {
       console.log('✓ Test 20 Passed: Credentials are never exposed in API responses');
     }
 
-    // Cleanup test therapist from DB
+    // Cleanup test therapist & admin from DB
     await db.therapistPhoto.deleteMany({ where: { therapistId: testTherapist.id } });
     await db.therapist.delete({ where: { id: testTherapist.id } });
+    await db.user.delete({ where: { id: testAdmin.id } });
 
     console.log('\n✅ ALL CLOUDFLARE R2 MEDIA UPLOAD & LIFECYCLE TESTS PASSED SUCCESSFULLY!');
   } finally {

@@ -1,9 +1,20 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { reviewSchema } from '@/lib/validations/review';
+import { getVerifiedCustomerSession } from '@/lib/auth-session';
 
 export async function POST(request: Request) {
   try {
+    // 0. Server-side customer session authorization check
+    const cookieHeader = request.headers.get('cookie') || undefined;
+    const session = await getVerifiedCustomerSession(cookieHeader);
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Unauthorized: Please verify your account to submit a review' },
+        { status: 401 }
+      );
+    }
+
     const body = await request.json();
 
     // 1. Validate request body against Zod schema
@@ -33,6 +44,14 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'Booking not found' },
         { status: 404 }
+      );
+    }
+
+    // Strict customer ownership check: booking customer MUST equal authenticated customer
+    if (booking.customerId !== session.entityId) {
+      return NextResponse.json(
+        { error: 'Unauthorized: You can only submit reviews for your own bookings' },
+        { status: 403 }
       );
     }
 

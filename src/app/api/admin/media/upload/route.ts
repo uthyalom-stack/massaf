@@ -1,4 +1,3 @@
-import { NextResponse } from 'next/server';
 import { verifyAdminApiKey } from '@/lib/admin-guard';
 import { uploadToR2, generateObjectKey } from '@/lib/r2';
 import { db } from '@/lib/db';
@@ -61,8 +60,9 @@ function validateImageMagicBytes(buffer: Buffer): { valid: boolean; format?: str
 
 export async function POST(request: Request) {
   // 1. Verify authorization (admin OR verified therapist session)
-  const adminAuthError = verifyAdminApiKey(request);
-  const therapistSession = await getVerifiedTherapistSession();
+  const adminAuthError = await verifyAdminApiKey(request);
+  const cookieHeader = request.headers.get('cookie') || undefined;
+  const therapistSession = await getVerifiedTherapistSession(cookieHeader);
 
   if (adminAuthError && !therapistSession) {
     return adminAuthError;
@@ -75,7 +75,7 @@ export async function POST(request: Request) {
     const therapistIdInput = (formData.get('therapistId') as string) || 'temp';
 
     if (!file || !(file instanceof File)) {
-      return NextResponse.json(
+      return Response.json(
         { success: false, error: 'No image file was provided in the request.' },
         { status: 400 }
       );
@@ -84,7 +84,7 @@ export async function POST(request: Request) {
     // 2. Validate and restrict folder namespace strictly to 'profile' or 'gallery'
     const folder = folderInput.trim().toLowerCase();
     if (!ALLOWED_FOLDERS.has(folder)) {
-      return NextResponse.json(
+      return Response.json(
         {
           success: false,
           error: 'Invalid target folder. Only "profile" and "gallery" folders are supported.',
@@ -98,7 +98,7 @@ export async function POST(request: Request) {
     const idPattern = /^[a-zA-Z0-9_-]+$/;
 
     if (!therapistId || !idPattern.test(therapistId) || therapistId.includes('..')) {
-      return NextResponse.json(
+      return Response.json(
         { success: false, error: 'Invalid therapist reference identifier.' },
         { status: 400 }
       );
@@ -107,7 +107,7 @@ export async function POST(request: Request) {
     // Strict ownership verification: if authenticating via therapist session, ensure therapistId matches session
     if (therapistSession && adminAuthError) {
       if (therapistId !== therapistSession.entityId) {
-        return NextResponse.json(
+        return Response.json(
           { success: false, error: 'Unauthorized: Therapists can only upload media to their own profile.' },
           { status: 403 }
         );
@@ -121,7 +121,7 @@ export async function POST(request: Request) {
       });
 
       if (!therapistExists) {
-        return NextResponse.json(
+        return Response.json(
           { success: false, error: 'Referenced therapist profile was not found.' },
           { status: 404 }
         );
@@ -130,7 +130,7 @@ export async function POST(request: Request) {
 
     // 4. Validate file size (10 MB limit)
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      return NextResponse.json(
+      return Response.json(
         {
           success: false,
           error: `File size exceeds maximum permitted limit of 10 MB. Provided file: ${(file.size / (1024 * 1024)).toFixed(1)} MB.`,
@@ -142,7 +142,7 @@ export async function POST(request: Request) {
     // 5. Validate client MIME type
     const clientType = file.type.toLowerCase();
     if (!ALLOWED_MIME_TYPES[clientType]) {
-      return NextResponse.json(
+      return Response.json(
         {
           success: false,
           error: 'Unsupported file type. Only JPEG, PNG, and WebP images are allowed.',
@@ -158,7 +158,7 @@ export async function POST(request: Request) {
     // 6. Server-side magic bytes validation
     const magicCheck = validateImageMagicBytes(fileBuffer);
     if (!magicCheck.valid) {
-      return NextResponse.json(
+      return Response.json(
         {
           success: false,
           error: 'Invalid file contents. The file content does not match a valid JPEG, PNG, or WebP image.',
@@ -182,14 +182,14 @@ export async function POST(request: Request) {
     });
 
     // 9. Return safe JSON response
-    return NextResponse.json({
+    return Response.json({
       success: true,
       url: uploadResult.url,
       key: uploadResult.key,
     });
   } catch (err: unknown) {
     console.error('Error in media upload endpoint:', err);
-    return NextResponse.json(
+    return Response.json(
       {
         success: false,
         error: 'An unexpected server error occurred during image upload. Please try again.',

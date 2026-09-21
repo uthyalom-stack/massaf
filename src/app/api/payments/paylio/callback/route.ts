@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import crypto from 'crypto';
 import { db } from '@/lib/db';
 import { paylioClient, confirmVerifiedPayLioPayment } from '@/lib/paylio';
 
@@ -24,6 +25,11 @@ export async function GET(request: Request) {
     }
 
     const suppliedToken = ipnTokenParam.trim();
+    const tokenFingerprint = crypto
+      .createHash('sha256')
+      .update(suppliedToken)
+      .digest('hex')
+      .slice(0, 12);
 
     // 2. Identify booking
     let booking = null;
@@ -38,7 +44,7 @@ export async function GET(request: Request) {
     }
 
     if (!booking) {
-      console.warn('PayLio callback received for non-existent booking:', { bookingIdParam, suppliedToken });
+      console.warn('PayLio callback received for non-existent booking:', { bookingIdParam, tokenFingerprint });
       return NextResponse.json(
         { error: 'Booking record not found' },
         { status: 404 }
@@ -47,7 +53,7 @@ export async function GET(request: Request) {
 
     // 3. Strict Token Ownership Guard: booking.paymentReference MUST equal supplied ipn_token
     if (!booking.paymentReference || booking.paymentReference !== suppliedToken) {
-      console.warn(`[SECURITY WARNING] Token ownership mismatch in callback for booking ${booking.bookingNumber}. Stored token: "${booking.paymentReference}", Supplied token: "${suppliedToken}"`);
+      console.warn(`[SECURITY WARNING] Token ownership mismatch in callback for booking ${booking.bookingNumber}. Token fingerprint: "${tokenFingerprint}"`);
       return NextResponse.json(
         { error: 'Supplied ipn_token does not match payment reference stored on booking' },
         { status: 400 }
