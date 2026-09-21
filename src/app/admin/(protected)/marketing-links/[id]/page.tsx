@@ -1,7 +1,8 @@
 import React from 'react';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { db } from '@/lib/db';
+import { getVerifiedAdminSession } from '@/lib/auth-session';
 
 export const metadata = {
   title: 'Marketing Link Details | MASSAF Admin',
@@ -15,6 +16,11 @@ interface PageProps {
 export const dynamic = 'force-dynamic';
 
 export default async function MarketingLinkDetailPage({ params }: PageProps) {
+  const session = await getVerifiedAdminSession();
+  if (!session) {
+    redirect('/admin/login');
+  }
+
   const { id } = await params;
 
   const link = await db.marketingLink.findUnique({
@@ -35,6 +41,13 @@ export default async function MarketingLinkDetailPage({ params }: PageProps) {
     notFound();
   }
 
+  // STRICT SERVER-SIDE AUTHORIZATION & DATA ISOLATION:
+  // STAFF marketers must ONLY view details for marketing links they own.
+  if (session.role === 'STAFF' && link.userId !== session.entityId) {
+    notFound();
+  }
+
+  const isStaff = session.role === 'STAFF';
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
   const fullUrl = baseUrl ? `${baseUrl}/?ref=${link.code}` : `/?ref=${link.code}`;
   const totalBookingValue = link.bookings.reduce((sum, b) => sum + b.amount, 0);
@@ -147,16 +160,20 @@ export default async function MarketingLinkDetailPage({ params }: PageProps) {
                 link.bookings.map((booking) => (
                   <tr key={booking.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="py-3.5 px-4 font-mono text-xs font-semibold text-slate-900">
-                      <Link
-                        href={`/admin/bookings/${booking.id}`}
-                        className="hover:text-emerald-600 transition-colors"
-                      >
-                        {booking.bookingNumber}
-                      </Link>
+                      {!isStaff ? (
+                        <Link
+                          href={`/admin/bookings/${booking.id}`}
+                          className="hover:text-emerald-600 transition-colors"
+                        >
+                          {booking.bookingNumber}
+                        </Link>
+                      ) : (
+                        <span>{booking.bookingNumber}</span>
+                      )}
                     </td>
 
                     <td className="py-3.5 px-4 font-medium text-slate-900">
-                      {booking.customer.name}
+                      {!isStaff ? booking.customer.name : 'Customer'}
                     </td>
 
                     <td className="py-3.5 px-4 text-slate-700">
