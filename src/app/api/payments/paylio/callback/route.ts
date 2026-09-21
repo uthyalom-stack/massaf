@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import crypto from 'crypto';
 import { db } from '@/lib/db';
 import { paylioClient, confirmVerifiedPayLioPayment } from '@/lib/paylio';
 
@@ -24,6 +25,11 @@ export async function GET(request: Request) {
     }
 
     const suppliedToken = ipnTokenParam.trim();
+    const tokenFingerprint = crypto
+      .createHash('sha256')
+      .update(suppliedToken)
+      .digest('hex')
+      .slice(0, 12);
 
     // 2. Identify booking
     let booking = null;
@@ -36,8 +42,6 @@ export async function GET(request: Request) {
         where: { paymentReference: suppliedToken },
       });
     }
-
-    const tokenFingerprint = suppliedToken.length > 8 ? `${suppliedToken.slice(0, 8)}...` : '[redacted]';
 
     if (!booking) {
       console.warn('PayLio callback received for non-existent booking:', { bookingIdParam, tokenFingerprint });

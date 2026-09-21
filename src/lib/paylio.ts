@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { db } from '@/lib/db';
 
 export interface CreatePayLioWalletParams {
@@ -284,7 +285,9 @@ export async function confirmVerifiedPayLioPayment(
 
   // 1. Token Ownership Check: The PayLio ipn_token MUST match the stored booking.paymentReference
   if (!booking.paymentReference || booking.paymentReference !== options.ipnToken) {
-    const fingerprint = options.ipnToken ? `${options.ipnToken.slice(0, 8)}...` : '[none]';
+    const fingerprint = options.ipnToken
+      ? crypto.createHash('sha256').update(options.ipnToken).digest('hex').slice(0, 12)
+      : '[none]';
     console.warn(`[SECURITY WARNING] Token ownership mismatch for booking ${booking.bookingNumber}. Token fingerprint: "${fingerprint}"`);
     return {
       success: false,

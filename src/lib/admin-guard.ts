@@ -1,4 +1,3 @@
-import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { getVerifiedAdminSession } from '@/lib/auth-session';
 
@@ -8,10 +7,11 @@ import { getVerifiedAdminSession } from '@/lib/auth-session';
  * 1. An active, cryptographically signed admin session cookie (`massaf_admin_session`), or
  * 2. A valid administrative API key supplied in `x-admin-api-key` or `Authorization: Bearer <key>`.
  */
-export async function verifyAdminApiKey(request?: Request): Promise<NextResponse | null> {
-  // 1. First check active signed admin session cookie if cookies are available
+export async function verifyAdminApiKey(request?: Request): Promise<Response | null> {
+  // 1. First check active signed admin session cookie if cookies or request headers are available
   try {
-    const adminSession = await getVerifiedAdminSession();
+    const cookieHeader = request ? request.headers.get('cookie') || undefined : undefined;
+    const adminSession = await getVerifiedAdminSession(cookieHeader);
     if (adminSession) {
       return null; // Authorization successful via session cookie
     }
@@ -21,7 +21,7 @@ export async function verifyAdminApiKey(request?: Request): Promise<NextResponse
 
   // 2. Fall back to header / bearer API key check if request object is provided
   if (!request) {
-    return NextResponse.json(
+    return Response.json(
       { success: false, error: 'Unauthorized: Valid administrator authentication required.' },
       { status: 401 }
     );
@@ -31,7 +31,7 @@ export async function verifyAdminApiKey(request?: Request): Promise<NextResponse
 
   if (!expectedKey) {
     console.error('Server configuration error: MASSAF_ADMIN_API_KEY is not configured in environment variables.');
-    return NextResponse.json(
+    return Response.json(
       {
         success: false,
         error: 'Server misconfiguration: Administrative API key is not configured.',
@@ -51,7 +51,7 @@ export async function verifyAdminApiKey(request?: Request): Promise<NextResponse
   const providedKey = providedHeaderKey || providedBearerKey;
 
   if (!providedKey) {
-    return NextResponse.json(
+    return Response.json(
       {
         success: false,
         error: 'Unauthorized: Missing required admin authentication (session cookie or x-admin-api-key / Bearer token).',
@@ -68,7 +68,7 @@ export async function verifyAdminApiKey(request?: Request): Promise<NextResponse
     keyBuffer.length !== expectedBuffer.length ||
     !crypto.timingSafeEqual(keyBuffer, expectedBuffer)
   ) {
-    return NextResponse.json(
+    return Response.json(
       {
         success: false,
         error: 'Unauthorized: Invalid admin API key.',

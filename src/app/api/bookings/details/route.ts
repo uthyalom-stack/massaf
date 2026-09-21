@@ -31,9 +31,10 @@ export async function GET(request: Request) {
     }
 
     // Access control check: Must be authenticated customer (owning booking), therapist assigned, admin, or recently created PENDING/UNPAID booking within 15-minute checkout window
-    const customerSession = await getVerifiedCustomerSession();
-    const therapistSession = await getVerifiedTherapistSession();
-    const adminSession = await getVerifiedAdminSession();
+    const cookieHeader = request.headers.get('cookie') || undefined;
+    const customerSession = await getVerifiedCustomerSession(cookieHeader);
+    const therapistSession = await getVerifiedTherapistSession(cookieHeader);
+    const adminSession = await getVerifiedAdminSession(cookieHeader);
 
     const isCustomerOwner = customerSession && customerSession.entityId === booking.customerId;
     const isAssignedTherapist = therapistSession && therapistSession.entityId === booking.therapistId;

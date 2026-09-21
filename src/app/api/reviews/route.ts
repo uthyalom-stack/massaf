@@ -6,7 +6,8 @@ import { getVerifiedCustomerSession } from '@/lib/auth-session';
 export async function POST(request: Request) {
   try {
     // 0. Server-side customer session authorization check
-    const session = await getVerifiedCustomerSession();
+    const cookieHeader = request.headers.get('cookie') || undefined;
+    const session = await getVerifiedCustomerSession(cookieHeader);
     if (!session) {
       return NextResponse.json(
         { error: 'Unauthorized: Please verify your account to submit a review' },

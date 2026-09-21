@@ -148,7 +148,7 @@ export async function POST(request: Request) {
         },
       });
 
-      return { booking: updated, oldDateTime: booking.appointmentDateTime };
+      return { booking: updated };
     });
 
     if (!('booking' in rescheduleResult) || !rescheduleResult.booking) {
@@ -156,18 +156,6 @@ export async function POST(request: Request) {
         { error: 'The requested appointment slot is already booked. Please select another time.' },
         { status: 400 }
       );
-    }
-
-    // Trigger reschedule notification with failure isolation
-    try {
-      const { notifyBookingRescheduled } = await import('@/lib/notifications');
-      await notifyBookingRescheduled(
-        rescheduleResult.booking.id,
-        rescheduleResult.oldDateTime,
-        rescheduleResult.booking.appointmentDateTime
-      );
-    } catch (notifErr) {
-      console.warn('notifyBookingRescheduled dispatch warning:', notifErr);
     }
 
     return NextResponse.json({

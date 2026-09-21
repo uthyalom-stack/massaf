@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import { cookies } from 'next/headers';
 import { db } from '@/lib/db';
 
 export interface SessionPayload {
@@ -15,6 +14,18 @@ const THERAPIST_COOKIE_NAME = 'massaf_therapist_session';
 const ADMIN_COOKIE_NAME = 'massaf_admin_session';
 
 /**
+ * Retrieves Next.js request cookie store with error isolation for non-request environments.
+ */
+async function getCookieStore() {
+  try {
+    const { cookies } = await import('next/headers');
+    return await cookies();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Retrieves the server-only cryptographic secret for signing session cookies.
  * Throws a closed configuration error if missing in production or dev environment.
  */
@@ -26,6 +37,15 @@ function getAuthSecret(): string {
     );
   }
   return secret.trim();
+}
+
+/**
+ * Parses a cookie header string to extract a specific cookie value.
+ */
+function extractCookieValue(cookieHeader: string | undefined, cookieName: string): string | undefined {
+  if (!cookieHeader) return undefined;
+  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${cookieName}=([^;]+)`));
+  return match ? match[1] : undefined;
 }
 
 /**
@@ -115,10 +135,14 @@ export function verifySessionToken(
  * Server-side helper to read and verify the active customer session from HTTP-only cookie.
  * Revalidates against the database to confirm the Customer entity still exists.
  */
-export async function getVerifiedCustomerSession(): Promise<SessionPayload | null> {
+export async function getVerifiedCustomerSession(reqCookieHeader?: string): Promise<SessionPayload | null> {
   try {
-    const cookieStore = await cookies();
-    const token = cookieStore.get(CUSTOMER_COOKIE_NAME)?.value;
+    let token = extractCookieValue(reqCookieHeader, CUSTOMER_COOKIE_NAME);
+    if (!token) {
+      const cookieStore = await getCookieStore();
+      token = cookieStore?.get(CUSTOMER_COOKIE_NAME)?.value;
+    }
+
     const payload = verifySessionToken(token, 'CUSTOMER');
     if (!payload) return null;
 
@@ -144,10 +168,14 @@ export async function getVerifiedCustomerSession(): Promise<SessionPayload | nul
  * Server-side helper to read and verify the active therapist session from HTTP-only cookie.
  * Revalidates against the database to confirm the Therapist entity exists AND isActive === true.
  */
-export async function getVerifiedTherapistSession(): Promise<SessionPayload | null> {
+export async function getVerifiedTherapistSession(reqCookieHeader?: string): Promise<SessionPayload | null> {
   try {
-    const cookieStore = await cookies();
-    const token = cookieStore.get(THERAPIST_COOKIE_NAME)?.value;
+    let token = extractCookieValue(reqCookieHeader, THERAPIST_COOKIE_NAME);
+    if (!token) {
+      const cookieStore = await getCookieStore();
+      token = cookieStore?.get(THERAPIST_COOKIE_NAME)?.value;
+    }
+
     const payload = verifySessionToken(token, 'THERAPIST');
     if (!payload) return null;
 
@@ -170,65 +198,25 @@ export async function getVerifiedTherapistSession(): Promise<SessionPayload | nu
 }
 
 /**
- * Sets an HTTP-only, secure, signed session cookie.
- */
-export async function setCustomerSessionCookie(
-  entityId: string,
-  email: string
-): Promise<void> {
-  const token = createSessionToken(entityId, email, 'CUSTOMER');
-  const cookieStore = await cookies();
-  cookieStore.set(CUSTOMER_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 7 * 24 * 60 * 60, // 7 days in seconds
-  });
-}
-
-/**
- * Sets an HTTP-only, secure, signed therapist session cookie.
- */
-export async function setTherapistSessionCookie(
-  entityId: string,
-  email: string
-): Promise<void> {
-  const token = createSessionToken(entityId, email, 'THERAPIST');
-  const cookieStore = await cookies();
-  cookieStore.set(THERAPIST_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 7 * 24 * 60 * 60, // 7 days in seconds
-  });
-}
-
-/**
- * Clears the customer session cookie.
- */
-export async function clearCustomerSessionCookie(): Promise<void> {
-  const cookieStore = await cookies();
-  cookieStore.delete(CUSTOMER_COOKIE_NAME);
-}
-
-/**
- * Clears the therapist session cookie.
- */
-export async function clearTherapistSessionCookie(): Promise<void> {
-  const cookieStore = await cookies();
-  cookieStore.delete(THERAPIST_COOKIE_NAME);
-}
-
-/**
  * Server-side helper to read and verify the active admin session from HTTP-only cookie.
  * Revalidates against the database `User` model to confirm the admin user exists and has an administrative Role.
  */
-export async function getVerifiedAdminSession(): Promise<SessionPayload | null> {
+declare global {
+  // eslint-disable-next-line no-var
+  var __TEST_ADMIN_SESSION_TOKEN__: string | undefined;
+}
+
+export async function getVerifiedAdminSession(reqCookieHeader?: string): Promise<SessionPayload | null> {
   try {
-    const cookieStore = await cookies();
-    const token = cookieStore.get(ADMIN_COOKIE_NAME)?.value;
+    let token = extractCookieValue(reqCookieHeader, ADMIN_COOKIE_NAME);
+    if (!token) {
+      const cookieStore = await getCookieStore();
+      token = cookieStore?.get(ADMIN_COOKIE_NAME)?.value;
+      if (!token && process.env.NODE_ENV !== 'production') {
+        token = globalThis.__TEST_ADMIN_SESSION_TOKEN__;
+      }
+    }
+
     const payload = verifySessionToken(token, 'ADMIN');
     if (!payload) return null;
 
@@ -257,6 +245,46 @@ export async function getVerifiedAdminSession(): Promise<SessionPayload | null> 
 }
 
 /**
+ * Sets an HTTP-only, secure, signed session cookie.
+ */
+export async function setCustomerSessionCookie(
+  entityId: string,
+  email: string
+): Promise<void> {
+  const token = createSessionToken(entityId, email, 'CUSTOMER');
+  const cookieStore = await getCookieStore();
+  if (cookieStore) {
+    cookieStore.set(CUSTOMER_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60, // 7 days in seconds
+    });
+  }
+}
+
+/**
+ * Sets an HTTP-only, secure, signed therapist session cookie.
+ */
+export async function setTherapistSessionCookie(
+  entityId: string,
+  email: string
+): Promise<void> {
+  const token = createSessionToken(entityId, email, 'THERAPIST');
+  const cookieStore = await getCookieStore();
+  if (cookieStore) {
+    cookieStore.set(THERAPIST_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60, // 7 days in seconds
+    });
+  }
+}
+
+/**
  * Sets an HTTP-only, secure, signed admin session cookie.
  */
 export async function setAdminSessionCookie(
@@ -265,20 +293,44 @@ export async function setAdminSessionCookie(
   role = 'SUPER_ADMIN'
 ): Promise<void> {
   const token = createSessionToken(entityId, email, 'ADMIN', 24 * 7, role);
-  const cookieStore = await cookies();
-  cookieStore.set(ADMIN_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 7 * 24 * 60 * 60, // 7 days in seconds
-  });
+  const cookieStore = await getCookieStore();
+  if (cookieStore) {
+    cookieStore.set(ADMIN_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60, // 7 days in seconds
+    });
+  }
+}
+
+/**
+ * Clears the customer session cookie.
+ */
+export async function clearCustomerSessionCookie(): Promise<void> {
+  const cookieStore = await getCookieStore();
+  if (cookieStore) {
+    cookieStore.delete(CUSTOMER_COOKIE_NAME);
+  }
+}
+
+/**
+ * Clears the therapist session cookie.
+ */
+export async function clearTherapistSessionCookie(): Promise<void> {
+  const cookieStore = await getCookieStore();
+  if (cookieStore) {
+    cookieStore.delete(THERAPIST_COOKIE_NAME);
+  }
 }
 
 /**
  * Clears the admin session cookie.
  */
 export async function clearAdminSessionCookie(): Promise<void> {
-  const cookieStore = await cookies();
-  cookieStore.delete(ADMIN_COOKIE_NAME);
+  const cookieStore = await getCookieStore();
+  if (cookieStore) {
+    cookieStore.delete(ADMIN_COOKIE_NAME);
+  }
 }

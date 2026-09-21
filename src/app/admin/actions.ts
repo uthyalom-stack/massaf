@@ -26,6 +26,7 @@ import {
 } from '@/lib/notifications';
 import { deleteFromR2 } from '@/lib/r2';
 import { getVerifiedAdminSession } from '@/lib/auth-session';
+import { parseTimeStringToMinutes } from '@/lib/availability';
 
 /**
  * Server-side authorization check ensuring caller holds a valid, verified admin session.
@@ -939,7 +940,6 @@ export async function addTherapistAvailabilityAction(therapistId: string, input:
 
     const validated = availabilitySchema.parse(input);
 
-    const { parseTimeStringToMinutes } = await import('@/lib/availability');
     const startMins = parseTimeStringToMinutes(validated.startTime);
     const endMins = parseTimeStringToMinutes(validated.endTime);
     if (startMins >= endMins) {
@@ -1018,7 +1018,6 @@ export async function updateTherapistAvailabilityAction(therapistId: string, inp
     const targetStartTime = validated.startTime ?? existingAvailability.startTime;
     const targetEndTime = validated.endTime ?? existingAvailability.endTime;
 
-    const { parseTimeStringToMinutes } = await import('@/lib/availability');
     const startMins = parseTimeStringToMinutes(targetStartTime);
     const endMins = parseTimeStringToMinutes(targetEndTime);
     if (startMins >= endMins) {
