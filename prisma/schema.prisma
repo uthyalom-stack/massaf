@@ -77,8 +77,43 @@ model Customer {
 
   bookings  Booking[]
   reviews   Review[]
+  addresses CustomerAddress[]
+  favorites CustomerFavorite[]
 
   @@index([email])
+}
+
+/// Saved in-home appointment addresses for customers
+model CustomerAddress {
+  id           String   @id @default(uuid())
+  customerId   String
+  label        String   @default("Home") // e.g. "Home", "Office", "Vacation Home"
+  addressLine1 String
+  addressLine2 String?
+  city         String
+  state        String
+  zipCode      String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+/// Saved favorite therapists for customers
+model CustomerFavorite {
+  id          String   @id @default(uuid())
+  customerId  String
+  therapistId String
+  createdAt   DateTime @default(now())
+
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  therapist   Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, therapistId])
+  @@index([customerId])
+  @@index([therapistId])
 }
 
 /// Massage therapists providing services
@@ -105,6 +140,7 @@ model Therapist {
   serviceAreas   ServiceArea[]
   bookings       Booking[]
   reviews        Review[]
+  favoritedBy    CustomerFavorite[]
 
   @@index([isActive])
   @@index([isFeatured])
@@ -277,4 +313,31 @@ model MarketingLink {
 
   @@index([code])
   @@index([isActive])
+}
+
+/// Persistent short-lived single-use authentication verification tokens
+model VerificationToken {
+  id         String    @id @default(uuid())
+  tokenHash  String    @unique // SHA-256 hash of random token
+  entityId   String    // Customer ID or Therapist ID
+  tokenType  String    // e.g., "THERAPIST_LOGIN" or "CUSTOMER_LOGIN"
+  expiresAt  DateTime
+  consumedAt DateTime? // Nullable until consumed atomically
+  createdAt  DateTime  @default(now())
+
+  @@index([tokenHash])
+  @@index([entityId])
+  @@index([expiresAt])
+}
+
+/// Server-side rate limiting tracker for authentication endpoints
+model AuthRateLimit {
+  id          String   @id @default(uuid())
+  identifier  String   // e.g. "cust_verify:ip_or_email" or "therapist_req:ip_or_email"
+  action      String
+  attempts    Int      @default(1)
+  windowStart DateTime @default(now())
+
+  @@unique([identifier, action])
+  @@index([identifier, action])
 }

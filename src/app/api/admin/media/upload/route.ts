@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { verifyAdminApiKey } from '@/lib/admin-guard';
 import { uploadToR2, generateObjectKey } from '@/lib/r2';
 import { db } from '@/lib/db';
+import { getVerifiedTherapistSession } from '@/lib/auth-session';
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -59,9 +60,13 @@ function validateImageMagicBytes(buffer: Buffer): { valid: boolean; format?: str
 }
 
 export async function POST(request: Request) {
-  // 1. Verify admin authorization
-  const authError = verifyAdminApiKey(request);
-  if (authError) return authError;
+  // 1. Verify authorization (admin OR verified therapist session)
+  const adminAuthError = verifyAdminApiKey(request);
+  const therapistSession = await getVerifiedTherapistSession();
+
+  if (adminAuthError && !therapistSession) {
+    return adminAuthError;
+  }
 
   try {
     const formData = await request.formData();
@@ -97,6 +102,16 @@ export async function POST(request: Request) {
         { success: false, error: 'Invalid therapist reference identifier.' },
         { status: 400 }
       );
+    }
+
+    // Strict ownership verification: if authenticating via therapist session, ensure therapistId matches session
+    if (therapistSession && adminAuthError) {
+      if (therapistId !== therapistSession.entityId) {
+        return NextResponse.json(
+          { success: false, error: 'Unauthorized: Therapists can only upload media to their own profile.' },
+          { status: 403 }
+        );
+      }
     }
 
     if (therapistId !== 'temp') {
