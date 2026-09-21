@@ -220,6 +220,15 @@ export async function getVerifiedAdminSession(reqCookieHeader?: string): Promise
     const payload = verifySessionToken(token, 'ADMIN');
     if (!payload) return null;
 
+    // Environment-backed admin sessions do not require a database User record.
+    if (payload.entityId === 'env-admin') {
+      const configuredEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+      if (!configuredEmail || payload.email !== configuredEmail || payload.role !== 'SUPER_ADMIN') {
+        return null;
+      }
+      return { ...payload, email: configuredEmail, role: 'SUPER_ADMIN' };
+    }
+
     // Database revalidation: Confirm Admin User entity exists and has an administrative role
     const adminUser = await db.user.findUnique({
       where: { id: payload.entityId },
