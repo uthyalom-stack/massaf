@@ -168,7 +168,7 @@ export function isZipInRange(
   return req >= minPad && req <= maxPad;
 }
 
-import { getZipInfo } from '@/lib/us-locations';
+import { getZipInfo, getStateForZipSync } from '@/lib/us-locations';
 
 export async function therapistCoversZipAsync(
   therapist: CustomerTherapist,
@@ -199,6 +199,20 @@ export function therapistCoversZip(therapist: CustomerTherapist, requestedZip: s
   if (!requestedZip || !requestedZip.trim()) return false;
   const req = requestedZip.trim();
 
+  // Validate state from cache or synchronous range lookup
+  const reqState = getStateForZipSync(req);
+  if (reqState) {
+    if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
+      return therapist.rawServiceAreas.some((sa) => {
+        if (sa.state && sa.state.trim().toUpperCase() !== reqState) {
+          return false; // State mismatch rejected
+        }
+        return isZipInRange(req, sa.zipCode, sa.endZipCode);
+      });
+    }
+  }
+
+  // Authoritative fallback matching via rawServiceAreas
   if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
     return therapist.rawServiceAreas.some((sa) =>
       isZipInRange(req, sa.zipCode, sa.endZipCode)

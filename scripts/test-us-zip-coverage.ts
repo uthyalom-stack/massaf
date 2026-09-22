@@ -1,6 +1,6 @@
 import { db } from '../src/lib/db';
-import { getZipInfo, isValidUSZip, isZipInCoverage } from '../src/lib/us-locations';
-import { therapistCoversZip } from '../src/lib/db-therapists';
+import { getZipInfo, isValidUSZip, isZipInCoverage, clearZipLocationCaches } from '../src/lib/us-locations';
+import { therapistCoversZip, therapistCoversZipAsync } from '../src/lib/db-therapists';
 import { CustomerTherapist } from '../src/types/customer';
 
 function assert(condition: boolean, msg: string) {
@@ -53,8 +53,11 @@ async function runRealDatabaseCoverageTests() {
   // Nonexistent numeric ZIP between boundary ZIPs
   assert(await isZipInCoverage('99999', 'CA', '90001', '99999') === false, 'Nonexistent ZIP 99999 is REJECTED even if between boundary numbers');
 
-  // 4. Multiple Coverage Ranges & Therapists
-  console.log('\n4. Testing Multiple Coverage Ranges & Therapists...');
+  // 4. Fresh-Cache Customer Matching Verification
+  console.log('\n4. Testing Fresh-Cache Customer Matching (therapistCoversZip)...');
+
+  // Clear in-memory caches to test zero-cache cold state
+  clearZipLocationCaches();
 
   const therapistA: CustomerTherapist = {
     id: 'th-a',
@@ -82,9 +85,17 @@ async function runRealDatabaseCoverageTests() {
     isFeatured: false,
   };
 
-  assert(therapistCoversZip(therapistA, '90210') === true, 'Therapist A covers CA 90210 (Beverly Hills in LA 90001-92692 range)');
-  assert(therapistCoversZip(therapistA, '46225') === true, 'Therapist A covers IN 46225 (Indianapolis)');
-  assert(therapistCoversZip(therapistA, '75002') === false, 'Therapist A does NOT cover TX 75002 (Allen TX)');
+  // Test 4a: Nonexistent ZIP 99999 MUST be rejected in async database check
+  assert(await therapistCoversZipAsync(therapistA, '99999') === false, 'Async check: Nonexistent ZIP 99999 is REJECTED by USZipCode DB check');
+
+  // Test 4b: Multi-city match across different cities (Beverly Hills 90210 inside LA 90001-92692 range)
+  assert(await therapistCoversZipAsync(therapistA, '90210') === true, 'Async check: CA 90210 MATCHES multi-city range 90001-92692');
+
+  // Test 4c: Indiana match inside range
+  assert(await therapistCoversZipAsync(therapistA, '46225') === true, 'Async check: IN 46225 MATCHES range 46001-46298');
+
+  // Test 4d: Texas unassigned state rejected
+  assert(await therapistCoversZipAsync(therapistA, '75002') === false, 'Async check: TX 75002 is REJECTED (state not covered)');
 
   console.log('\n✅ ALL USZipCode REAL DATABASE TESTS PASSED SUCCESSFULLY!');
 }

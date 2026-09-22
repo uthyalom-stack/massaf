@@ -254,6 +254,22 @@ export async function getStateForZip(zipCode: string): Promise<string | null> {
 }
 
 /**
+ * Synchronous state lookup helper for a 5-digit U.S. ZIP code strictly using
+ * in-memory cache populated from USZipCode database queries.
+ */
+export function getStateForZipSync(zipCode: string): string | null {
+  if (!zipCode || !zipCode.trim()) return null;
+  const cleanZip = zipCode.trim().padStart(5, '0');
+
+  if (zipInfoCache.has(cleanZip)) {
+    const cached = zipInfoCache.get(cleanZip);
+    return cached ? cached.state : null;
+  }
+
+  return null;
+}
+
+/**
  * Authoritative coverage validation rule:
  * Customer ZIP is covered ONLY if:
  * 1. The customer ZIP exists in the real USZipCode database table
@@ -297,6 +313,14 @@ export async function isZipInCoverage(
   const maxNum = Math.max(startNum, endNum);
 
   return reqNum >= minNum && reqNum <= maxNum;
+}
+
+export function clearZipLocationCaches() {
+  zipInfoCache.clear();
+  stateCitiesCache.clear();
+  stateZipsCache.clear();
+  stateCityZipsCache.clear();
+  cachedStates = null;
 }
 
 export function getStateNameByCode(stateCode: string): string {

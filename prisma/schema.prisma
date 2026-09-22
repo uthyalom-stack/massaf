@@ -448,7 +448,7 @@ model GiftCardImage {
   @@index([giftCardSubmissionId])
 }
 
-/// Official USPS U.S. ZIP codes dataset (~42,500+ records)
+/// U.S. ZIP code dataset derived from the zipcodes npm package (~42,500+ records)
 model USZipCode {
   id        String   @id @default(uuid())
   zipCode   String   @unique
