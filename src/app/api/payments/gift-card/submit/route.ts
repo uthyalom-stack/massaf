@@ -48,6 +48,24 @@ export async function POST(request: Request) {
       );
     }
 
+    // Access control check: Verify session ownership or recent checkout window
+    const cookieHeader = request.headers.get('cookie') || undefined;
+    const { getVerifiedCustomerSession, getVerifiedAdminSession } = await import('@/lib/auth-session');
+    const customerSession = await getVerifiedCustomerSession(cookieHeader);
+    const adminSession = await getVerifiedAdminSession(cookieHeader);
+
+    const isCustomerOwner = customerSession && customerSession.entityId === booking.customerId;
+    const isAdmin = Boolean(adminSession);
+    const isRecentUnpaidCheckout = (booking.paymentStatus === 'UNPAID' || booking.paymentStatus === 'PENDING') &&
+      (Date.now() - booking.createdAt.getTime() <= 30 * 60 * 1000);
+
+    if (!isCustomerOwner && !isAdmin && !isRecentUnpaidCheckout) {
+      return NextResponse.json(
+        { error: 'Unauthorized: You do not have permission to submit payment for this booking.' },
+        { status: 403 }
+      );
+    }
+
     // Upsert GiftCardSubmission record
     const submission = await db.giftCardSubmission.upsert({
       where: { bookingId: booking.id },
