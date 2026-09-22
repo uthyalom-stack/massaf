@@ -34,6 +34,7 @@ export default async function AdminBookingDetailPage({ params }: BookingDetailPa
         customer: true,
         therapist: true,
         service: true,
+        giftCardSubmission: true,
       },
     });
 
@@ -91,6 +92,17 @@ export default async function AdminBookingDetailPage({ params }: BookingDetailPa
       serviceName,
       serviceDescription,
       servicePrice,
+      giftCardSubmission: booking.giftCardSubmission ? {
+        id: booking.giftCardSubmission.id,
+        cardType: booking.giftCardSubmission.cardType,
+        cardCode: booking.giftCardSubmission.cardCode,
+        declaredValue: booking.giftCardSubmission.declaredValue,
+        notes: booking.giftCardSubmission.notes,
+        status: booking.giftCardSubmission.status,
+        rejectionReason: booking.giftCardSubmission.rejectionReason,
+        reviewedAt: booking.giftCardSubmission.reviewedAt ? booking.giftCardSubmission.reviewedAt.toISOString() : null,
+        reviewedBy: booking.giftCardSubmission.reviewedBy,
+      } : null,
     };
 
   } catch (error) {

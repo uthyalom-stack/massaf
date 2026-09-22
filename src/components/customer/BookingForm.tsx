@@ -11,6 +11,7 @@ import {
   getAvailableTimeSlots,
   isAppointmentTimeAvailable,
 } from '@/lib/availability';
+import { PaymentMethodSelector } from '@/components/customer/PaymentMethodSelector';
 import { formatUtcDateString, formatUtcTimeString } from '@/lib/timezone';
 
 interface BookingFormProps {
@@ -83,6 +84,13 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
   const [state, setState] = useState('');
   const [zipCode, setZipCode] = useState('');
   const [notes, setNotes] = useState('');
+
+  // Created booking state for payment method selection step
+  const [createdBookingData, setCreatedBookingData] = useState<{
+    id: string;
+    bookingNumber: string;
+    amount: number;
+  } | null>(null);
 
   // Submission & Error handling
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -288,29 +296,12 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
       }
 
       const createdBooking = resData.booking;
-
-      // 2. Initiate PayLio Payment Session
-      const payResponse = await fetch('/api/payments/paylio/create', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          bookingId: createdBooking.id,
-          bookingNumber: createdBooking.bookingNumber,
-        }),
+      setCreatedBookingData({
+        id: createdBooking.id,
+        bookingNumber: createdBooking.bookingNumber,
+        amount: createdBooking.amount || (selectedService ? selectedService.price : 120),
       });
-
-      const payData = await payResponse.json();
-
-      if (payResponse.ok && payData.checkoutUrl) {
-        // Redirect to PayLio Hosted Checkout
-        window.location.href = payData.checkoutUrl;
-      } else {
-        // Fallback to success page with retry option if PayLio setup encounters an issue
-        console.error('PayLio checkout setup error:', payData.error);
-        router.push(`/booking/success?id=${createdBooking.id}&pay_error=1`);
-      }
+      setIsSubmitting(false);
     } catch (err) {
       console.error('Booking submission error:', err);
       setServerError('An unexpected error occurred while processing your request. Please try again.');
@@ -369,6 +360,18 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
           Return to Find a Therapist
         </Link>
       </div>
+    );
+  }
+
+  if (createdBookingData) {
+    return (
+      <PaymentMethodSelector
+        bookingId={createdBookingData.id}
+        bookingNumber={createdBookingData.bookingNumber}
+        amount={createdBookingData.amount}
+        customerEmail={email}
+        customerName={`${firstName} ${lastName}`}
+      />
     );
   }
 

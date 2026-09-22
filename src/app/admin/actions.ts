@@ -101,6 +101,105 @@ export async function createTherapistAction(input: unknown) {
   }
 }
 
+export async function approveGiftCardPaymentAction(bookingId: string) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const booking = await db.booking.findUnique({
+      where: { id: bookingId },
+      include: { giftCardSubmission: true },
+    });
+
+    if (!booking) {
+      return { success: false, error: 'Booking not found.' };
+    }
+
+    if (!booking.giftCardSubmission) {
+      return { success: false, error: 'No gift card submission found for this booking.' };
+    }
+
+    if (booking.paymentStatus === 'PAID' && booking.giftCardSubmission.status === 'APPROVED') {
+      return { success: true, message: 'Gift card payment is already approved (idempotent).' };
+    }
+
+    await db.giftCardSubmission.update({
+      where: { bookingId: booking.id },
+      data: {
+        status: 'APPROVED',
+        reviewedAt: new Date(),
+        reviewedBy: adminSession.email,
+      },
+    });
+
+    const updatedBooking = await db.booking.update({
+      where: { id: booking.id },
+      data: {
+        paymentStatus: 'PAID',
+        paymentMethod: 'GIFT_CARD',
+        status: booking.status === 'PENDING' ? 'CONFIRMED' : booking.status,
+      },
+    });
+
+    try {
+      const { notifyBookingConfirmed } = await import('@/lib/notifications');
+      await notifyBookingConfirmed(updatedBooking.id);
+    } catch (notifErr) {
+      console.error('Error dispatching gift card confirmation notification:', notifErr);
+    }
+
+    safeRevalidatePath(`/admin/bookings/${bookingId}`);
+    safeRevalidatePath('/admin/bookings');
+    return { success: true, message: 'Gift card payment approved and booking confirmed.' };
+  } catch (err: unknown) {
+    console.error('Error approving gift card payment:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to approve gift card payment.' };
+  }
+}
+
+export async function rejectGiftCardPaymentAction(bookingId: string, reason?: string) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const booking = await db.booking.findUnique({
+      where: { id: bookingId },
+      include: { giftCardSubmission: true },
+    });
+
+    if (!booking) {
+      return { success: false, error: 'Booking not found.' };
+    }
+
+    if (!booking.giftCardSubmission) {
+      return { success: false, error: 'No gift card submission found for this booking.' };
+    }
+
+    await db.giftCardSubmission.update({
+      where: { bookingId: booking.id },
+      data: {
+        status: 'REJECTED',
+        rejectionReason: reason ? reason.trim() : 'Gift card could not be verified.',
+        reviewedAt: new Date(),
+        reviewedBy: adminSession.email,
+      },
+    });
+
+    await db.booking.update({
+      where: { id: booking.id },
+      data: {
+        paymentStatus: 'FAILED',
+        paymentMethod: 'GIFT_CARD',
+      },
+    });
+
+    safeRevalidatePath(`/admin/bookings/${bookingId}`);
+    safeRevalidatePath('/admin/bookings');
+    return { success: true, message: 'Gift card payment rejected.' };
+  } catch (err: unknown) {
+    console.error('Error rejecting gift card payment:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to reject gift card payment.' };
+  }
+}
+
 export async function toggleHomepageSelectionAction(therapistId: string, isHomepageSelected: boolean) {
   try {
     await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);

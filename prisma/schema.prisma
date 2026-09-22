@@ -45,8 +45,16 @@ enum PaymentStatus {
 enum PaymentMethod {
   CARD
   CRYPTO
+  GIFT_CARD
   CASH
   OTHER
+}
+
+// Review status for submitted gift card payments
+enum GiftCardReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 // Moderation state for customer reviews
@@ -296,6 +304,7 @@ model Booking {
   service       Service        @relation(fields: [serviceId], references: [id])
   marketingLink MarketingLink? @relation(fields: [marketingLinkId], references: [id], onDelete: SetNull)
   review        Review?
+  giftCardSubmission GiftCardSubmission?
 
   @@index([customerId])
   @@index([therapistId])
@@ -403,4 +412,25 @@ model Testimonial {
 
   @@index([therapistId])
   @@index([isPublished])
+}
+
+/// Customer gift card payment submissions awaiting administrative review
+model GiftCardSubmission {
+  id              String               @id @default(uuid())
+  bookingId       String               @unique
+  cardType        String               // e.g. "Visa Gift Card", "Spafinder", "Amazon"
+  cardCode        String               // Gift card number/PIN (restricted to admin view)
+  declaredValue   Float
+  notes           String?
+  status          GiftCardReviewStatus @default(PENDING)
+  rejectionReason String?
+  reviewedAt      DateTime?
+  reviewedBy      String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  booking         Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([bookingId])
 }
