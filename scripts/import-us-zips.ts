@@ -1,3 +1,14 @@
+/**
+ * MASSAF U.S. ZIP Code Dataset Import Script
+ *
+ * DATASET SOURCE & PROVENANCE:
+ * - Dataset: U.S. ZIP code dataset derived from open-source 'zipcodes' npm package (v8.0.0)
+ * - License: MIT License
+ * - Total Record Count: 42,555 U.S. ZIP Code records
+ * - Scope: Covers all 50 U.S. States, District of Columbia, Puerto Rico, Virgin Islands, Guam, and U.S. territories.
+ * - Data Characteristics: Provides 5-digit postal ZIP code string (with leading zeros preserved), city name, 2-letter state code, state name, latitude, and longitude.
+ */
+
 import { db } from '../src/lib/db';
 import zipcodes from 'zipcodes';
 
@@ -61,9 +72,9 @@ const STATE_NAMES: Record<string, string> = {
 };
 
 export async function importUsZipCodes() {
-  console.log('=== IMPORTING OFFICIAL USPS U.S. ZIP CODES DATASET ===\n');
+  console.log('=== IMPORTING U.S. ZIP CODES DATASET ===\n');
 
-  // Extract all U.S. records from zipcodes dataset (MIT License)
+  // Extract all U.S. records from zipcodes dataset
   const allCodes = Object.values(zipcodes.codes) as Array<{
     zip: string;
     latitude: number;
@@ -74,22 +85,32 @@ export async function importUsZipCodes() {
   }>;
 
   const usRecords = allCodes.filter((z) => z.country === 'US' && z.zip && z.state);
-
   console.log(`Extracted ${usRecords.length} U.S. ZIP code records from 'zipcodes' package dataset.`);
 
-  // Check how many records already exist in USZipCode table
-  const existingCount = await db.uSZipCode.count();
-  if (existingCount >= usRecords.length) {
-    console.log(`✅ USZipCode table already fully seeded (${existingCount} records). Skipping import.`);
-    return existingCount;
+  // 100% Idempotent check: Query all existing ZIP codes into memory Set
+  const existingZipRecords = await db.uSZipCode.findMany({
+    select: { zipCode: true },
+  });
+  const existingZipSet = new Set(existingZipRecords.map((z) => z.zipCode));
+
+  // Filter out any record that already exists in the database
+  const missingRecords = usRecords.filter((r) => {
+    const padZip = String(r.zip).padStart(5, '0');
+    return !existingZipSet.has(padZip);
+  });
+
+  if (missingRecords.length === 0) {
+    const totalCount = await db.uSZipCode.count();
+    console.log(`✅ USZipCode database table is already fully seeded (${totalCount} records). Skipping insertion.`);
+    return totalCount;
   }
 
-  console.log('Inserting ZIP records in batches of 1,000...');
+  console.log(`Found ${missingRecords.length} missing ZIP records. Inserting in batches of 1,000...`);
   const BATCH_SIZE = 1000;
   let totalInserted = 0;
 
-  for (let i = 0; i < usRecords.length; i += BATCH_SIZE) {
-    const batch = usRecords.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < missingRecords.length; i += BATCH_SIZE) {
+    const batch = missingRecords.slice(i, i + BATCH_SIZE);
     const dataToInsert = batch.map((r) => ({
       zipCode: String(r.zip).padStart(5, '0'),
       city: r.city.trim(),
@@ -104,9 +125,7 @@ export async function importUsZipCodes() {
     });
 
     totalInserted += batch.length;
-    if (totalInserted % 5000 === 0 || totalInserted === usRecords.length) {
-      console.log(`  Processed ${totalInserted} / ${usRecords.length} records...`);
-    }
+    console.log(`  Inserted ${totalInserted} / ${missingRecords.length} missing records...`);
   }
 
   const finalCount = await db.uSZipCode.count();

@@ -168,21 +168,41 @@ export function isZipInRange(
   return req >= minPad && req <= maxPad;
 }
 
-import { getStateForZip, isValidUSZip } from '@/lib/us-locations';
+import { getZipInfo } from '@/lib/us-locations';
+
+export async function therapistCoversZipAsync(
+  therapist: CustomerTherapist,
+  requestedZip: string
+): Promise<boolean> {
+  if (!requestedZip || !requestedZip.trim()) return false;
+  const req = requestedZip.trim();
+
+  // Query USZipCode database info authoritatively
+  const zipInfo = await getZipInfo(req);
+  if (!zipInfo) {
+    return false; // Customer ZIP does not exist in real U.S. database
+  }
+
+  if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
+    return therapist.rawServiceAreas.some((sa) => {
+      if (sa.state && sa.state.trim().toUpperCase() !== zipInfo.state) {
+        return false;
+      }
+      return isZipInRange(req, sa.zipCode, sa.endZipCode);
+    });
+  }
+
+  return therapist.zipCodes.some((z) => z.trim() === req);
+}
 
 export function therapistCoversZip(therapist: CustomerTherapist, requestedZip: string): boolean {
   if (!requestedZip || !requestedZip.trim()) return false;
   const req = requestedZip.trim();
 
-  const reqState = getStateForZip(req);
-
   if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
-    return therapist.rawServiceAreas.some((sa) => {
-      if (reqState && sa.state && sa.state.trim().toUpperCase() !== reqState) {
-        return false;
-      }
-      return isZipInRange(req, sa.zipCode, sa.endZipCode);
-    });
+    return therapist.rawServiceAreas.some((sa) =>
+      isZipInRange(req, sa.zipCode, sa.endZipCode)
+    );
   }
 
   return therapist.zipCodes.some((z) => z.trim() === req);

@@ -21,7 +21,7 @@ import { ConfirmModal } from '@/components/admin/ConfirmModal';
 import { getAllUsStates } from '@/lib/us-locations';
 import {
   fetchCitiesForStateAction,
-  fetchZipsForCityAction,
+  fetchZipsForStateAction,
 } from '@/app/actions/locations';
 
 export interface PhotoData {
@@ -166,9 +166,9 @@ export function EditTherapistForm({
   const [stateCode, setStateCode] = useState('CA');
   const [cityName, setCityName] = useState('Los Angeles');
   const [zipCode, setZipCode] = useState('90001');
-  const [endZipCode, setEndZipCode] = useState('90020');
-  const [availableCities, setAvailableCities] = useState<string[]>(['Los Angeles', 'Beverly Hills', 'Santa Monica']);
-  const [availableZips, setAvailableZips] = useState<string[]>(['90001', '90010', '90012', '90020']);
+  const [endZipCode, setEndZipCode] = useState('92692');
+  const [availableCities, setAvailableCities] = useState<string[]>(['Los Angeles', 'Beverly Hills', 'Santa Monica', 'Irvine', 'San Francisco', 'San Diego']);
+  const [stateZips, setStateZips] = useState<string[]>([]);
   const [areaSaving, setAreaSaving] = useState(false);
   const [areaMsg, setAreaMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -180,28 +180,27 @@ export function EditTherapistForm({
     const firstCity = cities[0] || '';
     setCityName(firstCity);
 
-    if (firstCity) {
-      const zips = await fetchZipsForCityAction(newSegState, firstCity);
-      setAvailableZips(zips);
-      const firstZip = zips[0] || '';
-      setZipCode(firstZip);
-      setEndZipCode(firstZip);
-    } else {
-      setAvailableZips([]);
-      setZipCode('');
-      setEndZipCode('');
-    }
+    const zips = await fetchZipsForStateAction(newSegState);
+    setStateZips(zips);
+    const firstZip = zips[0] || '';
+    const lastZip = zips.length > 1 ? zips[zips.length - 1] : firstZip;
+    setZipCode(firstZip);
+    setEndZipCode(lastZip);
   };
 
-  // Async location loaders when city changes
-  const handleCityChange = async (newSegCity: string) => {
-    setCityName(newSegCity);
-    const zips = await fetchZipsForCityAction(stateCode, newSegCity);
-    setAvailableZips(zips);
-    const firstZip = zips[0] || '';
-    setZipCode(firstZip);
-    setEndZipCode(firstZip);
-  };
+  // Load state ZIP universe on initial tab load
+  React.useEffect(() => {
+    if (activeTab === 'areas' && stateZips.length === 0) {
+      fetchCitiesForStateAction(stateCode).then(setAvailableCities);
+      fetchZipsForStateAction(stateCode).then((zips) => {
+        setStateZips(zips);
+        if (zips.length > 0 && !zipCode) {
+          setZipCode(zips[0]);
+          setEndZipCode(zips[zips.length - 1]);
+        }
+      });
+    }
+  }, [activeTab, stateCode, stateZips.length, zipCode]);
 
   // State for Availability Add
   const [dayOfWeek, setDayOfWeek] = useState<number>(1); // Monday default
@@ -1675,12 +1674,12 @@ export function EditTherapistForm({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  City / Location
+                  City / Location Label
                 </label>
                 <select
                   required
                   value={cityName}
-                  onChange={(e) => handleCityChange(e.target.value)}
+                  onChange={(e) => setCityName(e.target.value)}
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
                 >
                   {availableCities.map((ct) => (
@@ -1695,35 +1694,56 @@ export function EditTherapistForm({
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                   Start ZIP
                 </label>
-                <select
-                  required
-                  value={zipCode}
-                  onChange={(e) => setZipCode(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                >
-                  {availableZips.map((z) => (
-                    <option key={z} value={z}>
-                      {z}
-                    </option>
-                  ))}
-                </select>
+                {stateZips.length > 0 ? (
+                  <select
+                    required
+                    value={zipCode}
+                    onChange={(e) => setZipCode(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
+                  >
+                    {stateZips.map((z) => (
+                      <option key={z} value={z}>
+                        {z}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    required
+                    maxLength={5}
+                    value={zipCode}
+                    onChange={(e) => setZipCode(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
+                  />
+                )}
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  End ZIP (Coverage Range)
+                  End ZIP (Multi-City Range)
                 </label>
-                <select
-                  value={endZipCode}
-                  onChange={(e) => setEndZipCode(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                >
-                  {availableZips.map((z) => (
-                    <option key={z} value={z}>
-                      {z}
-                    </option>
-                  ))}
-                </select>
+                {stateZips.length > 0 ? (
+                  <select
+                    value={endZipCode}
+                    onChange={(e) => setEndZipCode(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
+                  >
+                    {stateZips.map((z) => (
+                      <option key={z} value={z}>
+                        {z}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    maxLength={5}
+                    value={endZipCode}
+                    onChange={(e) => setEndZipCode(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
+                  />
+                )}
               </div>
 
               <div className="sm:col-span-4 flex justify-end pt-2">
