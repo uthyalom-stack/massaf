@@ -2,6 +2,36 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { paylioClient } from '@/lib/paylio';
 
+export function getCanonicalBaseUrl(request?: Request): string {
+  const envUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || process.env.APP_URL;
+  if (envUrl && envUrl.trim()) {
+    let clean = envUrl.trim().replace(/^["\x27]|["\x27]$/g, '').replace(/\/$/, '');
+    if (process.env.NODE_ENV === 'production' && !clean.startsWith('https://')) {
+      clean = clean.replace(/^http:\/\//, 'https://');
+      if (!clean.startsWith('https://')) {
+        clean = `https://${clean}`;
+      }
+    }
+    return clean;
+  }
+
+  if (process.env.VERCEL_URL) {
+    const vercelHost = process.env.VERCEL_URL.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+    return `https://${vercelHost}`;
+  }
+
+  if (request) {
+    const host = request.headers.get('x-forwarded-host') || request.headers.get('host');
+    const proto = request.headers.get('x-forwarded-proto') || (process.env.NODE_ENV === 'production' ? 'https' : 'http');
+    if (host) {
+      const effectiveProto = process.env.NODE_ENV === 'production' ? 'https' : proto;
+      return `${effectiveProto}://${host}`;
+    }
+  }
+
+  return process.env.NODE_ENV === 'production' ? 'https://massaf.com' : 'http://localhost:3000';
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -55,7 +85,7 @@ export async function POST(request: Request) {
     }
 
     // 3. Construct application PayLio callback URL
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const baseUrl = getCanonicalBaseUrl(request);
     const callbackUrl = `${baseUrl}/api/payments/paylio/callback?bookingId=${booking.id}`;
 
     // 4. Create PayLio wallet checkout link
