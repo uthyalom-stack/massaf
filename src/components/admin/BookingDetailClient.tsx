@@ -22,6 +22,7 @@ export interface GiftCardSubmissionData {
   rejectionReason: string | null;
   reviewedAt: string | null;
   reviewedBy: string | null;
+  imageIds?: string[];
 }
 
 export interface BookingDetailCustomer {
@@ -423,6 +424,35 @@ export default function BookingDetailClient({
                   <div className="sm:col-span-2">
                     <span className="text-slate-500 block font-semibold">Customer Submission Notes</span>
                     <span className="text-slate-800 block mt-0.5">{booking.giftCardSubmission.notes}</span>
+                  </div>
+                )}
+
+                {booking.giftCardSubmission.imageIds && booking.giftCardSubmission.imageIds.length > 0 && (
+                  <div className="sm:col-span-2 space-y-2 pt-2 border-t border-slate-200">
+                    <span className="text-slate-700 block font-bold text-xs uppercase tracking-wider">
+                      Uploaded Gift Card Proof Photos ({booking.giftCardSubmission.imageIds.length})
+                    </span>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {booking.giftCardSubmission.imageIds.map((imgId, idx) => (
+                        <a
+                          key={imgId}
+                          href={`/api/admin/gift-cards/image?imageId=${imgId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="relative group rounded-xl overflow-hidden border border-slate-300 aspect-square bg-slate-900 block"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={`/api/admin/gift-cards/image?imageId=${imgId}`}
+                            alt={`Gift card proof ${idx + 1}`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          />
+                          <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold">
+                            View Full Photo ↗
+                          </div>
+                        </a>
+                      ))}
+                    </div>
                   </div>
                 )}
 

@@ -34,7 +34,11 @@ export default async function AdminBookingDetailPage({ params }: BookingDetailPa
         customer: true,
         therapist: true,
         service: true,
-        giftCardSubmission: true,
+        giftCardSubmission: {
+          include: {
+            images: true,
+          },
+        },
       },
     });
 
@@ -102,6 +106,7 @@ export default async function AdminBookingDetailPage({ params }: BookingDetailPa
         rejectionReason: booking.giftCardSubmission.rejectionReason,
         reviewedAt: booking.giftCardSubmission.reviewedAt ? booking.giftCardSubmission.reviewedAt.toISOString() : null,
         reviewedBy: booking.giftCardSubmission.reviewedBy,
+        imageIds: booking.giftCardSubmission.images.map((img) => img.id),
       } : null,
     };
 

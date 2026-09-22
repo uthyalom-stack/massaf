@@ -30,6 +30,39 @@ export function PaymentMethodSelector({
   const [giftCardCode, setGiftCardCode] = useState('');
   const [giftCardValue, setGiftCardValue] = useState(String(amount));
   const [giftCardNotes, setGiftCardNotes] = useState('');
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    const filesArray = Array.from(e.target.files);
+
+    // Validate file sizes and types
+    for (const f of filesArray) {
+      if (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(f.type.toLowerCase())) {
+        setErrorMsg(`"${f.name}" is an unsupported format. Please upload JPEG, PNG, or WebP images.`);
+        return;
+      }
+      if (f.size > 10 * 1024 * 1024) {
+        setErrorMsg(`"${f.name}" exceeds the 10MB size limit.`);
+        return;
+      }
+    }
+
+    const updatedFiles = [...selectedFiles, ...filesArray];
+    setSelectedFiles(updatedFiles);
+
+    // Generate object URLs for preview
+    const newPreviews = filesArray.map((file) => URL.createObjectURL(file));
+    setImagePreviews((prev) => [...prev, ...newPreviews]);
+  };
+
+  const removeImage = (index: number) => {
+    const updatedFiles = selectedFiles.filter((_, i) => i !== index);
+    const updatedPreviews = imagePreviews.filter((_, i) => i !== index);
+    setSelectedFiles(updatedFiles);
+    setImagePreviews(updatedPreviews);
+  };
 
   const handlePayLioPayment = async () => {
     setLoading(true);
@@ -107,18 +140,32 @@ export function PaymentMethodSelector({
       return;
     }
 
+    if (selectedFiles.length === 0) {
+      setErrorMsg('Please upload at least one clear photo of the gift card or claim code/PIN.');
+      setLoading(false);
+      return;
+    }
+
     try {
+      const formData = new FormData();
+      formData.append('bookingId', bookingId);
+      formData.append('cardType', giftCardType);
+      formData.append('cardCode', giftCardCode.trim());
+      formData.append('declaredValue', String(val));
+      if (giftCardNotes.trim()) {
+        formData.append('notes', giftCardNotes.trim());
+      }
+      if (customerEmail) {
+        formData.append('email', customerEmail);
+      }
+
+      for (const file of selectedFiles) {
+        formData.append('images', file);
+      }
+
       const res = await fetch('/api/payments/gift-card/submit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bookingId,
-          cardType: giftCardType,
-          cardCode: giftCardCode.trim(),
-          declaredValue: val,
-          notes: giftCardNotes.trim() || undefined,
-          email: customerEmail,
-        }),
+        body: formData,
       });
 
       const data = await res.json();
@@ -343,6 +390,53 @@ export function PaymentMethodSelector({
               <p className="text-[11px] text-slate-500 mt-1">
                 Restricted to authorized MASSAF administrative review. Never displayed publicly.
               </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
+                Gift Card Photos / Screenshots (Required) *
+              </label>
+              <p className="text-[11px] text-slate-500 mb-2">
+                Upload clear photos of the physical card (front/back, visible card number & PIN) or digital e-card receipt.
+              </p>
+
+              <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center bg-white hover:border-emerald-600 transition-colors cursor-pointer relative">
+                <input
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleFileChange}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                <div className="space-y-1">
+                  <span className="text-sm font-extrabold text-emerald-800">
+                    + Upload Card Photos (JPEG, PNG, WebP)
+                  </span>
+                  <p className="text-[11px] text-slate-500">
+                    Max 10MB per file. Must be clearly readable.
+                  </p>
+                </div>
+              </div>
+
+              {/* Image Previews */}
+              {imagePreviews.length > 0 && (
+                <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {imagePreviews.map((src, index) => (
+                    <div key={index} className="relative group rounded-xl overflow-hidden border border-slate-200 aspect-square bg-slate-100">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={src} alt={`Gift card upload preview ${index + 1}`} className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => removeImage(index)}
+                        className="absolute top-1 right-1 bg-rose-600 text-white rounded-full p-1 text-[10px] font-bold shadow-xs hover:bg-rose-700 transition-colors"
+                        title="Remove photo"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div>

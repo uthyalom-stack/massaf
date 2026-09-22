@@ -430,7 +430,20 @@ model GiftCardSubmission {
   updatedAt       DateTime             @updatedAt
 
   booking         Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  images          GiftCardImage[]
 
   @@index([status])
   @@index([bookingId])
+}
+
+/// Uploaded proof photos for gift card submissions (e.g. front/back, PIN scratch, e-card receipt)
+model GiftCardImage {
+  id                   String             @id @default(uuid())
+  giftCardSubmissionId String
+  storageKey           String             // Private Cloudflare R2 object key
+  createdAt            DateTime           @default(now())
+
+  giftCardSubmission   GiftCardSubmission @relation(fields: [giftCardSubmissionId], references: [id], onDelete: Cascade)
+
+  @@index([giftCardSubmissionId])
 }
