@@ -45,6 +45,7 @@ export interface ServiceAreaData {
   cityName: string;
   state: string;
   zipCode: string;
+  endZipCode?: string | null;
 }
 
 export interface AvailabilityData {
@@ -68,6 +69,7 @@ export interface DetailedTherapist {
   reviewCount: number;
   isActive: boolean;
   isFeatured: boolean;
+  isHomepageSelected?: boolean;
   offersStudio: boolean;
   offersInHome: boolean;
   photos: PhotoData[];
@@ -117,6 +119,7 @@ export function EditTherapistForm({
     bio: therapist.bio || '',
     isActive: therapist.isActive,
     isFeatured: therapist.isFeatured,
+    isHomepageSelected: therapist.isHomepageSelected ?? false,
     offersStudio: therapist.offersStudio,
     offersInHome: therapist.offersInHome,
   });
@@ -149,6 +152,7 @@ export function EditTherapistForm({
   // State for Service Assignment
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const [customPrice, setCustomPrice] = useState('');
+  const [customDuration, setCustomDuration] = useState('');
   const [serviceSaving, setServiceSaving] = useState(false);
   const [serviceMsg, setServiceMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -156,6 +160,7 @@ export function EditTherapistForm({
   const [cityName, setCityName] = useState('');
   const [stateCode, setStateCode] = useState('');
   const [zipCode, setZipCode] = useState('');
+  const [endZipCode, setEndZipCode] = useState('');
   const [areaSaving, setAreaSaving] = useState(false);
   const [areaMsg, setAreaMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -265,6 +270,7 @@ export function EditTherapistForm({
         bio: basicForm.bio.trim() || undefined,
         isActive: basicForm.isActive,
         isFeatured: basicForm.isFeatured,
+        isHomepageSelected: basicForm.isHomepageSelected,
         offersStudio: basicForm.offersStudio,
         offersInHome: basicForm.offersInHome,
       });
@@ -551,6 +557,7 @@ export function EditTherapistForm({
       const res = await assignTherapistServiceAction(therapist.id, {
         serviceId: selectedServiceId,
         customPrice: customPrice ? parseFloat(customPrice) : undefined,
+        customDurationMinutes: customDuration ? parseInt(customDuration, 10) : undefined,
         isActive: true,
       });
 
@@ -584,6 +591,7 @@ export function EditTherapistForm({
 
       setSelectedServiceId('');
       setCustomPrice('');
+      setCustomDuration('');
       setServiceMsg({ type: 'success', text: 'Service assigned successfully!' });
       router.refresh();
     } catch (err) {
@@ -637,6 +645,7 @@ export function EditTherapistForm({
         cityName: cityName.trim(),
         state: stateCode.trim().toUpperCase(),
         zipCode: zipCode.trim(),
+        endZipCode: endZipCode.trim() || undefined,
       });
 
       if (!res.success) {
@@ -650,6 +659,7 @@ export function EditTherapistForm({
           cityName: res.serviceArea.cityName,
           state: res.serviceArea.state,
           zipCode: res.serviceArea.zipCode,
+          endZipCode: res.serviceArea.endZipCode,
         };
         setTherapist((prev) => ({
           ...prev,
@@ -660,6 +670,7 @@ export function EditTherapistForm({
       setCityName('');
       setStateCode('');
       setZipCode('');
+      setEndZipCode('');
       setAreaMsg({ type: 'success', text: 'Service area added!' });
       router.refresh();
     } catch (err) {
@@ -1157,6 +1168,16 @@ export function EditTherapistForm({
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
+                    checked={basicForm.isHomepageSelected}
+                    onChange={(e) => setBasicForm({ ...basicForm, isHomepageSelected: e.target.checked })}
+                    className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+                  />
+                  <span className="font-semibold text-slate-800">Display on Homepage</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
                     checked={basicForm.offersStudio}
                     onChange={(e) => setBasicForm({ ...basicForm, offersStudio: e.target.checked })}
                     className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
@@ -1489,7 +1510,7 @@ export function EditTherapistForm({
                 </select>
               </div>
 
-              <div className="w-full sm:w-40">
+              <div className="w-full sm:w-36">
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                   Custom Price ($)
                 </label>
@@ -1499,7 +1520,22 @@ export function EditTherapistForm({
                   min="0"
                   value={customPrice}
                   onChange={(e) => setCustomPrice(e.target.value)}
-                  placeholder="Optional override"
+                  placeholder="Use default"
+                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                />
+              </div>
+
+              <div className="w-full sm:w-36">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Custom Duration (min)
+                </label>
+                <input
+                  type="number"
+                  step="5"
+                  min="15"
+                  value={customDuration}
+                  onChange={(e) => setCustomDuration(e.target.value)}
+                  placeholder="Use default"
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
                 />
               </div>
@@ -1611,14 +1647,27 @@ export function EditTherapistForm({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  ZIP Code
+                  Start ZIP
                 </label>
                 <input
                   type="text"
                   required
                   value={zipCode}
                   onChange={(e) => setZipCode(e.target.value)}
-                  placeholder="90401"
+                  placeholder="90001"
+                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  End ZIP (Optional Range)
+                </label>
+                <input
+                  type="text"
+                  value={endZipCode}
+                  onChange={(e) => setEndZipCode(e.target.value)}
+                  placeholder="90020"
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
                 />
               </div>

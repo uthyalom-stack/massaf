@@ -3,7 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { toggleTherapistActiveAction } from '@/app/admin/actions';
+import { toggleTherapistActiveAction, toggleHomepageSelectionAction } from '@/app/admin/actions';
 import { ConfirmModal } from '@/components/admin/ConfirmModal';
 
 export interface AdminTherapistItem {
@@ -17,6 +17,7 @@ export interface AdminTherapistItem {
   reviewCount: number;
   isActive: boolean;
   isFeatured: boolean;
+  isHomepageSelected?: boolean;
   offersStudio: boolean;
   offersInHome: boolean;
   createdAt: string;
@@ -80,6 +81,26 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
     } else {
       // Activation - execute directly
       executeToggleActive(therapist.id, therapist.isActive);
+    }
+  };
+
+  const handleToggleHomepage = async (id: string, currentHomepageStatus: boolean) => {
+    try {
+      setTogglingId(id);
+      const res = await toggleHomepageSelectionAction(id, !currentHomepageStatus);
+      if (!res.success) {
+        alert(res.error || 'Failed to update homepage selection');
+        return;
+      }
+      setTherapists((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, isHomepageSelected: !currentHomepageStatus } : t))
+      );
+      router.refresh();
+    } catch (err) {
+      console.error('Error toggling homepage selection:', err);
+      alert('An error occurred while updating homepage selection.');
+    } finally {
+      setTogglingId(null);
     }
   };
 
@@ -211,6 +232,11 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
                                 Featured
                               </span>
                             )}
+                            {therapist.isHomepageSelected && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                Homepage
+                              </span>
+                            )}
                           </div>
                           <p className="text-xs text-slate-500 mt-0.5">
                             {therapist.email || 'No email registered'}
@@ -260,6 +286,20 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
 
                     {/* Actions */}
                     <td className="px-6 py-4 text-right space-x-2">
+                      <button
+                        type="button"
+                        disabled={togglingId === therapist.id || !therapist.isActive}
+                        onClick={() => handleToggleHomepage(therapist.id, Boolean(therapist.isHomepageSelected))}
+                        title={!therapist.isActive ? 'Activate therapist first to place on homepage' : ''}
+                        className={`text-xs font-semibold px-2.5 py-1 rounded-lg border transition-colors cursor-pointer ${
+                          therapist.isHomepageSelected
+                            ? 'bg-emerald-100 text-emerald-900 border-emerald-300 hover:bg-emerald-200'
+                            : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100 disabled:opacity-50'
+                        }`}
+                      >
+                        {therapist.isHomepageSelected ? 'Homepage ✓' : '+ Homepage'}
+                      </button>
+
                       <button
                         type="button"
                         disabled={togglingId === therapist.id}

@@ -5,22 +5,32 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { CustomerTherapist } from '@/types/customer';
 import { TherapistFilters } from '@/components/customer/TherapistFilters';
 import { TherapistResults } from '@/components/customer/TherapistResults';
+import { PublicServiceOption, therapistCoversZip } from '@/lib/db-therapists';
 
 interface TherapistDiscoveryClientProps {
   initialTherapists: CustomerTherapist[];
+  availableServices: PublicServiceOption[];
 }
 
 export function TherapistDiscoveryClient({
   initialTherapists,
+  availableServices,
 }: TherapistDiscoveryClientProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
 
   // Single source of truth from searchParams
-  const queryParam = searchParams.get('query') || '';
-  const cityFilter = searchParams.get('city') || queryParam;
-  const zipFilter = searchParams.get('zip') || '';
+  const queryParam = (searchParams.get('query') || '').trim();
+  const serviceIdFilter = searchParams.get('service') || searchParams.get('serviceId') || 'all';
+  const rawCity = searchParams.get('city') || '';
+  const rawZip = searchParams.get('zip') || '';
+
+  // If query is 5-digit numeric, treat as ZIP parameter automatically
+  const isQueryZip = /^\d{5}$/.test(queryParam);
+  const cityFilter = rawCity || (!isQueryZip ? queryParam : '');
+  const zipFilter = rawZip || (isQueryZip ? queryParam : '');
+
   const serviceTypeFilter = searchParams.get('type') || 'all';
   const specialtyFilter = searchParams.get('specialty') || 'all';
 
@@ -36,6 +46,7 @@ export function TherapistDiscoveryClient({
   // Update URL search parameters
   const handleFilterChange = (
     updated: Partial<{
+      serviceId: string;
       city: string;
       zip: string;
       serviceType: string;
@@ -44,13 +55,20 @@ export function TherapistDiscoveryClient({
   ) => {
     const params = new URLSearchParams(searchParams.toString());
 
-    // If query param exists from homepage search, clear it when city is explicitly modified
+    // Clear generic query param when specific filters are changed
     params.delete('query');
 
+    const nextService = updated.serviceId !== undefined ? updated.serviceId : serviceIdFilter;
     const nextCity = updated.city !== undefined ? updated.city : cityFilter;
     const nextZip = updated.zip !== undefined ? updated.zip : zipFilter;
     const nextType = updated.serviceType !== undefined ? updated.serviceType : serviceTypeFilter;
     const nextSpecialty = updated.specialty !== undefined ? updated.specialty : specialtyFilter;
+
+    if (nextService && nextService !== 'all') params.set('service', nextService);
+    else {
+      params.delete('service');
+      params.delete('serviceId');
+    }
 
     if (nextCity.trim()) params.set('city', nextCity.trim());
     else params.delete('city');
@@ -74,51 +92,85 @@ export function TherapistDiscoveryClient({
     router.replace(pathname, { scroll: false });
   };
 
-  // Perform client-side filtering against real database dataset
+  // Perform authoritative filtering against real database dataset
   const filteredTherapists = useMemo(() => {
-    return initialTherapists.filter((therapist) => {
-      // 1. City / Region filter
-      if (cityFilter.trim()) {
-        const query = cityFilter.trim().toLowerCase();
-        const matchesLocation = therapist.location.toLowerCase().includes(query);
-        const matchesServiceArea = therapist.serviceAreas.some((area) =>
-          area.toLowerCase().includes(query)
-        );
-        const matchesName = therapist.name.toLowerCase().includes(query);
-        if (!matchesLocation && !matchesServiceArea && !matchesName) {
+    return initialTherapists
+      .filter((therapist) => {
+        // 1. Service Filtering: Therapist MUST offer the selected active service
+        if (serviceIdFilter !== 'all') {
+          const offersService = therapist.services.some((s) => s.id === serviceIdFilter);
+          if (!offersService) {
+            return false;
+          }
+        }
+
+        // 2. Service Location Type Filtering & ZIP Coverage Matching
+        if (serviceTypeFilter === 'in_home') {
+          if (!therapist.offersInHome) return false;
+          // In-home requires requested ZIP to fall inside therapist coverage
+          if (zipFilter.trim()) {
+            if (!therapistCoversZip(therapist, zipFilter.trim())) {
+              return false;
+            }
+          }
+        } else if (serviceTypeFilter === 'studio') {
+          if (!therapist.offersStudio) return false;
+          // Studio does NOT require in-home ZIP coverage range
+        } else {
+          // 'all' location types
+          if (zipFilter.trim()) {
+            const coversInHome = therapist.offersInHome && therapistCoversZip(therapist, zipFilter.trim());
+            const offersStudioZip = therapist.offersStudio && therapist.zipCodes.some((z) => z.trim() === zipFilter.trim());
+            if (!coversInHome && !offersStudioZip) {
+              return false;
+            }
+          }
+        }
+
+        // 3. City / Region filter
+        if (cityFilter.trim()) {
+          const query = cityFilter.trim().toLowerCase();
+          const matchesLocation = therapist.location.toLowerCase().includes(query);
+          const matchesServiceArea = therapist.serviceAreas.some((area) =>
+            area.toLowerCase().includes(query)
+          );
+          const matchesName = therapist.name.toLowerCase().includes(query);
+          if (!matchesLocation && !matchesServiceArea && !matchesName) {
+            return false;
+          }
+        }
+
+        // 4. Specialty filter
+        if (specialtyFilter !== 'all' && !therapist.specialties.includes(specialtyFilter)) {
           return false;
         }
-      }
 
-      // 2. ZIP Code filter
-      if (zipFilter.trim()) {
-        const zipQuery = zipFilter.trim().toLowerCase();
-        const matchesZip = therapist.zipCodes.some((z) =>
-          z.toLowerCase().includes(zipQuery)
-        );
-        if (!matchesZip) {
-          return false;
+        return true;
+      })
+      .map((therapist) => {
+        // Resolve service-specific price if a specific service is selected
+        if (serviceIdFilter !== 'all') {
+          const serviceMatch = therapist.services.find((s) => s.id === serviceIdFilter);
+          if (serviceMatch) {
+            return {
+              ...therapist,
+              startingPrice: serviceMatch.price,
+            };
+          }
         }
-      }
-
-      // 3. Service / Location preference filter
-      if (serviceTypeFilter === 'in_home' && !therapist.offersInHome) {
-        return false;
-      }
-      if (serviceTypeFilter === 'studio' && !therapist.offersStudio) {
-        return false;
-      }
-
-      // 4. Specialty filter
-      if (specialtyFilter !== 'all' && !therapist.specialties.includes(specialtyFilter)) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [initialTherapists, cityFilter, zipFilter, serviceTypeFilter, specialtyFilter]);
+        return therapist;
+      });
+  }, [
+    initialTherapists,
+    serviceIdFilter,
+    cityFilter,
+    zipFilter,
+    serviceTypeFilter,
+    specialtyFilter,
+  ]);
 
   const hasActiveFilters =
+    serviceIdFilter !== 'all' ||
     Boolean(cityFilter.trim()) ||
     Boolean(zipFilter.trim()) ||
     serviceTypeFilter !== 'all' ||
@@ -129,6 +181,7 @@ export function TherapistDiscoveryClient({
       {/* Search & Filter Controls */}
       <TherapistFilters
         filters={{
+          serviceId: serviceIdFilter,
           city: cityFilter,
           zip: zipFilter,
           serviceType: serviceTypeFilter,
@@ -136,6 +189,7 @@ export function TherapistDiscoveryClient({
         }}
         onFilterChange={handleFilterChange}
         onReset={handleReset}
+        availableServices={availableServices}
         availableSpecialties={availableSpecialties}
       />
 

@@ -124,21 +124,22 @@ model CustomerFavorite {
 
 /// Massage therapists providing services
 model Therapist {
-  id             String   @id @default(uuid())
-  name           String
-  bio            String?
-  profileImage   String?
-  email          String?  @unique
-  phone          String?
-  telegramChatId String?
-  rating         Float    @default(0.0)
-  reviewCount    Int      @default(0)
-  isActive       Boolean  @default(true)
-  isFeatured     Boolean  @default(false)
-  offersStudio   Boolean  @default(true)
-  offersInHome   Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  name               String
+  bio                String?
+  profileImage       String?
+  email              String?  @unique
+  phone              String?
+  telegramChatId     String?
+  rating             Float    @default(0.0)
+  reviewCount        Int      @default(0)
+  isActive           Boolean  @default(true)
+  isFeatured         Boolean  @default(false)
+  isHomepageSelected Boolean  @default(false)
+  offersStudio       Boolean  @default(true)
+  offersInHome       Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   photos         TherapistPhoto[]
   services       TherapistService[]
@@ -151,6 +152,7 @@ model Therapist {
 
   @@index([isActive])
   @@index([isFeatured])
+  @@index([isHomepageSelected])
 }
 
 /// Gallery photos for therapist profiles
@@ -247,6 +249,7 @@ model ServiceArea {
   cityName    String
   state       String   // 2-letter state code e.g. "NY", "CA"
   zipCode     String
+  endZipCode  String?
   createdAt   DateTime @default(now())
 
   therapist Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)

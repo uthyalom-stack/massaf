@@ -111,6 +111,7 @@ export interface RawServiceArea {
   cityName: string;
   state: string;
   zipCode: string;
+  endZipCode?: string | null;
 }
 
 export interface RawTherapistData {
@@ -122,6 +123,7 @@ export interface RawTherapistData {
   reviewCount: number;
   isActive: boolean;
   isFeatured: boolean;
+  isHomepageSelected?: boolean;
   offersStudio: boolean;
   offersInHome: boolean;
   photos?: RawTherapistPhoto[];
@@ -131,6 +133,52 @@ export interface RawTherapistData {
   _count?: {
     bookings: number;
   };
+}
+
+export function isZipInRange(
+  requestedZip: string,
+  startZip: string,
+  endZip?: string | null
+): boolean {
+  if (!requestedZip || !startZip) return false;
+
+  const req = requestedZip.trim();
+  const start = startZip.trim();
+  const end = endZip ? endZip.trim() : null;
+
+  if (!req || !start) return false;
+
+  if (!end) {
+    return req === start;
+  }
+
+  const reqNum = parseInt(req, 10);
+  const startNum = parseInt(start, 10);
+  const endNum = parseInt(end, 10);
+
+  if (!isNaN(reqNum) && !isNaN(startNum) && !isNaN(endNum)) {
+    const minNum = Math.min(startNum, endNum);
+    const maxNum = Math.max(startNum, endNum);
+    return reqNum >= minNum && reqNum <= maxNum;
+  }
+
+  const minPad = start < end ? start : end;
+  const maxPad = start < end ? end : start;
+
+  return req >= minPad && req <= maxPad;
+}
+
+export function therapistCoversZip(therapist: CustomerTherapist, requestedZip: string): boolean {
+  if (!requestedZip || !requestedZip.trim()) return false;
+  const req = requestedZip.trim();
+
+  if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
+    return therapist.rawServiceAreas.some((sa) =>
+      isZipInRange(req, sa.zipCode, sa.endZipCode)
+    );
+  }
+
+  return therapist.zipCodes.some((z) => z.trim() === req);
 }
 
 export function formatDbTherapistToPublic(therapist: RawTherapistData): CustomerTherapist {
@@ -185,6 +233,7 @@ export function formatDbTherapistToPublic(therapist: RawTherapistData): Customer
     location,
     serviceAreas: uniqueCities,
     zipCodes,
+    rawServiceAreas: serviceAreas,
     startingPrice,
     availability: availabilityText,
     offersStudio: therapist.offersStudio,
@@ -197,6 +246,7 @@ export function formatDbTherapistToPublic(therapist: RawTherapistData): Customer
     schedule,
     bookingCount,
     isFeatured: therapist.isFeatured,
+    isHomepageSelected: therapist.isHomepageSelected ?? false,
   };
 }
 

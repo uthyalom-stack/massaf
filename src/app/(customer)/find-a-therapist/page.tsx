@@ -1,12 +1,15 @@
 import React, { Suspense } from 'react';
 import Link from 'next/link';
-import { getActiveTherapists } from '@/lib/db-therapists';
+import { getActiveTherapists, getActiveServices } from '@/lib/db-therapists';
 import { TherapistDiscoveryClient } from '@/components/customer/TherapistDiscoveryClient';
 
 export const dynamic = 'force-dynamic';
 
 export default async function FindTherapistPage() {
-  const dbTherapists = await getActiveTherapists();
+  const [dbTherapists, activeServices] = await Promise.all([
+    getActiveTherapists(),
+    getActiveServices(),
+  ]);
 
   return (
     <div className="py-10 sm:py-16 bg-slate-50 min-h-screen">
@@ -55,7 +58,10 @@ export default async function FindTherapistPage() {
             </div>
           }
         >
-          <TherapistDiscoveryClient initialTherapists={dbTherapists} />
+          <TherapistDiscoveryClient
+            initialTherapists={dbTherapists}
+            availableServices={activeServices}
+          />
         </Suspense>
       </div>
     </div>

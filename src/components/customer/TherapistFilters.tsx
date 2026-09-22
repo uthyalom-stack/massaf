@@ -2,17 +2,21 @@
 
 import React from 'react';
 
-interface FilterState {
+import { PublicServiceOption } from '@/lib/db-therapists';
+
+export interface FilterState {
+  serviceId: string;
   city: string;
   zip: string;
   serviceType: string;
   specialty: string;
 }
 
-interface TherapistFiltersProps {
+export interface TherapistFiltersProps {
   filters: FilterState;
   onFilterChange: (newFilters: Partial<FilterState>) => void;
   onReset: () => void;
+  availableServices: PublicServiceOption[];
   availableSpecialties: string[];
 }
 
@@ -20,9 +24,11 @@ export function TherapistFilters({
   filters,
   onFilterChange,
   onReset,
+  availableServices,
   availableSpecialties,
 }: TherapistFiltersProps) {
   const hasActiveFilters =
+    filters.serviceId !== 'all' ||
     Boolean(filters.city.trim()) ||
     Boolean(filters.zip.trim()) ||
     filters.serviceType !== 'all' ||
@@ -31,6 +37,7 @@ export function TherapistFilters({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onFilterChange({
+      serviceId: filters.serviceId,
       city: filters.city,
       zip: filters.zip,
       serviceType: filters.serviceType,
@@ -42,6 +49,46 @@ export function TherapistFilters({
     <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200">
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
+          {/* Massage Service Selector */}
+          <div className="space-y-1.5">
+            <label
+              htmlFor="filter-service"
+              className="block text-xs font-semibold text-slate-700 uppercase tracking-wider"
+            >
+              Massage Service
+            </label>
+            <div className="relative">
+              <select
+                id="filter-service"
+                name="serviceId"
+                value={filters.serviceId}
+                onChange={(e) => onFilterChange({ serviceId: e.target.value })}
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all appearance-none cursor-pointer pr-8"
+              >
+                <option value="all">All Services</option>
+                {availableServices.map((srv) => (
+                  <option key={srv.id} value={srv.id}>
+                    {srv.name} ({srv.durationMinutes}m - ${srv.price})
+                  </option>
+                ))}
+              </select>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 9l-7 7-7-7"
+                  />
+                </svg>
+              </div>
+            </div>
+          </div>
           {/* City / Location Input */}
           <div className="space-y-1.5">
             <label

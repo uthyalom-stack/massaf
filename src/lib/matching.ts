@@ -1,4 +1,5 @@
 import { CustomerTherapist } from '@/types/customer';
+import { therapistCoversZip } from '@/lib/db-therapists';
 import { MatchCriteria } from '@/lib/validations/matching';
 import {
   getScheduleWindowForDate,
@@ -97,8 +98,7 @@ export function rankTherapistsForMatch(
         (therapist.location.toLowerCase().includes(locQueryClean) ||
           therapist.serviceAreas.some((sa) => sa.toLowerCase().includes(locQueryClean)));
 
-      const matchesZip =
-        zipClean && therapist.zipCodes.some((z) => z.toLowerCase().includes(zipClean));
+      const matchesZip = zipClean ? therapistCoversZip(therapist, zipClean) : false;
 
       if (locQueryClean || zipClean) {
         if (matchesCity || matchesZip) {

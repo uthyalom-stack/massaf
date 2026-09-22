@@ -84,6 +84,7 @@ export async function createTherapistAction(input: unknown) {
         telegramChatId: validated.telegramChatId || null,
         isActive: validated.isActive,
         isFeatured: validated.isFeatured,
+        isHomepageSelected: validated.isHomepageSelected,
         offersStudio: validated.offersStudio,
         offersInHome: validated.offersInHome,
       },
@@ -96,6 +97,35 @@ export async function createTherapistAction(input: unknown) {
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to create therapist record.',
+    };
+  }
+}
+
+export async function toggleHomepageSelectionAction(therapistId: string, isHomepageSelected: boolean) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
+    if (!therapist) {
+      return { success: false, error: 'Therapist not found.' };
+    }
+    if (isHomepageSelected && !therapist.isActive) {
+      return { success: false, error: 'Only active therapists can be selected for homepage display.' };
+    }
+
+    const updated = await db.therapist.update({
+      where: { id: therapistId },
+      data: { isHomepageSelected },
+    });
+
+    safeRevalidatePath('/');
+    safeRevalidatePath('/admin/therapists');
+    safeRevalidatePath('/admin/homepage');
+    return { success: true, therapist: updated };
+  } catch (err: unknown) {
+    console.error('Error in toggleHomepageSelectionAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to update homepage selection.',
     };
   }
 }
@@ -464,12 +494,30 @@ export async function createGlobalServiceAction(input: unknown) {
       return { success: false, error: 'Service name must be at least 2 characters.' };
     }
 
+    const duration = Number(data.durationMinutes);
+    if (isNaN(duration) || duration <= 0) {
+      return { success: false, error: 'Duration must be a positive number of minutes.' };
+    }
+
+    const price = Number(data.price);
+    if (isNaN(price) || price <= 0) {
+      return { success: false, error: 'Price must be a positive amount.' };
+    }
+
+    // Check for duplicate service name
+    const existing = await db.service.findFirst({
+      where: { name: { equals: data.name.trim() } },
+    });
+    if (existing) {
+      return { success: false, error: `A service with the name "${data.name.trim()}" already exists.` };
+    }
+
     const service = await db.service.create({
       data: {
         name: data.name.trim(),
         description: data.description || null,
-        durationMinutes: Number(data.durationMinutes),
-        price: Number(data.price),
+        durationMinutes: duration,
+        price: price,
         categoryId: data.categoryId || null,
         isActive: data.isActive ?? true,
       },
@@ -496,6 +544,35 @@ export async function updateGlobalServiceAction(id: string, input: unknown) {
       isActive?: boolean;
     };
 
+    if (data.name !== undefined) {
+      if (data.name.trim().length < 2) {
+        return { success: false, error: 'Service name must be at least 2 characters.' };
+      }
+      const existing = await db.service.findFirst({
+        where: {
+          name: { equals: data.name.trim() },
+          NOT: { id },
+        },
+      });
+      if (existing) {
+        return { success: false, error: `Another service with the name "${data.name.trim()}" already exists.` };
+      }
+    }
+
+    if (data.durationMinutes !== undefined) {
+      const duration = Number(data.durationMinutes);
+      if (isNaN(duration) || duration <= 0) {
+        return { success: false, error: 'Duration must be a positive number of minutes.' };
+      }
+    }
+
+    if (data.price !== undefined) {
+      const price = Number(data.price);
+      if (isNaN(price) || price <= 0) {
+        return { success: false, error: 'Price must be a positive amount.' };
+      }
+    }
+
     const updated = await db.service.update({
       where: { id },
       data: {
@@ -514,6 +591,50 @@ export async function updateGlobalServiceAction(id: string, input: unknown) {
   } catch (err: unknown) {
     console.error('Error in updateGlobalServiceAction:', err);
     return { success: false, error: err instanceof Error ? err.message : 'Failed to update global service.' };
+  }
+}
+
+export async function deleteGlobalServiceAction(id: string) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const bookingCount = await db.booking.count({
+      where: { serviceId: id },
+    });
+
+    if (bookingCount > 0) {
+      // Safely deactivate instead of hard delete to preserve historical booking records
+      await db.service.update({
+        where: { id },
+        data: { isActive: false },
+      });
+      safeRevalidatePath('/admin/services');
+      safeRevalidatePath('/services');
+      return {
+        success: true,
+        deactivated: true,
+        message: 'Service has existing bookings; it has been deactivated instead of deleted.',
+      };
+    }
+
+    // Delete associated therapist service mappings first if any
+    await db.therapistService.deleteMany({
+      where: { serviceId: id },
+    });
+
+    await db.service.delete({
+      where: { id },
+    });
+
+    safeRevalidatePath('/admin/services');
+    safeRevalidatePath('/services');
+    return { success: true };
+  } catch (err: unknown) {
+    console.error('Error in deleteGlobalServiceAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to delete service.',
+    };
   }
 }
 
@@ -1192,6 +1313,7 @@ export async function updateTherapistAction(id: string, input: unknown) {
         ...(validated.telegramChatId !== undefined && { telegramChatId: validated.telegramChatId || null }),
         ...(validated.isActive !== undefined && { isActive: validated.isActive }),
         ...(validated.isFeatured !== undefined && { isFeatured: validated.isFeatured }),
+        ...(validated.isHomepageSelected !== undefined && { isHomepageSelected: validated.isHomepageSelected }),
         ...(validated.offersStudio !== undefined && { offersStudio: validated.offersStudio }),
         ...(validated.offersInHome !== undefined && { offersInHome: validated.offersInHome }),
       },
@@ -1424,6 +1546,10 @@ export async function assignTherapistServiceAction(therapistId: string, input: u
       return { success: false, error: 'Referenced service not found.' };
     }
 
+    if (!service.isActive) {
+      return { success: false, error: 'Cannot assign an inactive service to a therapist.' };
+    }
+
     const therapistService = await db.therapistService.upsert({
       where: {
         therapistId_serviceId: {
@@ -1537,6 +1663,7 @@ export async function addServiceAreaAction(therapistId: string, input: unknown) 
           cityName: validated.cityName,
           state: validated.state,
           zipCode: zip,
+          endZipCode: validated.endZipCode || null,
         },
       });
       createdAreas.push(serviceArea);

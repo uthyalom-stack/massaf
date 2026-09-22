@@ -15,6 +15,7 @@ export const therapistBaseSchema = z.object({
     .nullable(),
   isActive: z.boolean().default(true),
   isFeatured: z.boolean().default(false),
+  isHomepageSelected: z.boolean().default(false),
   offersStudio: z.boolean().default(true),
   offersInHome: z.boolean().default(true),
 });
@@ -50,7 +51,8 @@ export type TherapistServiceInput = z.infer<typeof therapistServiceSchema>;
 export const serviceAreaSchema = z.object({
   cityName: z.string().min(1, 'City name is required'),
   state: z.string().length(2, 'State must be a 2-letter postal code (e.g., CA, NY)').transform((val) => val.toUpperCase()),
-  zipCode: z.string().min(5, 'ZIP code must be at least 5 digits'),
+  zipCode: z.string().min(5, 'Start ZIP code must be at least 5 digits'),
+  endZipCode: z.string().min(5, 'End ZIP code must be at least 5 digits').optional().or(z.literal('')).nullable(),
 });
 
 export type ServiceAreaInput = z.infer<typeof serviceAreaSchema>;

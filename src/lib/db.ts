@@ -5,10 +5,12 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
+import path from 'path';
+
 function createPrismaClient(): PrismaClient {
   let url = process.env.TURSO_DATABASE_URL || 'file:./prisma/dev.db';
-  if (url === 'file:./dev.db') {
-    url = 'file:./prisma/dev.db';
+  if (url === 'file:./dev.db' || url === 'file:./prisma/dev.db') {
+    url = `file:${path.join(process.cwd(), 'prisma', 'dev.db')}`;
   }
   const authToken = process.env.TURSO_AUTH_TOKEN;
 

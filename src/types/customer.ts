@@ -11,6 +11,14 @@ export interface TherapistScheduleWindow {
   hours: string;
 }
 
+export interface PublicServiceArea {
+  id: string;
+  cityName: string;
+  state: string;
+  zipCode: string;
+  endZipCode?: string | null;
+}
+
 export interface CustomerTherapist {
   id: string;
   name: string;
@@ -22,6 +30,7 @@ export interface CustomerTherapist {
   location: string;
   serviceAreas: string[];
   zipCodes: string[];
+  rawServiceAreas?: PublicServiceArea[];
   startingPrice: number;
   availability: string;
   offersStudio: boolean;
@@ -34,6 +43,7 @@ export interface CustomerTherapist {
   schedule: TherapistScheduleWindow[];
   bookingCount: number;
   isFeatured: boolean;
+  isHomepageSelected?: boolean;
 }
 
 export interface MockTherapist {
