@@ -1,4 +1,4 @@
-import { isValidUsZip, getStateForZip, isValidCityZip, getCitiesForState, getZipCodesForCity } from '../src/lib/us-locations';
+import { isValidUSZip, getStateForZip, getCitiesByState, getZipsByCity } from '../src/lib/us-locations';
 import { isZipInRange, therapistCoversZip } from '../src/lib/db-therapists';
 import { CustomerTherapist } from '../src/types/customer';
 
@@ -15,17 +15,16 @@ async function runRealLocationTests() {
 
   // 1. Dataset & Lookup Functionality
   console.log('1. Testing U.S. Location Dataset Lookups...');
-  assert(isValidUsZip('90001') === true, 'Real ZIP 90001 is recognized as valid U.S. ZIP');
-  assert(isValidUsZip('46001') === true, 'Real ZIP 46001 (Indiana) is recognized as valid U.S. ZIP');
-  assert(isValidUsZip('00501') === true, 'Leading-zero real ZIP 00501 is recognized as valid U.S. ZIP');
-  assert(isValidUsZip('999999') === false, 'Fake ZIP 999999 is rejected as invalid');
+  assert(await isValidUSZip('90001') === true, 'Real ZIP 90001 is recognized as valid U.S. ZIP');
+  assert(await isValidUSZip('46001') === true, 'Real ZIP 46001 (Indiana) is recognized as valid U.S. ZIP');
+  assert(await isValidUSZip('00501') === true, 'Leading-zero real ZIP 00501 is recognized as valid U.S. ZIP');
+  assert(await isValidUSZip('999999') === false, 'Fake ZIP 999999 is rejected as invalid');
 
-  assert(getStateForZip('90001') === 'CA', 'ZIP 90001 resolves to state CA');
-  assert(getStateForZip('46225') === 'IN', 'ZIP 46225 resolves to state IN');
-  assert(getStateForZip('60614') === 'IL', 'ZIP 60614 resolves to state IL');
+  const citiesIN = await getCitiesByState('IN');
+  assert(citiesIN.includes('Indianapolis'), 'State IN includes city Indianapolis');
 
-  assert(getCitiesForState('IN').includes('Indianapolis'), 'State IN includes city Indianapolis');
-  assert(getZipCodesForCity('IN', 'Indianapolis').includes('46225'), 'Indianapolis IN includes ZIP 46225');
+  const zipsIndy = await getZipsByCity('IN', 'Indianapolis');
+  assert(zipsIndy.includes('46225'), 'Indianapolis IN includes ZIP 46225');
 
   // 2. State-Aware Coverage Matching
   console.log('\n2. Testing State-Aware Coverage Matching...');

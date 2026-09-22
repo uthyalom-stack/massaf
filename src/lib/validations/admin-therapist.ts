@@ -48,8 +48,6 @@ export const therapistServiceSchema = z.object({
 
 export type TherapistServiceInput = z.infer<typeof therapistServiceSchema>;
 
-import { isValidUsZip, getStateForZip } from '@/lib/us-locations';
-
 export const serviceAreaSchema = z.object({
   cityName: z.string().min(1, 'City name is required'),
   state: z.string().length(2, 'State must be a 2-letter postal code (e.g., CA, NY)').transform((val) => val.toUpperCase()),

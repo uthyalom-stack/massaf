@@ -447,3 +447,21 @@ model GiftCardImage {
 
   @@index([giftCardSubmissionId])
 }
+
+/// Official USPS U.S. ZIP codes dataset (~42,500+ records)
+model USZipCode {
+  id        String   @id @default(uuid())
+  zipCode   String   @unique
+  city      String
+  state     String   // 2-letter postal code e.g. "CA", "NY"
+  stateName String   // Full state name e.g. "California"
+  latitude  Float?
+  longitude Float?
+  createdAt DateTime @default(now())
+
+  @@index([zipCode])
+  @@index([state])
+  @@index([city])
+  @@index([state, zipCode])
+  @@index([state, city])
+}

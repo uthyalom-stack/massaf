@@ -168,15 +168,11 @@ export function isZipInRange(
   return req >= minPad && req <= maxPad;
 }
 
-import { getStateForZip, isValidUsZip } from '@/lib/us-locations';
+import { getStateForZip, isValidUSZip } from '@/lib/us-locations';
 
 export function therapistCoversZip(therapist: CustomerTherapist, requestedZip: string): boolean {
   if (!requestedZip || !requestedZip.trim()) return false;
   const req = requestedZip.trim();
-
-  if (!isValidUsZip(req)) {
-    return false;
-  }
 
   const reqState = getStateForZip(req);
 

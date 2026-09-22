@@ -18,11 +18,11 @@ import {
   deleteTherapistAction,
 } from '@/app/admin/actions';
 import { ConfirmModal } from '@/components/admin/ConfirmModal';
+import { getAllUsStates } from '@/lib/us-locations';
 import {
-  getAllUsStates,
-  getCitiesForState,
-  getZipCodesForCity,
-} from '@/lib/us-locations';
+  fetchCitiesForStateAction,
+  fetchZipsForCityAction,
+} from '@/app/actions/locations';
 
 export interface PhotoData {
   id: string;
@@ -161,34 +161,43 @@ export function EditTherapistForm({
   const [serviceSaving, setServiceSaving] = useState(false);
   const [serviceMsg, setServiceMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // State for Service Area (Real U.S. Location Dropdowns)
+  // State for Service Area (Real U.S. Location Dropdowns via Server Actions)
   const usStatesList = getAllUsStates();
   const [stateCode, setStateCode] = useState('CA');
   const [cityName, setCityName] = useState('Los Angeles');
   const [zipCode, setZipCode] = useState('90001');
   const [endZipCode, setEndZipCode] = useState('90020');
+  const [availableCities, setAvailableCities] = useState<string[]>(['Los Angeles', 'Beverly Hills', 'Santa Monica']);
+  const [availableZips, setAvailableZips] = useState<string[]>(['90001', '90010', '90012', '90020']);
   const [areaSaving, setAreaSaving] = useState(false);
   const [areaMsg, setAreaMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Derived city and ZIP options
-  const availableCities = getCitiesForState(stateCode);
-  const availableZips = getZipCodesForCity(stateCode, cityName);
-
-  const handleStateChange = (newSegState: string) => {
+  // Async location loaders when state changes
+  const handleStateChange = async (newSegState: string) => {
     setStateCode(newSegState);
-    const cities = getCitiesForState(newSegState);
+    const cities = await fetchCitiesForStateAction(newSegState);
+    setAvailableCities(cities);
     const firstCity = cities[0] || '';
     setCityName(firstCity);
 
-    const zips = getZipCodesForCity(newSegState, firstCity);
-    const firstZip = zips[0] || '';
-    setZipCode(firstZip);
-    setEndZipCode(firstZip);
+    if (firstCity) {
+      const zips = await fetchZipsForCityAction(newSegState, firstCity);
+      setAvailableZips(zips);
+      const firstZip = zips[0] || '';
+      setZipCode(firstZip);
+      setEndZipCode(firstZip);
+    } else {
+      setAvailableZips([]);
+      setZipCode('');
+      setEndZipCode('');
+    }
   };
 
-  const handleCityChange = (newSegCity: string) => {
+  // Async location loaders when city changes
+  const handleCityChange = async (newSegCity: string) => {
     setCityName(newSegCity);
-    const zips = getZipCodesForCity(stateCode, newSegCity);
+    const zips = await fetchZipsForCityAction(stateCode, newSegCity);
+    setAvailableZips(zips);
     const firstZip = zips[0] || '';
     setZipCode(firstZip);
     setEndZipCode(firstZip);

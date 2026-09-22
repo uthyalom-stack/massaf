@@ -1732,57 +1732,60 @@ export async function addServiceAreaAction(therapistId: string, input: unknown) 
 
     const validated = serviceAreaSchema.parse(input);
 
-    const rawZips = validated.zipCode.split(/[\s,;\n\r]+/).map((z) => z.trim()).filter((z) => z.length >= 3);
+    const startZip = validated.zipCode.trim();
+    const endZip = validated.endZipCode ? validated.endZipCode.trim() : startZip;
 
-    if (rawZips.length === 0) {
-      return { success: false, error: 'Please provide at least one valid ZIP code.' };
+    // Validate startZip and endZip against USZipCode table
+    const { getZipInfo } = await import('@/lib/us-locations');
+    const startInfo = await getZipInfo(startZip);
+    if (!startInfo) {
+      return { success: false, error: `ZIP code ${startZip} is not recognized in the official U.S. ZIP database.` };
     }
 
-    const createdAreas = [];
-    let duplicateCount = 0;
+    if (startInfo.state !== validated.state) {
+      return { success: false, error: `ZIP code ${startZip} belongs to ${startInfo.stateName} (${startInfo.state}), not ${validated.state}.` };
+    }
 
-    for (const zip of rawZips) {
-      const existingArea = await db.serviceArea.findFirst({
-        where: {
-          therapistId,
-          cityName: { equals: validated.cityName },
-          state: { equals: validated.state },
-          zipCode: { equals: zip },
-        },
-      });
-
-      if (existingArea) {
-        duplicateCount++;
-        continue;
+    if (endZip && endZip !== startZip) {
+      const endInfo = await getZipInfo(endZip);
+      if (!endInfo) {
+        return { success: false, error: `End ZIP code ${endZip} is not recognized in the official U.S. ZIP database.` };
       }
-
-      const serviceArea = await db.serviceArea.create({
-        data: {
-          therapistId,
-          cityName: validated.cityName,
-          state: validated.state,
-          zipCode: zip,
-          endZipCode: validated.endZipCode || null,
-        },
-      });
-      createdAreas.push(serviceArea);
+      if (endInfo.state !== validated.state) {
+        return { success: false, error: `End ZIP code ${endZip} belongs to ${endInfo.stateName} (${endInfo.state}), not ${validated.state}.` };
+      }
     }
 
-    if (createdAreas.length === 0) {
-      return {
-        success: false,
-        error: duplicateCount > 0
-          ? 'All specified ZIP codes already exist in coverage for this therapist.'
-          : 'Failed to add service coverage areas.',
-      };
+    const existingArea = await db.serviceArea.findFirst({
+      where: {
+        therapistId,
+        cityName: { equals: validated.cityName },
+        state: { equals: validated.state },
+        zipCode: { equals: startZip },
+        endZipCode: endZip !== startZip ? { equals: endZip } : null,
+      },
+    });
+
+    if (existingArea) {
+      return { success: false, error: 'This coverage area already exists for this therapist.' };
     }
+
+    const serviceArea = await db.serviceArea.create({
+      data: {
+        therapistId,
+        cityName: validated.cityName,
+        state: validated.state,
+        zipCode: startZip,
+        endZipCode: endZip !== startZip ? endZip : null,
+      },
+    });
 
     safeRevalidatePath(`/admin/therapists/${therapistId}`);
     return {
       success: true,
-      serviceArea: createdAreas[0],
-      serviceAreas: createdAreas,
-      count: createdAreas.length,
+      serviceArea,
+      serviceAreas: [serviceArea],
+      count: 1,
     };
   } catch (err: unknown) {
     console.error('Error in addServiceAreaAction:', err);
