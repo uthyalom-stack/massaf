@@ -18,6 +18,11 @@ import {
   deleteTherapistAction,
 } from '@/app/admin/actions';
 import { ConfirmModal } from '@/components/admin/ConfirmModal';
+import {
+  getAllUsStates,
+  getCitiesForState,
+  getZipCodesForCity,
+} from '@/lib/us-locations';
 
 export interface PhotoData {
   id: string;
@@ -156,13 +161,38 @@ export function EditTherapistForm({
   const [serviceSaving, setServiceSaving] = useState(false);
   const [serviceMsg, setServiceMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // State for Service Area
-  const [cityName, setCityName] = useState('');
-  const [stateCode, setStateCode] = useState('');
-  const [zipCode, setZipCode] = useState('');
-  const [endZipCode, setEndZipCode] = useState('');
+  // State for Service Area (Real U.S. Location Dropdowns)
+  const usStatesList = getAllUsStates();
+  const [stateCode, setStateCode] = useState('CA');
+  const [cityName, setCityName] = useState('Los Angeles');
+  const [zipCode, setZipCode] = useState('90001');
+  const [endZipCode, setEndZipCode] = useState('90020');
   const [areaSaving, setAreaSaving] = useState(false);
   const [areaMsg, setAreaMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Derived city and ZIP options
+  const availableCities = getCitiesForState(stateCode);
+  const availableZips = getZipCodesForCity(stateCode, cityName);
+
+  const handleStateChange = (newSegState: string) => {
+    setStateCode(newSegState);
+    const cities = getCitiesForState(newSegState);
+    const firstCity = cities[0] || '';
+    setCityName(firstCity);
+
+    const zips = getZipCodesForCity(newSegState, firstCity);
+    const firstZip = zips[0] || '';
+    setZipCode(firstZip);
+    setEndZipCode(firstZip);
+  };
+
+  const handleCityChange = (newSegCity: string) => {
+    setCityName(newSegCity);
+    const zips = getZipCodesForCity(stateCode, newSegCity);
+    const firstZip = zips[0] || '';
+    setZipCode(firstZip);
+    setEndZipCode(firstZip);
+  };
 
   // State for Availability Add
   const [dayOfWeek, setDayOfWeek] = useState<number>(1); // Monday default
@@ -1616,60 +1646,75 @@ export function EditTherapistForm({
             )}
 
             <form onSubmit={handleAddArea} className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-              <div className="sm:col-span-2">
+              <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  City / Neighborhood
+                  State
                 </label>
-                <input
-                  type="text"
+                <select
                   required
-                  value={cityName}
-                  onChange={(e) => setCityName(e.target.value)}
-                  placeholder="e.g. Santa Monica"
+                  value={stateCode}
+                  onChange={(e) => handleStateChange(e.target.value)}
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                />
+                >
+                  {usStatesList.map((st) => (
+                    <option key={st.code} value={st.code}>
+                      {st.name} ({st.code})
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  State (2-Letter)
+                  City / Location
                 </label>
-                <input
-                  type="text"
+                <select
                   required
-                  maxLength={2}
-                  value={stateCode}
-                  onChange={(e) => setStateCode(e.target.value)}
-                  placeholder="CA"
-                  className="w-full px-3.5 py-2 text-sm uppercase bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                />
+                  value={cityName}
+                  onChange={(e) => handleCityChange(e.target.value)}
+                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                >
+                  {availableCities.map((ct) => (
+                    <option key={ct} value={ct}>
+                      {ct}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                   Start ZIP
                 </label>
-                <input
-                  type="text"
+                <select
                   required
                   value={zipCode}
                   onChange={(e) => setZipCode(e.target.value)}
-                  placeholder="90001"
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                />
+                >
+                  {availableZips.map((z) => (
+                    <option key={z} value={z}>
+                      {z}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  End ZIP (Optional Range)
+                  End ZIP (Coverage Range)
                 </label>
-                <input
-                  type="text"
+                <select
                   value={endZipCode}
                   onChange={(e) => setEndZipCode(e.target.value)}
-                  placeholder="90020"
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                />
+                >
+                  {availableZips.map((z) => (
+                    <option key={z} value={z}>
+                      {z}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="sm:col-span-4 flex justify-end pt-2">
@@ -1696,11 +1741,13 @@ export function EditTherapistForm({
                     key={area.id}
                     className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-800"
                   >
-                    <span>{area.cityName}, {area.state} ({area.zipCode})</span>
+                    <span>
+                      {area.cityName}, {area.state} &mdash; {area.endZipCode && area.endZipCode !== area.zipCode ? `${area.zipCode}–${area.endZipCode}` : area.zipCode}
+                    </span>
                     <button
                       type="button"
                       onClick={() => triggerRemoveArea(area.id, area.cityName)}
-                      className="text-slate-400 hover:text-red-600 transition-colors cursor-pointer"
+                      className="text-slate-400 hover:text-red-600 transition-colors cursor-pointer ml-1"
                       title="Remove Area"
                     >
                       &times;

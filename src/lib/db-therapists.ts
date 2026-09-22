@@ -168,14 +168,25 @@ export function isZipInRange(
   return req >= minPad && req <= maxPad;
 }
 
+import { getStateForZip, isValidUsZip } from '@/lib/us-locations';
+
 export function therapistCoversZip(therapist: CustomerTherapist, requestedZip: string): boolean {
   if (!requestedZip || !requestedZip.trim()) return false;
   const req = requestedZip.trim();
 
+  if (!isValidUsZip(req)) {
+    return false;
+  }
+
+  const reqState = getStateForZip(req);
+
   if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
-    return therapist.rawServiceAreas.some((sa) =>
-      isZipInRange(req, sa.zipCode, sa.endZipCode)
-    );
+    return therapist.rawServiceAreas.some((sa) => {
+      if (reqState && sa.state && sa.state.trim().toUpperCase() !== reqState) {
+        return false;
+      }
+      return isZipInRange(req, sa.zipCode, sa.endZipCode);
+    });
   }
 
   return therapist.zipCodes.some((z) => z.trim() === req);

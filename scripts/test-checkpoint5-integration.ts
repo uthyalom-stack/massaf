@@ -145,9 +145,9 @@ console.log('\n3. Testing Search 2: Swedish, ZIP 90010, In-Home...');
 const results2 = filterTherapists({ serviceId: 'srv-sw', zip: '90010', serviceType: 'in_home' });
 assert(results2.length === 1 && results2[0].id === 'therapist-b', 'Only Therapist B matches Swedish + ZIP 90010 + In-Home');
 
-console.log('\n4. Testing Search 3: Deep Tissue, ZIP 90220, In-Home...');
-const results3 = filterTherapists({ serviceId: 'srv-dt', zip: '90220', serviceType: 'in_home' });
-assert(results3.length === 1 && results3[0].id === 'therapist-c', 'Only Therapist C matches Deep Tissue + ZIP 90220 + In-Home');
+console.log('\n4. Testing Search 3: Deep Tissue, ZIP 90212, In-Home...');
+const results3 = filterTherapists({ serviceId: 'srv-dt', zip: '90212', serviceType: 'in_home' });
+assert(results3.length === 1 && results3[0].id === 'therapist-c', 'Only Therapist C matches Deep Tissue + ZIP 90212 + In-Home');
 
 console.log('\n5. Testing Search 4: Studio Visits (no in-home ZIP range requirement)...');
 const studioResults = filterTherapists({ serviceId: 'srv-dt', serviceType: 'studio' });
