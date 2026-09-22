@@ -134,31 +134,118 @@ async function testPaymentExpansionFlow() {
       },
     });
 
-    // Create Gift Card Submission
-    const giftSubmission = await db.giftCardSubmission.create({
-      data: {
+    // Import HTTP endpoint route handler for POST /api/payments/gift-card/submit
+    const giftCardSubmitModule = await import('../src/app/api/payments/gift-card/submit/route');
+
+    // Test 1: Unauthorized submission without customer session, admin session, or matching guest email -> HTTP 403
+    const reqUnauth = new Request('http://localhost:3000/api/payments/gift-card/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         bookingId: bookingGift.id,
         cardType: 'Spafinder Gift Card',
-        cardCode: 'SPAFINDER-9988-7766',
+        cardCode: 'SPAFINDER-SECRET-9988',
         declaredValue: 120.0,
-        notes: 'Test gift card submission',
-        status: 'PENDING',
-      },
+        notes: 'Unauthorized guest attempt',
+      }),
     });
+    const resUnauth = await giftCardSubmitModule.POST(reqUnauth);
+    assert(resUnauth.status === 403, 'Unauthorized guest submission without matching customer email rejected with 403');
 
-    await db.booking.update({
-      where: { id: bookingGift.id },
+    // Test 2: Customer submission against wrong email -> HTTP 403
+    const reqWrongEmail = new Request('http://localhost:3000/api/payments/gift-card/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bookingId: bookingGift.id,
+        cardType: 'Spafinder Gift Card',
+        cardCode: 'SPAFINDER-SECRET-9988',
+        declaredValue: 120.0,
+        email: 'wrong.customer@otherdomain.com',
+      }),
+    });
+    const resWrongEmail = await giftCardSubmitModule.POST(reqWrongEmail);
+    assert(resWrongEmail.status === 403, 'Submission against another customer email rejected with 403');
+
+    // Test 3: Authorized guest submission with matching customer email -> HTTP 200
+    const reqValidGuest = new Request('http://localhost:3000/api/payments/gift-card/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bookingId: bookingGift.id,
+        cardType: 'Spafinder Gift Card',
+        cardCode: 'SPAFINDER-SECRET-9988',
+        declaredValue: 120.0,
+        email: customer.email,
+        notes: 'Valid guest submission test',
+      }),
+    });
+    const resValidGuest = await giftCardSubmitModule.POST(reqValidGuest);
+    const bodyValidGuest = await resValidGuest.json();
+    assert(resValidGuest.status === 200 && bodyValidGuest.success === true, 'Valid guest checkout submission succeeded with HTTP 200');
+
+    // Test 4: Confirm cardCode is NOT present in customer-facing API response
+    assert(!('cardCode' in bodyValidGuest), 'Customer response does NOT contain sensitive cardCode');
+
+    // Test 5: Rejection when booking is cancelled
+    const bookingCancelled = await db.booking.create({
       data: {
-        paymentMethod: 'GIFT_CARD',
-        paymentReference: giftSubmission.id,
-        paymentStatus: 'PENDING',
+        bookingNumber: `MSF-CANCEL-${Date.now().toString().slice(-4)}`,
+        customerId,
+        therapistId,
+        serviceId,
+        appointmentDateTime: new Date('2028-10-01T14:00:00Z'),
+        durationMinutes: 60,
+        amount: 120.0,
+        status: 'CANCELLED',
+        paymentStatus: 'UNPAID',
       },
     });
 
-    assert(giftSubmission.status === 'PENDING', 'Gift card submission created in PENDING status');
+    const reqCancelled = new Request('http://localhost:3000/api/payments/gift-card/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bookingId: bookingCancelled.id,
+        cardType: 'Visa Gift Card',
+        cardCode: 'VISA-1122-3344',
+        declaredValue: 120.0,
+        email: customer.email,
+      }),
+    });
+    const resCancelled = await giftCardSubmitModule.POST(reqCancelled);
+    assert(resCancelled.status === 400, 'Submission for CANCELLED booking rejected with 400');
 
-    // Test Admin Approval (Mock Admin Session)
-    // Note: approveGiftCardPaymentAction requires admin auth check
+    // Test 6: Rejection when booking is already PAID
+    const bookingPaid = await db.booking.create({
+      data: {
+        bookingNumber: `MSF-PAID-${Date.now().toString().slice(-4)}`,
+        customerId,
+        therapistId,
+        serviceId,
+        appointmentDateTime: new Date('2028-10-01T16:00:00Z'),
+        durationMinutes: 60,
+        amount: 120.0,
+        status: 'CONFIRMED',
+        paymentStatus: 'PAID',
+      },
+    });
+
+    const reqPaid = new Request('http://localhost:3000/api/payments/gift-card/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bookingId: bookingPaid.id,
+        cardType: 'Visa Gift Card',
+        cardCode: 'VISA-1122-3344',
+        declaredValue: 120.0,
+        email: customer.email,
+      }),
+    });
+    const resPaid = await giftCardSubmitModule.POST(reqPaid);
+    assert(resPaid.status === 400, 'Submission for already PAID booking rejected with 400');
+
+    // Test 7: Admin Approval and Rejection state transitions
     await db.giftCardSubmission.update({
       where: { bookingId: bookingGift.id },
       data: {

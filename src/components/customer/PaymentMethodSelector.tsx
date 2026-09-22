@@ -117,6 +117,7 @@ export function PaymentMethodSelector({
           cardCode: giftCardCode.trim(),
           declaredValue: val,
           notes: giftCardNotes.trim() || undefined,
+          email: customerEmail,
         }),
       });
 
