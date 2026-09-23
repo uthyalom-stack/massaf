@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma migrate deploy && prisma generate && next build",
+    "build": "npx tsx scripts/deploy-turso-migrations.ts && prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
     "test:r2": "NODE_PATH=. npx tsx --tsconfig tsconfig.json scripts/test-r2-upload.ts",
