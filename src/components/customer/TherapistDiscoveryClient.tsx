@@ -31,6 +31,16 @@ export function TherapistDiscoveryClient({
   const cityFilter = rawCity || (!isQueryZip ? queryParam : '');
   const zipFilter = rawZip || (isQueryZip ? queryParam : '');
 
+  // Pre-seed USZipCode database cache for requested customer ZIP via server action
+  React.useEffect(() => {
+    const cleanZip = zipFilter.trim();
+    if (cleanZip && /^\d{5}$/.test(cleanZip)) {
+      import('@/app/actions/locations').then(({ fetchZipInfoAction }) => {
+        fetchZipInfoAction(cleanZip).catch(() => null);
+      });
+    }
+  }, [zipFilter]);
+
   const serviceTypeFilter = searchParams.get('type') || 'all';
   const specialtyFilter = searchParams.get('specialty') || 'all';
 

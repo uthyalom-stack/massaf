@@ -1,5 +1,5 @@
 import { CustomerTherapist } from '@/types/customer';
-import { therapistCoversZip } from '@/lib/db-therapists';
+import { therapistCoversZipAsync } from '@/lib/db-therapists';
 import { MatchCriteria } from '@/lib/validations/matching';
 import {
   getScheduleWindowForDate,
@@ -52,10 +52,10 @@ export function checkTimeRangeAvailability(
  * Deterministically ranks active therapists against customer questionnaire criteria
  * using actual database fields (services, service areas, location types, pricing, and availability schedules).
  */
-export function rankTherapistsForMatch(
+export async function rankTherapistsForMatch(
   criteria: MatchCriteria,
   therapists: CustomerTherapist[]
-): MatchedTherapistResult[] {
+): Promise<MatchedTherapistResult[]> {
   const results: MatchedTherapistResult[] = [];
 
   const locQueryClean = (criteria.locationQuery || '').trim().toLowerCase();
@@ -98,7 +98,7 @@ export function rankTherapistsForMatch(
         (therapist.location.toLowerCase().includes(locQueryClean) ||
           therapist.serviceAreas.some((sa) => sa.toLowerCase().includes(locQueryClean)));
 
-      const matchesZip = zipClean ? therapistCoversZip(therapist, zipClean) : false;
+      const matchesZip = zipClean ? await therapistCoversZipAsync(therapist, zipClean) : false;
 
       if (locQueryClean || zipClean) {
         if (matchesCity || matchesZip) {

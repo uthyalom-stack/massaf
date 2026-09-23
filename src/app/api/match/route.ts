@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     const criteria = parseResult.data;
     const activeTherapists = await getActiveTherapists();
 
-    const matches = rankTherapistsForMatch(criteria, activeTherapists);
+    const matches = await rankTherapistsForMatch(criteria, activeTherapists);
 
     return NextResponse.json(
       {
