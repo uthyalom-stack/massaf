@@ -51,6 +51,7 @@ export default async function AdminEditTherapistPage({ params }: PageProps) {
       reviewCount: dbTherapist.reviewCount,
       isActive: dbTherapist.isActive,
       isFeatured: dbTherapist.isFeatured,
+      isHomepageSelected: dbTherapist.isHomepageSelected,
       offersStudio: dbTherapist.offersStudio,
       offersInHome: dbTherapist.offersInHome,
       photos: dbTherapist.photos.map((p) => ({
@@ -77,6 +78,7 @@ export default async function AdminEditTherapistPage({ params }: PageProps) {
         cityName: a.cityName,
         state: a.state,
         zipCode: a.zipCode,
+        endZipCode: a.endZipCode,
       })),
       availabilities: dbTherapist.availabilities.map((av) => ({
         id: av.id,

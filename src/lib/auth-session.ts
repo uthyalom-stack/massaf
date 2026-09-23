@@ -12,6 +12,56 @@ export interface SessionPayload {
 const CUSTOMER_COOKIE_NAME = 'massaf_customer_session';
 const THERAPIST_COOKIE_NAME = 'massaf_therapist_session';
 const ADMIN_COOKIE_NAME = 'massaf_admin_session';
+const VISITOR_COOKIE_NAME = 'massaf_visitor_id';
+
+/**
+ * Native cryptographic UUID generator helper.
+ */
+export function cryptoNativeRandomUUID(): string {
+  return crypto.randomUUID();
+}
+
+/**
+ * Retrieves or creates a secure, signed visitor session cookie (`massaf_visitor_id`)
+ * for persistent logged-out customer rotation tracking.
+ */
+export async function getOrCreateVisitorSessionCookie(reqCookieHeader?: string): Promise<string> {
+  try {
+    let visitorToken = extractCookieValue(reqCookieHeader, VISITOR_COOKIE_NAME);
+    const secret = getAuthSecret();
+
+    if (visitorToken) {
+      const parts = visitorToken.split('.');
+      if (parts.length === 2) {
+        const [id, signature] = parts;
+        const expectedSig = signPayload(id, secret);
+        if (safeCompareSignatures(signature, expectedSig)) {
+          return id; // Valid signed visitor session ID
+        }
+      }
+    }
+
+    // Generate new signed visitor session ID
+    const newVisitorId = `vis_${cryptoNativeRandomUUID()}`;
+    const newSignature = signPayload(newVisitorId, secret);
+    const newToken = `${newVisitorId}.${newSignature}`;
+
+    const cookieStore = await getCookieStore();
+    if (cookieStore) {
+      cookieStore.set(VISITOR_COOKIE_NAME, newToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 365 * 24 * 60 * 60, // 1 year persistence
+      });
+    }
+
+    return newVisitorId;
+  } catch {
+    return `vis_guest_${Date.now()}`;
+  }
+}
 
 /**
  * Retrieves Next.js request cookie store with error isolation for non-request environments.

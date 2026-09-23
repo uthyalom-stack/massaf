@@ -3,7 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { toggleTherapistActiveAction } from '@/app/admin/actions';
+import { toggleTherapistActiveAction, toggleHomepageSelectionAction, shuffleAndDistributeTherapistsAction } from '@/app/admin/actions';
 import { ConfirmModal } from '@/components/admin/ConfirmModal';
 
 export interface AdminTherapistItem {
@@ -17,6 +17,7 @@ export interface AdminTherapistItem {
   reviewCount: number;
   isActive: boolean;
   isFeatured: boolean;
+  isHomepageSelected?: boolean;
   offersStudio: boolean;
   offersInHome: boolean;
   createdAt: string;
@@ -35,6 +36,8 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [therapists, setTherapists] = useState<AdminTherapistItem[]>(initialTherapists);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [shuffling, setShuffling] = useState(false);
+  const [shuffleMsg, setShuffleMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [confirmModalState, setConfirmModalState] = useState<{
     isOpen: boolean;
     therapistId: string;
@@ -83,6 +86,26 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
     }
   };
 
+  const handleToggleHomepage = async (id: string, currentHomepageStatus: boolean) => {
+    try {
+      setTogglingId(id);
+      const res = await toggleHomepageSelectionAction(id, !currentHomepageStatus);
+      if (!res.success) {
+        alert(res.error || 'Failed to update homepage selection');
+        return;
+      }
+      setTherapists((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, isHomepageSelected: !currentHomepageStatus } : t))
+      );
+      router.refresh();
+    } catch (err) {
+      console.error('Error toggling homepage selection:', err);
+      alert('An error occurred while updating homepage selection.');
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
   const executeToggleActive = async (id: string, currentStatus: boolean) => {
     try {
       setTogglingId(id);
@@ -109,6 +132,55 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
 
   return (
     <div className="space-y-6">
+      {/* Shuffle & Distribution Control Bar */}
+      <div className="bg-slate-900 text-white p-5 rounded-2xl shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-extrabold uppercase tracking-wider text-emerald-400">Automatic ZIP Eligibility Distribution</h2>
+          <p className="text-xs text-slate-300 mt-0.5">
+            Shuffle active therapists and evenly distribute geographic coverage across the 42,555 U.S. ZIP code database pool.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          disabled={shuffling}
+          onClick={async () => {
+            setShuffling(true);
+            setShuffleMsg(null);
+            try {
+              const res = await shuffleAndDistributeTherapistsAction();
+              if (!res.success) {
+                setShuffleMsg({ type: 'error', text: res.error || 'Failed to distribute therapists.' });
+              } else {
+                setShuffleMsg({ type: 'success', text: res.message || 'Distributions updated!' });
+                router.refresh();
+              }
+            } catch (err) {
+              console.error('Error during distribution shuffle:', err);
+              setShuffleMsg({ type: 'error', text: 'Unexpected network error during distribution.' });
+            } finally {
+              setShuffling(false);
+            }
+          }}
+          className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-colors disabled:opacity-50 cursor-pointer shrink-0 shadow-xs flex items-center gap-2"
+        >
+          <span>🎲</span>
+          <span>{shuffling ? 'Shuffling & Distributing...' : 'Shuffle & Distribute Therapists'}</span>
+        </button>
+      </div>
+
+      {shuffleMsg && (
+        <div
+          className={`p-4 rounded-xl text-xs font-semibold ${
+            shuffleMsg.type === 'success'
+              ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+              : 'bg-red-50 border border-red-200 text-red-800'
+          }`}
+        >
+          {shuffleMsg.text}
+        </div>
+      )}
+
       {/* Search and Filters Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row gap-4 items-center justify-between">
         {/* Search input */}
@@ -211,6 +283,11 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
                                 Featured
                               </span>
                             )}
+                            {therapist.isHomepageSelected && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                Homepage
+                              </span>
+                            )}
                           </div>
                           <p className="text-xs text-slate-500 mt-0.5">
                             {therapist.email || 'No email registered'}
@@ -260,6 +337,20 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
 
                     {/* Actions */}
                     <td className="px-6 py-4 text-right space-x-2">
+                      <button
+                        type="button"
+                        disabled={togglingId === therapist.id || !therapist.isActive}
+                        onClick={() => handleToggleHomepage(therapist.id, Boolean(therapist.isHomepageSelected))}
+                        title={!therapist.isActive ? 'Activate therapist first to place on homepage' : ''}
+                        className={`text-xs font-semibold px-2.5 py-1 rounded-lg border transition-colors cursor-pointer ${
+                          therapist.isHomepageSelected
+                            ? 'bg-emerald-100 text-emerald-900 border-emerald-300 hover:bg-emerald-200'
+                            : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100 disabled:opacity-50'
+                        }`}
+                      >
+                        {therapist.isHomepageSelected ? 'Homepage ✓' : '+ Homepage'}
+                      </button>
+
                       <button
                         type="button"
                         disabled={togglingId === therapist.id}

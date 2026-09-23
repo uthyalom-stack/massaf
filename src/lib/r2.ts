@@ -69,6 +69,18 @@ export function generateObjectKey(folder: string, therapistId: string, extension
 }
 
 /**
+ * Generates a clean, unique object key for private gift card image proof uploads.
+ * Example format: gift-cards/{bookingId}/{uuid}.{ext}
+ */
+export function generateGiftCardObjectKey(bookingId: string, extension: string): string {
+  const sanitizedBookingId = bookingId.replace(/[^a-zA-Z0-9_-]/g, '') || 'temp';
+  const sanitizedExt = extension.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'jpg';
+  const uniqueId = crypto.randomUUID();
+
+  return `gift-cards/${sanitizedBookingId}/${uniqueId}.${sanitizedExt}`;
+}
+
+/**
  * Uploads a file buffer to Cloudflare R2 or mock storage in dev/test.
  */
 export async function uploadToR2({

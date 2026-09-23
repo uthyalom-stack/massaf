@@ -13,8 +13,10 @@ export const therapistBaseSchema = z.object({
     .optional()
     .or(z.literal(''))
     .nullable(),
+  hourlyRate: z.number().positive('Hourly rate must be a positive number').default(100.0),
   isActive: z.boolean().default(true),
   isFeatured: z.boolean().default(false),
+  isHomepageSelected: z.boolean().default(false),
   offersStudio: z.boolean().default(true),
   offersInHome: z.boolean().default(true),
 });
@@ -50,7 +52,21 @@ export type TherapistServiceInput = z.infer<typeof therapistServiceSchema>;
 export const serviceAreaSchema = z.object({
   cityName: z.string().min(1, 'City name is required'),
   state: z.string().length(2, 'State must be a 2-letter postal code (e.g., CA, NY)').transform((val) => val.toUpperCase()),
-  zipCode: z.string().min(5, 'ZIP code must be at least 5 digits'),
+  zipCode: z.string().min(5, 'Start ZIP code must be at least 5 digits'),
+  endZipCode: z.string().min(5, 'End ZIP code must be at least 5 digits').optional().or(z.literal('')).nullable(),
+}).refine((data) => {
+  if (data.endZipCode && data.endZipCode.trim()) {
+    const startNum = parseInt(data.zipCode.trim(), 10);
+    const endNum = parseInt(data.endZipCode.trim(), 10);
+    if (!isNaN(startNum) && !isNaN(endNum)) {
+      return endNum >= startNum;
+    }
+    return data.endZipCode.trim() >= data.zipCode.trim();
+  }
+  return true;
+}, {
+  message: 'End ZIP code cannot be lower than Start ZIP code',
+  path: ['endZipCode'],
 });
 
 export type ServiceAreaInput = z.infer<typeof serviceAreaSchema>;

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { formatUtcDateString, formatUtcTimeString } from '@/lib/timezone';
 import { ReviewForm } from '@/components/customer/ReviewForm';
+import { PaymentMethodSelector } from '@/components/customer/PaymentMethodSelector';
 
 interface BookingDetails {
   id: string;
@@ -304,14 +305,10 @@ function SuccessContent() {
         </div>
       </div>
 
-      {/* Dynamic Payment Banner */}
+      {/* Payment Selection for Unpaid / Pending Bookings */}
       {!isPaid && (
-        <div className={`p-5 rounded-2xl border text-xs space-y-3 ${
-          isFailed
-            ? 'bg-rose-50 border-rose-200 text-rose-900'
-            : 'bg-amber-50 border-amber-200/80 text-amber-900'
-        }`}>
-          <div className="flex items-center justify-between">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between p-4 bg-amber-50 rounded-2xl border border-amber-200 text-amber-900 text-xs">
             <span className="font-bold uppercase tracking-wider">
               {isFailed ? 'Payment Status: Unpaid / Failed' : 'Payment Status: Pending Verification'}
             </span>
@@ -324,20 +321,12 @@ function SuccessContent() {
               {verifying ? 'Checking...' : 'Refresh Status'}
             </button>
           </div>
-          <p className="leading-relaxed">
-            {isFailed
-              ? 'Payment was not confirmed. Click below to retry payment with PayLio.'
-              : 'If you completed payment on PayLio, verification occurs automatically in seconds. Click refresh to update status.'}
-          </p>
-          <div className="pt-2 flex justify-start">
-            <button
-              type="button"
-              onClick={handleRetryPayment}
-              className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
-            >
-              Pay Now with PayLio →
-            </button>
-          </div>
+
+          <PaymentMethodSelector
+            bookingId={booking.id}
+            bookingNumber={booking.bookingNumber}
+            amount={booking.amount}
+          />
         </div>
       )}
 

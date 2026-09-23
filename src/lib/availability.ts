@@ -1,6 +1,14 @@
 import { CustomerTherapist, MockTherapist, TherapistScheduleWindow } from '@/types/customer';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DAY_SHORT_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function getDayIdx(name: string): number {
+  const clean = name.trim().toLowerCase();
+  const fullIdx = DAY_NAMES.findIndex((d) => d.toLowerCase() === clean);
+  if (fullIdx !== -1) return fullIdx;
+  return DAY_SHORT_NAMES.findIndex((d) => d.toLowerCase() === clean);
+}
 
 /**
  * Interface representing raw TherapistAvailability records from Prisma DB
@@ -72,12 +80,13 @@ export function formatMinutesToTimeString(totalMinutes: number): { value: string
  * Converts a days description string like "Monday – Thursday" or "Sunday" into array of day-of-week indices (0=Sun..6=Sat).
  */
 export function parseScheduleDays(daysStr: string): number[] {
+  if (!daysStr) return [];
   const normalized = daysStr.replace(/–|—/g, '-').trim();
 
   if (normalized.includes('-')) {
     const parts = normalized.split('-').map((s) => s.trim());
-    const startIdx = DAY_NAMES.findIndex((d) => d.toLowerCase() === parts[0].toLowerCase());
-    const endIdx = DAY_NAMES.findIndex((d) => d.toLowerCase() === parts[1].toLowerCase());
+    const startIdx = getDayIdx(parts[0]);
+    const endIdx = getDayIdx(parts[1]);
 
     if (startIdx === -1 || endIdx === -1) {
       return [];
@@ -93,7 +102,19 @@ export function parseScheduleDays(daysStr: string): number[] {
     return days;
   }
 
-  const singleIdx = DAY_NAMES.findIndex((d) => d.toLowerCase() === normalized.toLowerCase());
+  if (normalized.includes('&') || normalized.includes(',')) {
+    const tokens = normalized.split(/[&,]/).map((s) => s.trim()).filter(Boolean);
+    const result: number[] = [];
+    for (const token of tokens) {
+      const idx = getDayIdx(token);
+      if (idx !== -1 && !result.includes(idx)) {
+        result.push(idx);
+      }
+    }
+    return result;
+  }
+
+  const singleIdx = getDayIdx(normalized);
   return singleIdx !== -1 ? [singleIdx] : [];
 }
 
@@ -121,7 +142,13 @@ export function getScheduleWindowForDate(
   schedule: TherapistScheduleWindow[],
   dateStr: string
 ): { daysStr: string; hoursStr: string; startMinutes: number; endMinutes: number } | null {
-  const dateObj = new Date(`${dateStr}T00:00:00Z`);
+  if (!dateStr) return null;
+  const parts = dateStr.split('-').map(Number);
+  if (parts.length < 3) return null;
+  const [year, month, day] = parts;
+  if (!year || !month || !day) return null;
+
+  const dateObj = new Date(Date.UTC(year, month - 1, day));
   if (isNaN(dateObj.getTime())) return null;
 
   const dayOfWeek = dateObj.getUTCDay();
@@ -151,7 +178,13 @@ export function getDbScheduleWindowForDate(
   availabilities: DbAvailabilityRecord[],
   dateStr: string
 ): { daysStr: string; hoursStr: string; startMinutes: number; endMinutes: number } | null {
-  const dateObj = new Date(`${dateStr}T00:00:00Z`);
+  if (!dateStr) return null;
+  const parts = dateStr.split('-').map(Number);
+  if (parts.length < 3) return null;
+  const [year, month, day] = parts;
+  if (!year || !month || !day) return null;
+
+  const dateObj = new Date(Date.UTC(year, month - 1, day));
   if (isNaN(dateObj.getTime())) return null;
 
   const targetYmd = dateObj.toISOString().split('T')[0];

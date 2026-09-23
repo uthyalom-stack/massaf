@@ -16,15 +16,21 @@ export const dynamic = 'force-dynamic';
 export default async function CustomerHomePage() {
   const activeTherapists = await getActiveTherapists();
 
-  // Most Booked Therapists: based strictly on real Prisma booking counts (> 0)
-  const mostBookedTherapists = activeTherapists
-    .filter((t) => t.bookingCount > 0)
-    .sort((a, b) => b.bookingCount - a.bookingCount);
-
-  // Featured Therapists: based strictly on therapist.isFeatured flag
-  const featuredTherapists = activeTherapists.filter(
-    (t) => t.isFeatured
+  // Primary Homepage Selection: Manually selected by Admin OR flagged as Featured
+  // Works for newly created active therapists with 0 bookings when manually selected!
+  const homepageTherapists = activeTherapists.filter(
+    (t) => t.isHomepageSelected || t.isFeatured
   );
+
+  // Fallback Automatic Selection: If no manual selection exists, select top-rated active therapists
+  const displayTherapists = homepageTherapists.length > 0
+    ? homepageTherapists
+    : activeTherapists.slice(0, 6);
+
+  // Popular / Most Booked Therapists (Automatic data-driven selection)
+  const popularTherapists = activeTherapists
+    .filter((t) => t.bookingCount > 0 || t.rating > 0)
+    .sort((a, b) => b.bookingCount - a.bookingCount || b.rating - a.rating);
 
   // Fetch recent approved & published database reviews for homepage showcase
   let dbReviewsFormatted: MockReview[] = [];
@@ -132,23 +138,23 @@ export default async function CustomerHomePage() {
         </div>
       </section>
 
-      {/* 2. MOST BOOKED THERAPISTS */}
-      {mostBookedTherapists.length > 0 && (
-        <TherapistGrid
-          badge="Popular Choice"
-          title="Most Booked Therapists"
-          subtitle="Consistently top-rated professionals with high client satisfaction and repeat bookings."
-          therapists={mostBookedTherapists}
-        />
-      )}
-
-      {/* 3. FEATURED THERAPISTS */}
-      {featuredTherapists.length > 0 && (
+      {/* 2. HANDPICKED / FEATURED THERAPISTS (Manual & Featured Selection) */}
+      {displayTherapists.length > 0 && (
         <TherapistGrid
           badge="Handpicked Talent"
           title="Featured Therapists"
           subtitle="Meet highlighted specialists offering exceptional bodywork, sports recovery, and deep relaxation."
-          therapists={featuredTherapists}
+          therapists={displayTherapists}
+        />
+      )}
+
+      {/* 3. MOST BOOKED THERAPISTS (Automatic Data-Driven Selection) */}
+      {popularTherapists.length > 0 && (
+        <TherapistGrid
+          badge="Popular Choice"
+          title="Top Rated & Most Booked"
+          subtitle="Consistently top-rated professionals with high client satisfaction and repeat bookings."
+          therapists={popularTherapists}
         />
       )}
 

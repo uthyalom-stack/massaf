@@ -46,9 +46,20 @@ export class PayLioClient {
   private settlementWallet: string;
 
   constructor() {
-    this.apiKey = process.env.PAYLIO_API_KEY || '';
-    this.apiUrl = (process.env.PAYLIO_API_URL || 'https://paylio.org/api/v1').replace(/\/$/, '');
-    this.settlementWallet = process.env.MASSAF_POLYGON_WALLET_ADDRESS || '';
+    let rawKey = (process.env.PAYLIO_API_KEY || '').trim().replace(/^["\x27]|["\x27]$/g, '');
+    if (rawKey.toLowerCase().startsWith('bearer ')) {
+      rawKey = rawKey.substring(7).trim();
+    }
+    this.apiKey = rawKey;
+
+    this.apiUrl = (process.env.PAYLIO_API_URL || 'https://paylio.org/api/v1')
+      .trim()
+      .replace(/^["\x27]|["\x27]$/g, '')
+      .replace(/\/$/, '');
+
+    this.settlementWallet = (process.env.MASSAF_POLYGON_WALLET_ADDRESS || '')
+      .trim()
+      .replace(/^["\x27]|["\x27]$/g, '');
   }
 
   public isConfigured(): boolean {
@@ -90,9 +101,18 @@ export class PayLioClient {
       throw new Error('MASSAF_POLYGON_WALLET_ADDRESS is not configured on the server.');
     }
 
+    // Force callback to use https:// in production environment
+    let callbackUrl = params.callbackUrl;
+    if (process.env.NODE_ENV === 'production' && !callbackUrl.startsWith('https://')) {
+      callbackUrl = callbackUrl.replace(/^http:\/\//, 'https://');
+      if (!callbackUrl.startsWith('https://')) {
+        callbackUrl = `https://${callbackUrl}`;
+      }
+    }
+
     const payload = {
       address: this.settlementWallet,
-      callback: params.callbackUrl,
+      callback: callbackUrl,
       amount: params.amount,
       currency: 'USD',
       email: params.customerEmail || undefined,
@@ -111,7 +131,14 @@ export class PayLioClient {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('PayLio createWalletPayment failed:', response.status, errorText);
+      console.error('[PayLio Error] createWalletPayment failed:', {
+        status: response.status,
+        endpoint: `${this.apiUrl}/wallet`,
+        apiKeyConfigured: Boolean(this.apiKey),
+        apiKeyLength: this.apiKey.length,
+        callbackUrlPrefix: callbackUrl.slice(0, 12),
+        errorBody: errorText,
+      });
       throw new Error(`PayLio payment creation failed (${response.status})`);
     }
 

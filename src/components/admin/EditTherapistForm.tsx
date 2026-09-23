@@ -18,6 +18,11 @@ import {
   deleteTherapistAction,
 } from '@/app/admin/actions';
 import { ConfirmModal } from '@/components/admin/ConfirmModal';
+import { getAllUsStates } from '@/lib/us-locations';
+import {
+  fetchCitiesForStateAction,
+  fetchZipsForStateAction,
+} from '@/app/actions/locations';
 
 export interface PhotoData {
   id: string;
@@ -45,6 +50,7 @@ export interface ServiceAreaData {
   cityName: string;
   state: string;
   zipCode: string;
+  endZipCode?: string | null;
 }
 
 export interface AvailabilityData {
@@ -64,10 +70,12 @@ export interface DetailedTherapist {
   email?: string | null;
   phone?: string | null;
   telegramChatId?: string | null;
+  hourlyRate?: number;
   rating: number;
   reviewCount: number;
   isActive: boolean;
   isFeatured: boolean;
+  isHomepageSelected?: boolean;
   offersStudio: boolean;
   offersInHome: boolean;
   photos: PhotoData[];
@@ -115,8 +123,10 @@ export function EditTherapistForm({
     telegramChatId: therapist.telegramChatId || '',
     profileImage: therapist.profileImage || '',
     bio: therapist.bio || '',
+    hourlyRate: therapist.hourlyRate ?? 100.0,
     isActive: therapist.isActive,
     isFeatured: therapist.isFeatured,
+    isHomepageSelected: therapist.isHomepageSelected ?? false,
     offersStudio: therapist.offersStudio,
     offersInHome: therapist.offersInHome,
   });
@@ -149,15 +159,50 @@ export function EditTherapistForm({
   // State for Service Assignment
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const [customPrice, setCustomPrice] = useState('');
+  const [customDuration, setCustomDuration] = useState('');
   const [serviceSaving, setServiceSaving] = useState(false);
   const [serviceMsg, setServiceMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // State for Service Area
-  const [cityName, setCityName] = useState('');
-  const [stateCode, setStateCode] = useState('');
-  const [zipCode, setZipCode] = useState('');
+  // State for Service Area (Real U.S. Location Dropdowns via Server Actions)
+  const usStatesList = getAllUsStates();
+  const [stateCode, setStateCode] = useState('CA');
+  const [cityName, setCityName] = useState('Los Angeles');
+  const [zipCode, setZipCode] = useState('90001');
+  const [endZipCode, setEndZipCode] = useState('92692');
+  const [availableCities, setAvailableCities] = useState<string[]>(['Los Angeles', 'Beverly Hills', 'Santa Monica', 'Irvine', 'San Francisco', 'San Diego']);
+  const [stateZips, setStateZips] = useState<string[]>([]);
   const [areaSaving, setAreaSaving] = useState(false);
   const [areaMsg, setAreaMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Async location loaders when state changes
+  const handleStateChange = async (newSegState: string) => {
+    setStateCode(newSegState);
+    const cities = await fetchCitiesForStateAction(newSegState);
+    setAvailableCities(cities);
+    const firstCity = cities[0] || '';
+    setCityName(firstCity);
+
+    const zips = await fetchZipsForStateAction(newSegState);
+    setStateZips(zips);
+    const firstZip = zips[0] || '';
+    const lastZip = zips.length > 1 ? zips[zips.length - 1] : firstZip;
+    setZipCode(firstZip);
+    setEndZipCode(lastZip);
+  };
+
+  // Load state ZIP universe on initial tab load
+  React.useEffect(() => {
+    if (activeTab === 'areas' && stateZips.length === 0) {
+      fetchCitiesForStateAction(stateCode).then(setAvailableCities);
+      fetchZipsForStateAction(stateCode).then((zips) => {
+        setStateZips(zips);
+        if (zips.length > 0 && !zipCode) {
+          setZipCode(zips[0]);
+          setEndZipCode(zips[zips.length - 1]);
+        }
+      });
+    }
+  }, [activeTab, stateCode, stateZips.length, zipCode]);
 
   // State for Availability Add
   const [dayOfWeek, setDayOfWeek] = useState<number>(1); // Monday default
@@ -263,8 +308,10 @@ export function EditTherapistForm({
         telegramChatId: basicForm.telegramChatId.trim() || undefined,
         profileImage: finalProfileUrl || undefined,
         bio: basicForm.bio.trim() || undefined,
+        hourlyRate: Number(basicForm.hourlyRate) || 100.0,
         isActive: basicForm.isActive,
         isFeatured: basicForm.isFeatured,
+        isHomepageSelected: basicForm.isHomepageSelected,
         offersStudio: basicForm.offersStudio,
         offersInHome: basicForm.offersInHome,
       });
@@ -551,6 +598,7 @@ export function EditTherapistForm({
       const res = await assignTherapistServiceAction(therapist.id, {
         serviceId: selectedServiceId,
         customPrice: customPrice ? parseFloat(customPrice) : undefined,
+        customDurationMinutes: customDuration ? parseInt(customDuration, 10) : undefined,
         isActive: true,
       });
 
@@ -584,6 +632,7 @@ export function EditTherapistForm({
 
       setSelectedServiceId('');
       setCustomPrice('');
+      setCustomDuration('');
       setServiceMsg({ type: 'success', text: 'Service assigned successfully!' });
       router.refresh();
     } catch (err) {
@@ -637,6 +686,7 @@ export function EditTherapistForm({
         cityName: cityName.trim(),
         state: stateCode.trim().toUpperCase(),
         zipCode: zipCode.trim(),
+        endZipCode: endZipCode.trim() || undefined,
       });
 
       if (!res.success) {
@@ -650,6 +700,7 @@ export function EditTherapistForm({
           cityName: res.serviceArea.cityName,
           state: res.serviceArea.state,
           zipCode: res.serviceArea.zipCode,
+          endZipCode: res.serviceArea.endZipCode,
         };
         setTherapist((prev) => ({
           ...prev,
@@ -660,6 +711,7 @@ export function EditTherapistForm({
       setCityName('');
       setStateCode('');
       setZipCode('');
+      setEndZipCode('');
       setAreaMsg({ type: 'success', text: 'Service area added!' });
       router.refresh();
     } catch (err) {
@@ -1004,7 +1056,7 @@ export function EditTherapistForm({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                   Phone Number
@@ -1014,6 +1066,22 @@ export function EditTherapistForm({
                   value={basicForm.phone}
                   onChange={(e) => setBasicForm({ ...basicForm, phone: e.target.value })}
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Hourly Rate ($/hr) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="10"
+                  step="5"
+                  required
+                  value={basicForm.hourlyRate}
+                  onChange={(e) => setBasicForm({ ...basicForm, hourlyRate: parseFloat(e.target.value) || 0 })}
+                  placeholder="100"
+                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-semibold text-emerald-800"
                 />
               </div>
 
@@ -1152,6 +1220,16 @@ export function EditTherapistForm({
                     className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
                   />
                   <span className="font-semibold text-slate-800">Featured Practitioner</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={basicForm.isHomepageSelected}
+                    onChange={(e) => setBasicForm({ ...basicForm, isHomepageSelected: e.target.checked })}
+                    className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+                  />
+                  <span className="font-semibold text-slate-800">Display on Homepage</span>
                 </label>
 
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -1489,7 +1567,7 @@ export function EditTherapistForm({
                 </select>
               </div>
 
-              <div className="w-full sm:w-40">
+              <div className="w-full sm:w-36">
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                   Custom Price ($)
                 </label>
@@ -1499,7 +1577,22 @@ export function EditTherapistForm({
                   min="0"
                   value={customPrice}
                   onChange={(e) => setCustomPrice(e.target.value)}
-                  placeholder="Optional override"
+                  placeholder="Use default"
+                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                />
+              </div>
+
+              <div className="w-full sm:w-36">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Custom Duration (min)
+                </label>
+                <input
+                  type="number"
+                  step="5"
+                  min="15"
+                  value={customDuration}
+                  onChange={(e) => setCustomDuration(e.target.value)}
+                  placeholder="Use default"
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
                 />
               </div>
@@ -1580,47 +1673,96 @@ export function EditTherapistForm({
             )}
 
             <form onSubmit={handleAddArea} className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-              <div className="sm:col-span-2">
+              <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  City / Neighborhood
+                  State
                 </label>
-                <input
-                  type="text"
+                <select
+                  required
+                  value={stateCode}
+                  onChange={(e) => handleStateChange(e.target.value)}
+                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                >
+                  {usStatesList.map((st) => (
+                    <option key={st.code} value={st.code}>
+                      {st.name} ({st.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  City / Location Label
+                </label>
+                <select
                   required
                   value={cityName}
                   onChange={(e) => setCityName(e.target.value)}
-                  placeholder="e.g. Santa Monica"
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                />
+                >
+                  {availableCities.map((ct) => (
+                    <option key={ct} value={ct}>
+                      {ct}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  State (2-Letter)
+                  Start ZIP
                 </label>
-                <input
-                  type="text"
-                  required
-                  maxLength={2}
-                  value={stateCode}
-                  onChange={(e) => setStateCode(e.target.value)}
-                  placeholder="CA"
-                  className="w-full px-3.5 py-2 text-sm uppercase bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                />
+                {stateZips.length > 0 ? (
+                  <select
+                    required
+                    value={zipCode}
+                    onChange={(e) => setZipCode(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
+                  >
+                    {stateZips.map((z) => (
+                      <option key={z} value={z}>
+                        {z}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    required
+                    maxLength={5}
+                    value={zipCode}
+                    onChange={(e) => setZipCode(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
+                  />
+                )}
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  ZIP Code
+                  End ZIP (Multi-City Range)
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={zipCode}
-                  onChange={(e) => setZipCode(e.target.value)}
-                  placeholder="90401"
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                />
+                {stateZips.length > 0 ? (
+                  <select
+                    value={endZipCode}
+                    onChange={(e) => setEndZipCode(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
+                  >
+                    {stateZips.map((z) => (
+                      <option key={z} value={z}>
+                        {z}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    maxLength={5}
+                    value={endZipCode}
+                    onChange={(e) => setEndZipCode(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
+                  />
+                )}
               </div>
 
               <div className="sm:col-span-4 flex justify-end pt-2">
@@ -1647,11 +1789,13 @@ export function EditTherapistForm({
                     key={area.id}
                     className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-800"
                   >
-                    <span>{area.cityName}, {area.state} ({area.zipCode})</span>
+                    <span>
+                      {area.cityName}, {area.state} &mdash; {area.endZipCode && area.endZipCode !== area.zipCode ? `${area.zipCode}–${area.endZipCode}` : area.zipCode}
+                    </span>
                     <button
                       type="button"
                       onClick={() => triggerRemoveArea(area.id, area.cityName)}
-                      className="text-slate-400 hover:text-red-600 transition-colors cursor-pointer"
+                      className="text-slate-400 hover:text-red-600 transition-colors cursor-pointer ml-1"
                       title="Remove Area"
                     >
                       &times;

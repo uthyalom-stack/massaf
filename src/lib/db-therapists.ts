@@ -111,6 +111,7 @@ export interface RawServiceArea {
   cityName: string;
   state: string;
   zipCode: string;
+  endZipCode?: string | null;
 }
 
 export interface RawTherapistData {
@@ -122,6 +123,7 @@ export interface RawTherapistData {
   reviewCount: number;
   isActive: boolean;
   isFeatured: boolean;
+  isHomepageSelected?: boolean;
   offersStudio: boolean;
   offersInHome: boolean;
   photos?: RawTherapistPhoto[];
@@ -131,6 +133,114 @@ export interface RawTherapistData {
   _count?: {
     bookings: number;
   };
+}
+
+export function isZipInRange(
+  requestedZip: string,
+  startZip: string,
+  endZip?: string | null
+): boolean {
+  if (!requestedZip || !startZip) return false;
+
+  const req = requestedZip.trim();
+  const start = startZip.trim();
+  const end = endZip ? endZip.trim() : null;
+
+  if (!req || !start) return false;
+
+  if (!end) {
+    return req === start;
+  }
+
+  const reqNum = parseInt(req, 10);
+  const startNum = parseInt(start, 10);
+  const endNum = parseInt(end, 10);
+
+  if (!isNaN(reqNum) && !isNaN(startNum) && !isNaN(endNum)) {
+    const minNum = Math.min(startNum, endNum);
+    const maxNum = Math.max(startNum, endNum);
+    return reqNum >= minNum && reqNum <= maxNum;
+  }
+
+  const minPad = start < end ? start : end;
+  const maxPad = start < end ? end : start;
+
+  return req >= minPad && req <= maxPad;
+}
+
+import { getZipInfo, getStateForZipSync } from '@/lib/us-locations';
+
+export async function therapistCoversZipAsync(
+  therapist: CustomerTherapist,
+  requestedZip: string
+): Promise<boolean> {
+  if (!requestedZip || !requestedZip.trim()) return false;
+  const req = requestedZip.trim();
+
+  // Query USZipCode database info authoritatively
+  const zipInfo = await getZipInfo(req);
+  if (!zipInfo) {
+    return false; // Customer ZIP does not exist in real U.S. database
+  }
+
+  if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
+    const rangeMatch = therapist.rawServiceAreas.some((sa) => {
+      if (sa.state && sa.state.trim().toUpperCase() !== zipInfo.state) {
+        return false;
+      }
+      return isZipInRange(req, sa.zipCode, sa.endZipCode);
+    });
+    if (rangeMatch) return true;
+  }
+
+  // Authoritative check against automatic TherapistZipEligibility table distribution pool across ALL assigned clusters
+  try {
+    const eligibilityRecords = await db.therapistZipEligibility.findMany({
+      where: {
+        therapistId: therapist.id,
+        state: zipInfo.state,
+      },
+    });
+
+    for (const rec of eligibilityRecords) {
+      if (isZipInRange(req, rec.startZip, rec.endZip)) {
+        return true;
+      }
+    }
+  } catch {
+    // Fallback if query fails
+  }
+
+  return therapist.zipCodes.some((z) => z.trim() === req);
+}
+
+export function therapistCoversZip(therapist: CustomerTherapist, requestedZip: string): boolean {
+  if (!requestedZip || !requestedZip.trim()) return false;
+  const req = requestedZip.trim();
+
+  // Validate state from cache or synchronous range lookup
+  const reqState = getStateForZipSync(req);
+  if (reqState) {
+    if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
+      const match = therapist.rawServiceAreas.some((sa) => {
+        if (sa.state && sa.state.trim().toUpperCase() !== reqState) {
+          return false; // State mismatch rejected
+        }
+        return isZipInRange(req, sa.zipCode, sa.endZipCode);
+      });
+      if (match) return true;
+    }
+  }
+
+  // Authoritative fallback matching via rawServiceAreas
+  if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
+    const match = therapist.rawServiceAreas.some((sa) =>
+      isZipInRange(req, sa.zipCode, sa.endZipCode)
+    );
+    if (match) return true;
+  }
+
+  return therapist.zipCodes.some((z) => z.trim() === req);
 }
 
 export function formatDbTherapistToPublic(therapist: RawTherapistData): CustomerTherapist {
@@ -185,6 +295,7 @@ export function formatDbTherapistToPublic(therapist: RawTherapistData): Customer
     location,
     serviceAreas: uniqueCities,
     zipCodes,
+    rawServiceAreas: serviceAreas,
     startingPrice,
     availability: availabilityText,
     offersStudio: therapist.offersStudio,
@@ -197,6 +308,7 @@ export function formatDbTherapistToPublic(therapist: RawTherapistData): Customer
     schedule,
     bookingCount,
     isFeatured: therapist.isFeatured,
+    isHomepageSelected: therapist.isHomepageSelected ?? false,
   };
 }
 

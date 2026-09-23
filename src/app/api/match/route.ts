@@ -30,16 +30,44 @@ export async function POST(request: Request) {
     const criteria = parseResult.data;
     const activeTherapists = await getActiveTherapists();
 
-    const matches = rankTherapistsForMatch(criteria, activeTherapists);
+    const matches = await rankTherapistsForMatch(criteria, activeTherapists);
 
-    return NextResponse.json(
+    // Apply customer-specific rolling 5-therapist rotation if ZIP is supplied
+    let finalMatches = matches;
+    let visitorSessionId: string | null = null;
+
+    if (criteria.zipCode) {
+      const { getRotatingTherapistsForZip } = await import('@/lib/matching');
+      const { getVerifiedCustomerSession, getOrCreateVisitorSessionCookie } = await import('@/lib/auth-session');
+
+      const reqCookieHeader = request.headers.get('cookie') || undefined;
+      const customerSession = await getVerifiedCustomerSession(reqCookieHeader);
+      visitorSessionId = await getOrCreateVisitorSessionCookie(reqCookieHeader);
+
+      const rotatingTherapists = await getRotatingTherapistsForZip(
+        criteria.zipCode,
+        activeTherapists,
+        {
+          customerId: customerSession?.entityId || null,
+          visitorSessionId,
+        }
+      );
+
+      // STRICT ZIP ELIGIBILITY: Filter matches strictly to returned rotating therapist pool (max 5)
+      const rotatingIds = new Set(rotatingTherapists.map((t) => t.id));
+      finalMatches = matches.filter((m) => rotatingIds.has(m.therapist.id)).slice(0, 5);
+    }
+
+    const response = NextResponse.json(
       {
         success: true,
-        count: matches.length,
-        matches,
+        count: finalMatches.length,
+        matches: finalMatches,
       },
       { status: 200 }
     );
+
+    return response;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('[API /api/match] Matching error:', message);

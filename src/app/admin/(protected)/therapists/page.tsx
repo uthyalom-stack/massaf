@@ -46,6 +46,7 @@ export default async function AdminTherapistsPage() {
       reviewCount: t.reviewCount,
       isActive: t.isActive,
       isFeatured: t.isFeatured,
+      isHomepageSelected: t.isHomepageSelected,
       offersStudio: t.offersStudio,
       offersInHome: t.offersInHome,
       createdAt: t.createdAt.toISOString(),

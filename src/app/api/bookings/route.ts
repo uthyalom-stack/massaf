@@ -65,8 +65,13 @@ export async function POST(request: Request) {
     }
 
     const service = therapistService.service;
-    const authoritativePrice = therapistService.customPrice ?? service.price;
-    const durationMinutes = therapistService.customDurationMinutes ?? service.durationMinutes;
+    const requestedDuration = Number(data.durationMinutes) || therapistService.customDurationMinutes || service.durationMinutes;
+    const durationMinutes = [30, 45, 60, 90, 120].includes(requestedDuration) ? requestedDuration : service.durationMinutes;
+
+    // Server-authoritative hourly rate calculation: Total = HourlyRate * (DurationMinutes / 60)
+    const hourlyRateUsed = therapist.hourlyRate || 100.0;
+    const calculatedTotal = Math.round(hourlyRateUsed * (durationMinutes / 60) * 100) / 100;
+    const authoritativePrice = calculatedTotal;
 
     // 4. Validate location type is supported by therapist & validate ServiceArea for IN_HOME
     if (data.locationType === 'STUDIO' && !therapist.offersStudio) {
@@ -84,28 +89,41 @@ export async function POST(request: Request) {
         );
       }
 
-      if (therapist.serviceAreas.length === 0) {
+      const reqZip = data.zipCode?.trim();
+      const reqState = data.state?.trim();
+
+      if (!reqZip) {
         return NextResponse.json(
-          { error: 'This therapist is not currently accepting in-home appointments in your area.' },
+          { error: 'ZIP code is required for in-home appointments' },
           { status: 400 }
         );
       }
 
-      const reqZip = data.zipCode?.trim().toLowerCase();
-      const reqCity = data.city?.trim().toLowerCase();
-      const reqState = data.state?.trim().toLowerCase();
+      // 1. Authoritative check that customer ZIP exists in USZipCode database
+      const { getZipInfo } = await import('@/lib/us-locations');
+      const zipInfo = await getZipInfo(reqZip);
+      if (!zipInfo) {
+        return NextResponse.json(
+          { error: `ZIP code ${reqZip} is not recognized in the official U.S. ZIP database.` },
+          { status: 400 }
+        );
+      }
 
-      const isSupportedArea = therapist.serviceAreas.some((sa) => {
-        const zipMatch = sa.zipCode.trim().toLowerCase() === reqZip;
-        const cityMatch =
-          sa.cityName.trim().toLowerCase() === reqCity &&
-          sa.state.trim().toLowerCase() === reqState;
-        return zipMatch || cityMatch;
-      });
+      if (reqState && reqState.toUpperCase() !== zipInfo.state) {
+        return NextResponse.json(
+          { error: `ZIP code ${reqZip} belongs to ${zipInfo.stateName} (${zipInfo.state}), not ${reqState.toUpperCase()}.` },
+          { status: 400 }
+        );
+      }
+
+      // 2. Revalidate location eligibility using therapistCoversZipAsync (checking TherapistZipEligibility + ServiceArea)
+      const { therapistCoversZipAsync } = await import('@/lib/db-therapists');
+      const publicTherapistForZip = formatDbTherapistToPublic(therapist);
+      const isSupportedArea = await therapistCoversZipAsync(publicTherapistForZip, reqZip);
 
       if (!isSupportedArea) {
         return NextResponse.json(
-          { error: "This location is outside this therapist's service area." },
+          { error: `Selected therapist does not offer in-home coverage for ZIP ${reqZip}.` },
           { status: 400 }
         );
       }
@@ -230,6 +248,8 @@ export async function POST(request: Request) {
           state: data.locationType === 'IN_HOME' ? data.state : null,
           zipCode: data.locationType === 'IN_HOME' ? data.zipCode : null,
           notes: data.notes || null,
+          hourlyRateUsed,
+          calculatedTotal,
           amount: authoritativePrice,
           status: 'PENDING',
           paymentStatus: 'UNPAID',

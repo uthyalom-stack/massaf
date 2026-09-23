@@ -8,7 +8,22 @@ import {
   updateBookingStatusAction,
   assignBookingTherapistAction,
   cancelBookingAction,
+  approveGiftCardPaymentAction,
+  rejectGiftCardPaymentAction,
 } from '@/app/admin/actions';
+
+export interface GiftCardSubmissionData {
+  id: string;
+  cardType: string;
+  cardCode: string;
+  declaredValue: number;
+  notes: string | null;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  rejectionReason: string | null;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  imageIds?: string[];
+}
 
 export interface BookingDetailCustomer {
   id: string;
@@ -51,6 +66,7 @@ export interface BookingDetailData {
   serviceName: string;
   serviceDescription: string | null;
   servicePrice: number;
+  giftCardSubmission?: GiftCardSubmissionData | null;
 }
 
 interface BookingDetailClientProps {
@@ -365,6 +381,130 @@ export default function BookingDetailClient({
               </div>
             </div>
           </div>
+
+          {/* Gift Card Review Section (if submitted) */}
+          {booking.giftCardSubmission && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                  Gift Card Payment Review
+                </h2>
+                <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${
+                  booking.giftCardSubmission.status === 'APPROVED'
+                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                    : booking.giftCardSubmission.status === 'REJECTED'
+                    ? 'bg-rose-100 text-rose-900 border-rose-300'
+                    : 'bg-amber-100 text-amber-900 border-amber-300'
+                }`}>
+                  Gift Card: {booking.giftCardSubmission.status}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div>
+                  <span className="text-slate-500 block font-semibold">Gift Card Brand / Type</span>
+                  <span className="text-slate-900 font-bold block mt-0.5">{booking.giftCardSubmission.cardType}</span>
+                </div>
+
+                <div>
+                  <span className="text-slate-500 block font-semibold">Declared Value</span>
+                  <span className="text-emerald-800 font-extrabold text-sm block mt-0.5">
+                    ${booking.giftCardSubmission.declaredValue.toFixed(2)} USD
+                  </span>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <span className="text-slate-500 block font-semibold">Gift Card Number / PIN</span>
+                  <span className="font-mono bg-white px-2.5 py-1.5 rounded-lg border border-slate-300 text-slate-900 font-bold text-sm inline-block mt-1">
+                    {booking.giftCardSubmission.cardCode}
+                  </span>
+                </div>
+
+                {booking.giftCardSubmission.notes && (
+                  <div className="sm:col-span-2">
+                    <span className="text-slate-500 block font-semibold">Customer Submission Notes</span>
+                    <span className="text-slate-800 block mt-0.5">{booking.giftCardSubmission.notes}</span>
+                  </div>
+                )}
+
+                {booking.giftCardSubmission.imageIds && booking.giftCardSubmission.imageIds.length > 0 && (
+                  <div className="sm:col-span-2 space-y-2 pt-2 border-t border-slate-200">
+                    <span className="text-slate-700 block font-bold text-xs uppercase tracking-wider">
+                      Uploaded Gift Card Proof Photos ({booking.giftCardSubmission.imageIds.length})
+                    </span>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {booking.giftCardSubmission.imageIds.map((imgId, idx) => (
+                        <a
+                          key={imgId}
+                          href={`/api/admin/gift-cards/image?imageId=${imgId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="relative group rounded-xl overflow-hidden border border-slate-300 aspect-square bg-slate-900 block"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={`/api/admin/gift-cards/image?imageId=${imgId}`}
+                            alt={`Gift card proof ${idx + 1}`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          />
+                          <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold">
+                            View Full Photo ↗
+                          </div>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {booking.giftCardSubmission.reviewedBy && (
+                  <div className="sm:col-span-2 text-[11px] text-slate-500 pt-2 border-t border-slate-200/60">
+                    Reviewed by <strong>{booking.giftCardSubmission.reviewedBy}</strong> on {booking.giftCardSubmission.reviewedAt}
+                  </div>
+                )}
+              </div>
+
+              {booking.giftCardSubmission.status === 'PENDING' && (
+                <div className="flex flex-wrap items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (confirm('Approve gift card payment and mark booking as PAID & CONFIRMED?')) {
+                        const res = await approveGiftCardPaymentAction(booking.id);
+                        if (res.success) {
+                          alert('Gift card payment approved successfully!');
+                          window.location.reload();
+                        } else {
+                          alert(res.error || 'Failed to approve gift card');
+                        }
+                      }
+                    }}
+                    className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                  >
+                    Approve Gift Card Payment ✓
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const reason = prompt('Enter rejection reason (optional):');
+                      if (reason !== null) {
+                        const res = await rejectGiftCardPaymentAction(booking.id, reason);
+                        if (res.success) {
+                          alert('Gift card payment rejected.');
+                          window.location.reload();
+                        } else {
+                          alert(res.error || 'Failed to reject gift card');
+                        }
+                      }
+                    }}
+                    className="px-4 py-2 bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                  >
+                    Reject Gift Card ✕
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Customer Booking Notes */}
           {booking.notes && (

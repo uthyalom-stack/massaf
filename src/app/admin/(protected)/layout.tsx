@@ -24,6 +24,8 @@ export default async function ProtectedAdminLayout({
     : [
         { label: 'Dashboard', href: '/admin' },
         { label: 'Therapists', href: '/admin/therapists' },
+        { label: 'Services', href: '/admin/services' },
+        { label: 'Categories', href: '/admin/categories' },
         { label: 'Bookings', href: '/admin/bookings' },
         { label: 'Reviews', href: '/admin/reviews' },
         { label: 'Marketing Links', href: '/admin/marketing-links' },

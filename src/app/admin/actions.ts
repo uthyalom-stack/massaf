@@ -82,8 +82,10 @@ export async function createTherapistAction(input: unknown) {
         email: validated.email || null,
         phone: validated.phone || null,
         telegramChatId: validated.telegramChatId || null,
+        hourlyRate: validated.hourlyRate,
         isActive: validated.isActive,
         isFeatured: validated.isFeatured,
+        isHomepageSelected: validated.isHomepageSelected,
         offersStudio: validated.offersStudio,
         offersInHome: validated.offersInHome,
       },
@@ -96,6 +98,261 @@ export async function createTherapistAction(input: unknown) {
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to create therapist record.',
+    };
+  }
+}
+
+/**
+ * Fisher-Yates array shuffling helper for unbiased randomization.
+ */
+function shuffleArray<T>(array: T[]): T[] {
+  const result = [...array];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
+/**
+ * Admin action to shuffle all active therapists and distribute them as evenly as possible
+ * across state/ZIP ranges in the USZipCode dataset pool without row bloat or resetting customer rotation history.
+ */
+export async function shuffleAndDistributeTherapistsAction() {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    // 1. Fetch all active therapists
+    const activeTherapists = await db.therapist.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+    });
+
+    if (activeTherapists.length === 0) {
+      return {
+        success: false,
+        error: 'No active therapists found in database. Activate at least one therapist before distributing coverage.',
+      };
+    }
+
+    // 2. Fetch all state and ZIP boundaries from USZipCode dataset
+    const stateBounds = await db.uSZipCode.groupBy({
+      by: ['state'],
+      _min: { zipCode: true },
+      _max: { zipCode: true },
+      _count: { zipCode: true },
+      orderBy: { state: 'asc' },
+    });
+
+    if (stateBounds.length === 0) {
+      return {
+        success: false,
+        error: 'USZipCode database dataset is empty. Run seed script before distributing coverage.',
+      };
+    }
+
+    // 3. Randomize order of active therapists to avoid static priority biases
+    const shuffledTherapists = shuffleArray(activeTherapists);
+
+    const eligibilityData: Array<{
+      therapistId: string;
+      state: string;
+      startZip: string;
+      endZip: string;
+    }> = [];
+
+    // Group USZipCode database by state to partition state ZIPs into discrete geographic state/region clusters
+    const stateClusters = await db.uSZipCode.groupBy({
+      by: ['state'],
+      _min: { zipCode: true },
+      _max: { zipCode: true },
+      orderBy: { state: 'asc' },
+    });
+
+    const allClusters: Array<{ state: string; startZip: string; endZip: string }> = [];
+    for (const cl of stateClusters) {
+      if (!cl._min.zipCode || !cl._max.zipCode) continue;
+      allClusters.push({
+        state: cl.state,
+        startZip: cl._min.zipCode,
+        endZip: cl._max.zipCode,
+      });
+    }
+
+    if (allClusters.length > 0) {
+      const totalTherapists = shuffledTherapists.length;
+      const totalClusters = allClusters.length;
+      // Round-robin distribution across geographic clusters so therapists are assigned evenly
+      const basePerCluster = Math.max(1, Math.ceil(totalTherapists / totalClusters));
+      const clusterCapacity = Math.min(totalTherapists, Math.max(1, basePerCluster));
+
+      let therapistIndex = 0;
+      for (let cIdx = 0; cIdx < totalClusters; cIdx++) {
+        const cluster = allClusters[cIdx];
+        for (let k = 0; k < clusterCapacity; k++) {
+          const therapist = shuffledTherapists[(therapistIndex + k) % totalTherapists];
+          eligibilityData.push({
+            therapistId: therapist.id,
+            state: cluster.state,
+            startZip: cluster.startZip,
+            endZip: cluster.endZip,
+          });
+        }
+        therapistIndex = (therapistIndex + 1) % totalTherapists;
+      }
+    }
+
+    // Clear old distribution and write new records
+    await db.therapistZipEligibility.deleteMany({});
+    await db.therapistZipEligibility.createMany({
+      data: eligibilityData,
+    });
+
+    const createdCount = eligibilityData.length;
+
+    safeRevalidatePath('/admin/therapists');
+    safeRevalidatePath('/admin/settings');
+    safeRevalidatePath('/find-a-therapist');
+
+    return {
+      success: true,
+      therapistCount: activeTherapists.length,
+      distributionRecords: createdCount,
+      message: `Successfully shuffled ${activeTherapists.length} active therapists across ${stateBounds.length} U.S. state coverage blocks (${createdCount} eligibility rules created).`,
+    };
+  } catch (err: unknown) {
+    console.error('Error in shuffleAndDistributeTherapistsAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to shuffle and distribute therapists.',
+    };
+  }
+}
+
+export async function approveGiftCardPaymentAction(bookingId: string) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const booking = await db.booking.findUnique({
+      where: { id: bookingId },
+      include: { giftCardSubmission: true },
+    });
+
+    if (!booking) {
+      return { success: false, error: 'Booking not found.' };
+    }
+
+    if (!booking.giftCardSubmission) {
+      return { success: false, error: 'No gift card submission found for this booking.' };
+    }
+
+    if (booking.paymentStatus === 'PAID' && booking.giftCardSubmission.status === 'APPROVED') {
+      return { success: true, message: 'Gift card payment is already approved (idempotent).' };
+    }
+
+    await db.giftCardSubmission.update({
+      where: { bookingId: booking.id },
+      data: {
+        status: 'APPROVED',
+        reviewedAt: new Date(),
+        reviewedBy: adminSession.email,
+      },
+    });
+
+    const updatedBooking = await db.booking.update({
+      where: { id: booking.id },
+      data: {
+        paymentStatus: 'PAID',
+        paymentMethod: 'GIFT_CARD',
+        status: booking.status === 'PENDING' ? 'CONFIRMED' : booking.status,
+      },
+    });
+
+    try {
+      const { notifyBookingConfirmed } = await import('@/lib/notifications');
+      await notifyBookingConfirmed(updatedBooking.id);
+    } catch (notifErr) {
+      console.error('Error dispatching gift card confirmation notification:', notifErr);
+    }
+
+    safeRevalidatePath(`/admin/bookings/${bookingId}`);
+    safeRevalidatePath('/admin/bookings');
+    return { success: true, message: 'Gift card payment approved and booking confirmed.' };
+  } catch (err: unknown) {
+    console.error('Error approving gift card payment:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to approve gift card payment.' };
+  }
+}
+
+export async function rejectGiftCardPaymentAction(bookingId: string, reason?: string) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const booking = await db.booking.findUnique({
+      where: { id: bookingId },
+      include: { giftCardSubmission: true },
+    });
+
+    if (!booking) {
+      return { success: false, error: 'Booking not found.' };
+    }
+
+    if (!booking.giftCardSubmission) {
+      return { success: false, error: 'No gift card submission found for this booking.' };
+    }
+
+    await db.giftCardSubmission.update({
+      where: { bookingId: booking.id },
+      data: {
+        status: 'REJECTED',
+        rejectionReason: reason ? reason.trim() : 'Gift card could not be verified.',
+        reviewedAt: new Date(),
+        reviewedBy: adminSession.email,
+      },
+    });
+
+    await db.booking.update({
+      where: { id: booking.id },
+      data: {
+        paymentStatus: 'FAILED',
+        paymentMethod: 'GIFT_CARD',
+      },
+    });
+
+    safeRevalidatePath(`/admin/bookings/${bookingId}`);
+    safeRevalidatePath('/admin/bookings');
+    return { success: true, message: 'Gift card payment rejected.' };
+  } catch (err: unknown) {
+    console.error('Error rejecting gift card payment:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to reject gift card payment.' };
+  }
+}
+
+export async function toggleHomepageSelectionAction(therapistId: string, isHomepageSelected: boolean) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
+    if (!therapist) {
+      return { success: false, error: 'Therapist not found.' };
+    }
+    if (isHomepageSelected && !therapist.isActive) {
+      return { success: false, error: 'Only active therapists can be selected for homepage display.' };
+    }
+
+    const updated = await db.therapist.update({
+      where: { id: therapistId },
+      data: { isHomepageSelected },
+    });
+
+    safeRevalidatePath('/');
+    safeRevalidatePath('/admin/therapists');
+    safeRevalidatePath('/admin/homepage');
+    return { success: true, therapist: updated };
+  } catch (err: unknown) {
+    console.error('Error in toggleHomepageSelectionAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to update homepage selection.',
     };
   }
 }
@@ -464,12 +721,30 @@ export async function createGlobalServiceAction(input: unknown) {
       return { success: false, error: 'Service name must be at least 2 characters.' };
     }
 
+    const duration = Number(data.durationMinutes);
+    if (isNaN(duration) || duration <= 0) {
+      return { success: false, error: 'Duration must be a positive number of minutes.' };
+    }
+
+    const price = Number(data.price);
+    if (isNaN(price) || price <= 0) {
+      return { success: false, error: 'Price must be a positive amount.' };
+    }
+
+    // Check for duplicate service name
+    const existing = await db.service.findFirst({
+      where: { name: { equals: data.name.trim() } },
+    });
+    if (existing) {
+      return { success: false, error: `A service with the name "${data.name.trim()}" already exists.` };
+    }
+
     const service = await db.service.create({
       data: {
         name: data.name.trim(),
         description: data.description || null,
-        durationMinutes: Number(data.durationMinutes),
-        price: Number(data.price),
+        durationMinutes: duration,
+        price: price,
         categoryId: data.categoryId || null,
         isActive: data.isActive ?? true,
       },
@@ -496,6 +771,35 @@ export async function updateGlobalServiceAction(id: string, input: unknown) {
       isActive?: boolean;
     };
 
+    if (data.name !== undefined) {
+      if (data.name.trim().length < 2) {
+        return { success: false, error: 'Service name must be at least 2 characters.' };
+      }
+      const existing = await db.service.findFirst({
+        where: {
+          name: { equals: data.name.trim() },
+          NOT: { id },
+        },
+      });
+      if (existing) {
+        return { success: false, error: `Another service with the name "${data.name.trim()}" already exists.` };
+      }
+    }
+
+    if (data.durationMinutes !== undefined) {
+      const duration = Number(data.durationMinutes);
+      if (isNaN(duration) || duration <= 0) {
+        return { success: false, error: 'Duration must be a positive number of minutes.' };
+      }
+    }
+
+    if (data.price !== undefined) {
+      const price = Number(data.price);
+      if (isNaN(price) || price <= 0) {
+        return { success: false, error: 'Price must be a positive amount.' };
+      }
+    }
+
     const updated = await db.service.update({
       where: { id },
       data: {
@@ -514,6 +818,50 @@ export async function updateGlobalServiceAction(id: string, input: unknown) {
   } catch (err: unknown) {
     console.error('Error in updateGlobalServiceAction:', err);
     return { success: false, error: err instanceof Error ? err.message : 'Failed to update global service.' };
+  }
+}
+
+export async function deleteGlobalServiceAction(id: string) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const bookingCount = await db.booking.count({
+      where: { serviceId: id },
+    });
+
+    if (bookingCount > 0) {
+      // Safely deactivate instead of hard delete to preserve historical booking records
+      await db.service.update({
+        where: { id },
+        data: { isActive: false },
+      });
+      safeRevalidatePath('/admin/services');
+      safeRevalidatePath('/services');
+      return {
+        success: true,
+        deactivated: true,
+        message: 'Service has existing bookings; it has been deactivated instead of deleted.',
+      };
+    }
+
+    // Delete associated therapist service mappings first if any
+    await db.therapistService.deleteMany({
+      where: { serviceId: id },
+    });
+
+    await db.service.delete({
+      where: { id },
+    });
+
+    safeRevalidatePath('/admin/services');
+    safeRevalidatePath('/services');
+    return { success: true };
+  } catch (err: unknown) {
+    console.error('Error in deleteGlobalServiceAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to delete service.',
+    };
   }
 }
 
@@ -1190,8 +1538,10 @@ export async function updateTherapistAction(id: string, input: unknown) {
         ...(validated.email !== undefined && { email: validated.email }),
         ...(validated.phone !== undefined && { phone: validated.phone }),
         ...(validated.telegramChatId !== undefined && { telegramChatId: validated.telegramChatId || null }),
+        ...(validated.hourlyRate !== undefined && { hourlyRate: validated.hourlyRate }),
         ...(validated.isActive !== undefined && { isActive: validated.isActive }),
         ...(validated.isFeatured !== undefined && { isFeatured: validated.isFeatured }),
+        ...(validated.isHomepageSelected !== undefined && { isHomepageSelected: validated.isHomepageSelected }),
         ...(validated.offersStudio !== undefined && { offersStudio: validated.offersStudio }),
         ...(validated.offersInHome !== undefined && { offersInHome: validated.offersInHome }),
       },
@@ -1424,6 +1774,10 @@ export async function assignTherapistServiceAction(therapistId: string, input: u
       return { success: false, error: 'Referenced service not found.' };
     }
 
+    if (!service.isActive) {
+      return { success: false, error: 'Cannot assign an inactive service to a therapist.' };
+    }
+
     const therapistService = await db.therapistService.upsert({
       where: {
         therapistId_serviceId: {
@@ -1507,56 +1861,60 @@ export async function addServiceAreaAction(therapistId: string, input: unknown) 
 
     const validated = serviceAreaSchema.parse(input);
 
-    const rawZips = validated.zipCode.split(/[\s,;\n\r]+/).map((z) => z.trim()).filter((z) => z.length >= 3);
+    const startZip = validated.zipCode.trim();
+    const endZip = validated.endZipCode ? validated.endZipCode.trim() : startZip;
 
-    if (rawZips.length === 0) {
-      return { success: false, error: 'Please provide at least one valid ZIP code.' };
+    // Validate startZip and endZip against USZipCode table
+    const { getZipInfo } = await import('@/lib/us-locations');
+    const startInfo = await getZipInfo(startZip);
+    if (!startInfo) {
+      return { success: false, error: `ZIP code ${startZip} is not recognized in the official U.S. ZIP database.` };
     }
 
-    const createdAreas = [];
-    let duplicateCount = 0;
+    if (startInfo.state !== validated.state) {
+      return { success: false, error: `ZIP code ${startZip} belongs to ${startInfo.stateName} (${startInfo.state}), not ${validated.state}.` };
+    }
 
-    for (const zip of rawZips) {
-      const existingArea = await db.serviceArea.findFirst({
-        where: {
-          therapistId,
-          cityName: { equals: validated.cityName },
-          state: { equals: validated.state },
-          zipCode: { equals: zip },
-        },
-      });
-
-      if (existingArea) {
-        duplicateCount++;
-        continue;
+    if (endZip && endZip !== startZip) {
+      const endInfo = await getZipInfo(endZip);
+      if (!endInfo) {
+        return { success: false, error: `End ZIP code ${endZip} is not recognized in the official U.S. ZIP database.` };
       }
-
-      const serviceArea = await db.serviceArea.create({
-        data: {
-          therapistId,
-          cityName: validated.cityName,
-          state: validated.state,
-          zipCode: zip,
-        },
-      });
-      createdAreas.push(serviceArea);
+      if (endInfo.state !== validated.state) {
+        return { success: false, error: `End ZIP code ${endZip} belongs to ${endInfo.stateName} (${endInfo.state}), not ${validated.state}.` };
+      }
     }
 
-    if (createdAreas.length === 0) {
-      return {
-        success: false,
-        error: duplicateCount > 0
-          ? 'All specified ZIP codes already exist in coverage for this therapist.'
-          : 'Failed to add service coverage areas.',
-      };
+    const existingArea = await db.serviceArea.findFirst({
+      where: {
+        therapistId,
+        cityName: { equals: validated.cityName },
+        state: { equals: validated.state },
+        zipCode: { equals: startZip },
+        endZipCode: endZip !== startZip ? { equals: endZip } : null,
+      },
+    });
+
+    if (existingArea) {
+      return { success: false, error: 'This coverage area already exists for this therapist.' };
     }
+
+    const serviceArea = await db.serviceArea.create({
+      data: {
+        therapistId,
+        cityName: validated.cityName,
+        state: validated.state,
+        zipCode: startZip,
+        endZipCode: endZip !== startZip ? endZip : null,
+      },
+    });
 
     safeRevalidatePath(`/admin/therapists/${therapistId}`);
     return {
       success: true,
-      serviceArea: createdAreas[0],
-      serviceAreas: createdAreas,
-      count: createdAreas.length,
+      serviceArea,
+      serviceAreas: [serviceArea],
+      count: 1,
     };
   } catch (err: unknown) {
     console.error('Error in addServiceAreaAction:', err);
