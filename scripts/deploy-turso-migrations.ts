@@ -134,12 +134,47 @@ function getMissingSchemaObjects(
   return missing;
 }
 
+function stripLeadingSqlComments(statement: string): string {
+  return statement
+    .replace(/^\s*(?:--[^\n]*(?:\n|$)|\/\\*[\\s\\S]*?\\*\/\\s*)+/g, '')
+    .trim();
+}
+
+function getCreateTableDefinition(
+  statement: string
+): { table: string; columns: Array<{ name: string; definition: string }> } | null {
+  const normalized = stripLeadingSqlComments(statement);
+  const match = normalized.match(
+    /^CREATE\\s+TABLE(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+"([^"]+)"\\s*\\(([\\s\\S]*)\\)$/i
+  );
+  if (!match) return null;
+
+  const lines = match[2]
+    .split('\\n')
+    .map((line) => line.trim().replace(/,$/, ''))
+    .filter(Boolean);
+
+  const columns: Array<{ name: string; definition: string }> = [];
+  for (const line of lines) {
+    const columnMatch = line.match(/^"([^"]+)"\\s+(.+)$/);
+    if (columnMatch && !/^CONSTRAINT\\b/i.test(line)) {
+      columns.push({
+        name: columnMatch[1],
+        definition: columnMatch[2],
+      });
+    }
+  }
+
+  return { table: match[1], columns };
+}
+
 function statementObjects(
   statement: string
 ): { type: 'table' | 'column' | 'index'; table?: string; name: string }[] {
+  const normalized = stripLeadingSqlComments(statement);
   const objects: { type: 'table' | 'column' | 'index'; table?: string; name: string }[] = [];
 
-  const createTable = statement.match(
+  const createTable = normalized.match(
     /^CREATE\\s+TABLE(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+"([^"]+)"/i
   );
   if (createTable) {
@@ -147,7 +182,7 @@ function statementObjects(
     return objects;
   }
 
-  const addColumn = statement.match(
+  const addColumn = normalized.match(
     /^ALTER\\s+TABLE\\s+"([^"]+)"\\s+ADD\\s+COLUMN\\s+"([^"]+)"/i
   );
   if (addColumn) {
@@ -155,7 +190,7 @@ function statementObjects(
     return objects;
   }
 
-  const createIndex = statement.match(
+  const createIndex = normalized.match(
     /^CREATE\\s+(?:UNIQUE\\s+)?INDEX(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+"([^"]+)"/i
   );
   if (createIndex) {
@@ -191,7 +226,9 @@ async function repairRecordedMigration(
   );
 
   if (missingBefore.length === 0) {
-    console.log(`[deploy-turso-migrations] Applied and schema-complete: ${migrationName}`);
+    console.log(
+      `[deploy-turso-migrations] Applied and schema-complete: ${migrationName}`
+    );
     return;
   }
 
@@ -199,36 +236,66 @@ async function repairRecordedMigration(
     `[deploy-turso-migrations] Repairing recorded migration '${migrationName}'. Missing schema objects: ${missingBefore.join(', ')}`
   );
 
-  for (const statement of statements) {
-    const objects = statementObjects(statement);
+  let current = actual;
 
-    if (objects.length === 0) {
-      // This migration was already recorded as finished. Do not replay
-      // statements whose effects cannot be safely inferred from schema state.
+  for (const rawStatement of statements) {
+    const statement = stripLeadingSqlComments(rawStatement);
+    if (!statement) continue;
+
+    const createTable = getCreateTableDefinition(statement);
+    if (createTable && current.tables.has(createTable.table)) {
+      const actualColumns = current.columns.get(createTable.table) ?? new Set<string>();
+
+      for (const column of createTable.columns) {
+        if (actualColumns.has(column.name)) continue;
+
+        console.log(
+          `[deploy-turso-migrations] Adding missing column ${createTable.table}.${column.name} from recorded migration.`
+        );
+
+        await client.execute(
+          `ALTER TABLE "${createTable.table}" ADD COLUMN "${column.name}" ${column.definition}`
+        );
+
+        current = await inspectDatabaseSchema(client);
+      }
+
       continue;
     }
 
-    const missingObjects = objects.filter((object) => !schemaObjectExists(object, actual));
+    const objects = statementObjects(statement);
+    if (objects.length === 0) continue;
+
+    const missingObjects = objects.filter(
+      (object) => !schemaObjectExists(object, current)
+    );
+
     if (missingObjects.length === 0) continue;
 
     if (
       missingObjects.some(
-        (object) => object.type === 'table' && actual.tables.has(object.name) === false
+        (object) =>
+          object.type === 'table' && !current.tables.has(object.name)
       )
     ) {
-      // CREATE TABLE statements are safe to execute only when the table is
-      // genuinely absent. The statement itself is the repository-authoritative
-      // definition for that table.
       console.log(
-        `[deploy-turso-migrations] Creating missing table object from recorded migration: ${missingObjects.map((o) => o.name).join(', ')}`
+        `[deploy-turso-migrations] Creating missing table object from recorded migration: ${missingObjects
+          .map((o) => o.name)
+          .join(', ')}`
       );
     } else {
       console.log(
-        `[deploy-turso-migrations] Applying missing schema object from recorded migration: ${missingObjects.map((o) => `${o.type} ${o.table ? `${o.table}.` : ''}${o.name}`).join(', ')}`
+        `[deploy-turso-migrations] Applying missing schema object from recorded migration: ${missingObjects
+          .map(
+            (o) =>
+              `${o.type} ${o.table ? `${o.table}.` : ''}${o.name}`
+          )
+          .join(', ')}`
       );
     }
 
     await client.execute(statement);
+    current = await inspectDatabaseSchema(client);
   }
 
   const refreshed = await inspectDatabaseSchema(client);
@@ -243,7 +310,9 @@ async function repairRecordedMigration(
     );
   }
 
-  console.log(`[deploy-turso-migrations] Repaired recorded migration: ${migrationName}`);
+  console.log(
+    `[deploy-turso-migrations] Repaired recorded migration: ${migrationName}`
+  );
 }
 
 function countMigrationStatements(sql: string): number {
