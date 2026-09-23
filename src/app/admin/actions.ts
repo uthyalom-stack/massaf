@@ -159,18 +159,66 @@ export async function shuffleAndDistributeTherapistsAction() {
       zipsByState.get(st)!.push(z.zipCode.trim());
     }
 
-    // Partition each state's real ZIP codes into compact geographic clusters (e.g. 30 real ZIPs per cluster)
-    const BLOCK_SIZE = 30;
+    // Fetch detailed location data for geo-clustering
+    const allZipDetails = await db.uSZipCode.findMany({
+      select: { state: true, city: true, zipCode: true, latitude: true, longitude: true },
+      orderBy: [{ state: 'asc' }, { zipCode: 'asc' }],
+    });
+
+    const stateMap = new Map<string, typeof allZipDetails>();
+    for (const z of allZipDetails) {
+      const st = z.state.toUpperCase();
+      if (!stateMap.has(st)) stateMap.set(st, []);
+      stateMap.get(st)!.push(z);
+    }
+
     const allClusters: Array<{ state: string; startZip: string; endZip: string }> = [];
 
-    for (const [state, zips] of zipsByState.entries()) {
-      for (let i = 0; i < zips.length; i += BLOCK_SIZE) {
-        const chunk = zips.slice(i, i + BLOCK_SIZE);
-        allClusters.push({
-          state,
-          startZip: chunk[0],
-          endZip: chunk[chunk.length - 1],
-        });
+    // Form compact geographic clusters using spatial coordinates (0.2 degree grid ~ 12-14 miles) and city boundaries
+    for (const [state, zips] of stateMap.entries()) {
+      const gridMap = new Map<string, typeof allZipDetails>();
+      for (const z of zips) {
+        let gridKey: string;
+        if (z.latitude != null && z.longitude != null) {
+          const latG = Math.floor(z.latitude / 0.2);
+          const lonG = Math.floor(z.longitude / 0.2);
+          gridKey = `grid_${latG}_${lonG}`;
+        } else {
+          gridKey = `city_${z.city.toLowerCase().trim()}`;
+        }
+        if (!gridMap.has(gridKey)) gridMap.set(gridKey, []);
+        gridMap.get(gridKey)!.push(z);
+      }
+
+      for (const [, gridZips] of gridMap.entries()) {
+        gridZips.sort((a, b) => a.zipCode.localeCompare(b.zipCode));
+        let chunk: typeof allZipDetails = [];
+        for (const z of gridZips) {
+          if (chunk.length === 0) {
+            chunk.push(z);
+          } else {
+            const firstNum = parseInt(chunk[0].zipCode, 10);
+            const currNum = parseInt(z.zipCode, 10);
+            // Cap numeric range span at 100 and chunk size at 30 real ZIPs
+            if (!isNaN(firstNum) && !isNaN(currNum) && currNum - firstNum <= 100 && chunk.length < 30) {
+              chunk.push(z);
+            } else {
+              allClusters.push({
+                state,
+                startZip: chunk[0].zipCode.trim(),
+                endZip: chunk[chunk.length - 1].zipCode.trim(),
+              });
+              chunk = [z];
+            }
+          }
+        }
+        if (chunk.length > 0) {
+          allClusters.push({
+            state,
+            startZip: chunk[0].zipCode.trim(),
+            endZip: chunk[chunk.length - 1].zipCode.trim(),
+          });
+        }
       }
     }
 
@@ -210,13 +258,21 @@ export async function shuffleAndDistributeTherapistsAction() {
       }
     }
 
-    // 4. Clear old distribution and write new records atomically
-    await db.$transaction(async (tx) => {
-      await tx.therapistZipEligibility.deleteMany({});
-      await tx.therapistZipEligibility.createMany({
-        data: eligibilityData,
-      });
-    });
+    // 4. Clear old distribution and write new records atomically with extended transaction timeout
+    await db.$transaction(
+      async (tx) => {
+        await tx.therapistZipEligibility.deleteMany({});
+        // Chunk batch creates if large payload
+        const BATCH_SIZE = 5000;
+        for (let i = 0; i < eligibilityData.length; i += BATCH_SIZE) {
+          const batch = eligibilityData.slice(i, i + BATCH_SIZE);
+          await tx.therapistZipEligibility.createMany({
+            data: batch,
+          });
+        }
+      },
+      { timeout: 30000 }
+    );
 
     safeRevalidatePath('/admin/therapists');
     safeRevalidatePath('/admin/settings');

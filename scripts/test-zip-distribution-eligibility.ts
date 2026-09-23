@@ -110,6 +110,7 @@ async function runZipDistributionEligibilityTests() {
       break;
     }
   }
+  assert(diffFound === true, 'Rerunning shuffle MUST produce a different therapist eligibility distribution assignment');
   console.log('  ✓ Re-running shuffle dynamically redistributes active therapists across clusters');
 
 
@@ -239,7 +240,9 @@ async function runZipDistributionEligibilityTests() {
     },
   });
 
-  // Ensure therapist A offers the service and has availability
+  // Ensure therapist A offers the service and has availability and clear test bookings for therapist A
+  await db.booking.deleteMany({ where: { therapistId: therapistA.id } });
+
   await db.therapistService.upsert({
     where: { therapistId_serviceId: { therapistId: therapistA.id, serviceId: service.id } },
     update: { isActive: true },

@@ -61,8 +61,6 @@ export async function getRotatingTherapistsForZip(
   for (const t of allTherapists) {
     if (eligibleTherapistIdsFromPool.has(t.id)) {
       eligibleTherapists.push(t);
-    } else if (await therapistCoversZipAsync(t, cleanZip)) {
-      eligibleTherapists.push(t);
     }
   }
 
