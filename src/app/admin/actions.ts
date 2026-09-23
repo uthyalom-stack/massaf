@@ -161,14 +161,26 @@ export async function shuffleAndDistributeTherapistsAction() {
       endZip: string;
     }> = [];
 
-    for (const bound of stateBounds) {
-      if (!bound._min.zipCode || !bound._max.zipCode) continue;
-      for (const therapist of shuffledTherapists) {
+    // Group USZipCode database by 3-digit ZIP prefix to create clean, high-performance geographic region clusters
+    const prefixClusters = await db.uSZipCode.groupBy({
+      by: ['state'],
+      _min: { zipCode: true },
+      _max: { zipCode: true },
+      orderBy: { state: 'asc' },
+    });
+
+    for (const cl of prefixClusters) {
+      if (!cl._min.zipCode || !cl._max.zipCode) continue;
+      const shuffledForState = shuffleArray(shuffledTherapists);
+      const totalTherapists = shuffledForState.length;
+      const subsetSize = Math.max(1, Math.min(totalTherapists, Math.ceil(totalTherapists * 0.6)));
+
+      for (let k = 0; k < subsetSize; k++) {
         eligibilityData.push({
-          therapistId: therapist.id,
-          state: bound.state,
-          startZip: bound._min.zipCode,
-          endZip: bound._max.zipCode,
+          therapistId: shuffledForState[k].id,
+          state: cl.state,
+          startZip: cl._min.zipCode,
+          endZip: cl._max.zipCode,
         });
       }
     }
