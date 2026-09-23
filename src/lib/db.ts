@@ -14,8 +14,18 @@ function sanitizeEnvValue(val: string | undefined): string | undefined {
 }
 
 function createPrismaClient(): PrismaClient {
-  let url = sanitizeEnvValue(process.env.TURSO_DATABASE_URL) || 'file:./prisma/dev.db';
+  const tursoUrl = sanitizeEnvValue(process.env.TURSO_DATABASE_URL);
   let authToken = sanitizeEnvValue(process.env.TURSO_AUTH_TOKEN);
+
+  if (process.env.NODE_ENV === 'production') {
+    if (!tursoUrl || tursoUrl.trim().length === 0) {
+      throw new Error(
+        'PRODUCTION CONFIGURATION ERROR: TURSO_DATABASE_URL environment variable is missing. Production deployments cannot fall back to local dev.db.'
+      );
+    }
+  }
+
+  let url = tursoUrl || 'file:./prisma/dev.db';
 
   // If URL is remote (libsql:// or https://) but auth token is missing/empty, fall back to dev.db in dev/build environments
   if ((url.startsWith('libsql://') || url.startsWith('https://')) && !authToken) {

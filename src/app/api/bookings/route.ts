@@ -89,28 +89,41 @@ export async function POST(request: Request) {
         );
       }
 
-      if (therapist.serviceAreas.length === 0) {
+      const reqZip = data.zipCode?.trim();
+      const reqState = data.state?.trim();
+
+      if (!reqZip) {
         return NextResponse.json(
-          { error: 'This therapist is not currently accepting in-home appointments in your area.' },
+          { error: 'ZIP code is required for in-home appointments' },
           { status: 400 }
         );
       }
 
-      const reqZip = data.zipCode?.trim().toLowerCase();
-      const reqCity = data.city?.trim().toLowerCase();
-      const reqState = data.state?.trim().toLowerCase();
+      // 1. Authoritative check that customer ZIP exists in USZipCode database
+      const { getZipInfo } = await import('@/lib/us-locations');
+      const zipInfo = await getZipInfo(reqZip);
+      if (!zipInfo) {
+        return NextResponse.json(
+          { error: `ZIP code ${reqZip} is not recognized in the official U.S. ZIP database.` },
+          { status: 400 }
+        );
+      }
 
-      const isSupportedArea = therapist.serviceAreas.some((sa) => {
-        const zipMatch = sa.zipCode.trim().toLowerCase() === reqZip;
-        const cityMatch =
-          sa.cityName.trim().toLowerCase() === reqCity &&
-          sa.state.trim().toLowerCase() === reqState;
-        return zipMatch || cityMatch;
-      });
+      if (reqState && reqState.toUpperCase() !== zipInfo.state) {
+        return NextResponse.json(
+          { error: `ZIP code ${reqZip} belongs to ${zipInfo.stateName} (${zipInfo.state}), not ${reqState.toUpperCase()}.` },
+          { status: 400 }
+        );
+      }
+
+      // 2. Revalidate location eligibility using therapistCoversZipAsync (checking TherapistZipEligibility + ServiceArea)
+      const { therapistCoversZipAsync } = await import('@/lib/db-therapists');
+      const publicTherapistForZip = formatDbTherapistToPublic(therapist);
+      const isSupportedArea = await therapistCoversZipAsync(publicTherapistForZip, reqZip);
 
       if (!isSupportedArea) {
         return NextResponse.json(
-          { error: "This location is outside this therapist's service area." },
+          { error: `Selected therapist does not offer in-home coverage for ZIP ${reqZip}.` },
           { status: 400 }
         );
       }
