@@ -136,10 +136,10 @@ function getMissingSchemaObjects(
 
 function stripLeadingSqlComments(statement: string): string {
   return statement
-    .split('\\n')
-    .filter((line) => !/^\\s*--/.test(line))
-    .join('\\n')
-    .replace(/^\\s*\\/\\*[\\s\\S]*?\\*\\/\\s*/g, '')
+    .split('\n')
+    .filter((line) => !/^\s*--/.test(line))
+    .join('\n')
+    .replace(/^(?:\/\*[\s\S]*?\*\/\s*)+/, '')
     .trim();
 }
 
@@ -148,19 +148,19 @@ function getCreateTableDefinition(
 ): { table: string; columns: Array<{ name: string; definition: string }> } | null {
   const normalized = stripLeadingSqlComments(statement);
   const match = normalized.match(
-    /^CREATE\\s+TABLE(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+"([^"]+)"\\s*\\(([\\s\\S]*)\\)$/i
+    /^CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+\"([^\"]+)\"\s*\(([\s\S]*)\)$/i
   );
   if (!match) return null;
 
   const lines = match[2]
-    .split('\\n')
+    .split('\n')
     .map((line) => line.trim().replace(/,$/, ''))
     .filter(Boolean);
 
   const columns: Array<{ name: string; definition: string }> = [];
   for (const line of lines) {
-    const columnMatch = line.match(/^"([^"]+)"\\s+(.+)$/);
-    if (columnMatch && !/^CONSTRAINT\\b/i.test(line)) {
+    const columnMatch = line.match(/^\"([^\"]+)\"\s+(.+)$/);
+    if (columnMatch && !/^CONSTRAINT\b/i.test(line)) {
       columns.push({
         name: columnMatch[1],
         definition: columnMatch[2],
@@ -178,7 +178,7 @@ function statementObjects(
   const objects: { type: 'table' | 'column' | 'index'; table?: string; name: string }[] = [];
 
   const createTable = normalized.match(
-    /^CREATE\\s+TABLE(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+"([^"]+)"/i
+    /^CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+\"([^\"]+)\"/i
   );
   if (createTable) {
     objects.push({ type: 'table', name: createTable[1] });
@@ -186,7 +186,7 @@ function statementObjects(
   }
 
   const addColumn = normalized.match(
-    /^ALTER\\s+TABLE\\s+"([^"]+)"\\s+ADD\\s+COLUMN\\s+"([^"]+)"/i
+    /^ALTER\s+TABLE\s+\"([^\"]+)\"\s+ADD\s+COLUMN\s+\"([^\"]+)\"/i
   );
   if (addColumn) {
     objects.push({ type: 'column', table: addColumn[1], name: addColumn[2] });
@@ -194,7 +194,7 @@ function statementObjects(
   }
 
   const createIndex = normalized.match(
-    /^CREATE\\s+(?:UNIQUE\\s+)?INDEX(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+"([^"]+)"/i
+    /^CREATE\s+(?:UNIQUE\s+)?INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+\"([^\"]+)\"/i
   );
   if (createIndex) {
     objects.push({ type: 'index', name: createIndex[1] });
