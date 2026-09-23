@@ -193,17 +193,19 @@ export async function therapistCoversZipAsync(
     if (rangeMatch) return true;
   }
 
-  // Authoritative check against automatic TherapistZipEligibility table distribution pool
+  // Authoritative check against automatic TherapistZipEligibility table distribution pool across ALL assigned clusters
   try {
-    const eligibilityMatch = await db.therapistZipEligibility.findFirst({
+    const eligibilityRecords = await db.therapistZipEligibility.findMany({
       where: {
         therapistId: therapist.id,
         state: zipInfo.state,
       },
     });
 
-    if (eligibilityMatch && isZipInRange(req, eligibilityMatch.startZip, eligibilityMatch.endZip)) {
-      return true;
+    for (const rec of eligibilityRecords) {
+      if (isZipInRange(req, rec.startZip, rec.endZip)) {
+        return true;
+      }
     }
   } catch {
     // Fallback if query fails
