@@ -26,7 +26,7 @@ export async function getRotatingTherapistsForZip(
   identity?: { customerId?: string | null; visitorSessionId?: string | null }
 ): Promise<CustomerTherapist[]> {
   if (!customerZip || !customerZip.trim()) {
-    return allTherapists.slice(0, 5);
+    return [];
   }
 
   const cleanZip = customerZip.trim().padStart(5, '0');

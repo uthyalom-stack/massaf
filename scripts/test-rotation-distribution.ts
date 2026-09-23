@@ -8,7 +8,7 @@ import { CustomerTherapist } from '../src/types/customer';
 process.env.MASSAF_AUTH_SECRET = process.env.MASSAF_AUTH_SECRET || 'test_secret_for_local_rotation_tests_32_bytes';
 const adminToken = createSessionToken('env-admin', 'admin@massaf.com', 'ADMIN', 24, 'SUPER_ADMIN');
 process.env.ADMIN_EMAIL = 'admin@massaf.com';
-globalThis.__TEST_ADMIN_SESSION_TOKEN__ = adminToken;
+(global as any).__TEST_ADMIN_SESSION_TOKEN__ = adminToken;
 
 function assert(condition: boolean, msg: string) {
   if (!condition) {

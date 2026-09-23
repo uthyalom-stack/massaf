@@ -161,45 +161,44 @@ export async function shuffleAndDistributeTherapistsAction() {
       endZip: string;
     }> = [];
 
-    // Group USZipCode database by state and city to partition state ZIPs into discrete geographic sub-state clusters
-    const cityClusters = await db.uSZipCode.groupBy({
-      by: ['state', 'city'],
+    // Group USZipCode database by state to partition state ZIPs into discrete geographic state/region clusters
+    const stateClusters = await db.uSZipCode.groupBy({
+      by: ['state'],
       _min: { zipCode: true },
       _max: { zipCode: true },
-      orderBy: [{ state: 'asc' }, { city: 'asc' }],
+      orderBy: { state: 'asc' },
     });
 
-    const clustersByState = new Map<string, Array<{ startZip: string; endZip: string }>>();
-    for (const cl of cityClusters) {
+    const allClusters: Array<{ state: string; startZip: string; endZip: string }> = [];
+    for (const cl of stateClusters) {
       if (!cl._min.zipCode || !cl._max.zipCode) continue;
-      if (!clustersByState.has(cl.state)) {
-        clustersByState.set(cl.state, []);
-      }
-      clustersByState.get(cl.state)!.push({
+      allClusters.push({
+        state: cl.state,
         startZip: cl._min.zipCode,
         endZip: cl._max.zipCode,
       });
     }
 
-    // Distribute active therapists across sub-state city clusters non-uniformly
-    for (const [st, clusters] of clustersByState.entries()) {
-      const shuffledForState = shuffleArray(shuffledTherapists);
-      const totalTherapists = shuffledForState.length;
+    if (allClusters.length > 0) {
+      const totalTherapists = shuffledTherapists.length;
+      const totalClusters = allClusters.length;
+      // Round-robin distribution across geographic clusters so therapists are assigned evenly
+      const basePerCluster = Math.max(1, Math.ceil(totalTherapists / totalClusters));
+      const clusterCapacity = Math.min(totalTherapists, Math.max(1, basePerCluster));
 
-      for (let cIdx = 0; cIdx < clusters.length; cIdx++) {
-        const cluster = clusters[cIdx];
-        // Assign a subset of therapists (e.g., 30-40% of pool) per city cluster
-        const subsetSize = Math.max(1, Math.min(totalTherapists, Math.ceil(totalTherapists * 0.35)));
-
-        for (let k = 0; k < subsetSize; k++) {
-          const therapist = shuffledForState[(cIdx + k) % totalTherapists];
+      let therapistIndex = 0;
+      for (let cIdx = 0; cIdx < totalClusters; cIdx++) {
+        const cluster = allClusters[cIdx];
+        for (let k = 0; k < clusterCapacity; k++) {
+          const therapist = shuffledTherapists[(therapistIndex + k) % totalTherapists];
           eligibilityData.push({
             therapistId: therapist.id,
-            state: st,
+            state: cluster.state,
             startZip: cluster.startZip,
             endZip: cluster.endZip,
           });
         }
+        therapistIndex = (therapistIndex + 1) % totalTherapists;
       }
     }
 
