@@ -116,7 +116,7 @@ export async function POST(request: Request) {
         );
       }
 
-      // 2. Revalidate location eligibility using therapistCoversZipAsync (checking TherapistZipEligibility + ServiceArea)
+      // 2. Revalidate location eligibility using therapistCoversZipAsync (checking TherapistZipEligibility)
       const { therapistCoversZipAsync } = await import('@/lib/db-therapists');
       const publicTherapistForZip = formatDbTherapistToPublic(therapist);
       const isSupportedArea = await therapistCoversZipAsync(publicTherapistForZip, reqZip);

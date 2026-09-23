@@ -175,7 +175,7 @@ export async function therapistCoversZipAsync(
   requestedZip: string
 ): Promise<boolean> {
   if (!requestedZip || !requestedZip.trim()) return false;
-  const req = requestedZip.trim();
+  const req = requestedZip.trim().padStart(5, '0');
 
   // Query USZipCode database info authoritatively
   const zipInfo = await getZipInfo(req);
@@ -183,17 +183,7 @@ export async function therapistCoversZipAsync(
     return false; // Customer ZIP does not exist in real U.S. database
   }
 
-  if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
-    const rangeMatch = therapist.rawServiceAreas.some((sa) => {
-      if (sa.state && sa.state.trim().toUpperCase() !== zipInfo.state) {
-        return false;
-      }
-      return isZipInRange(req, sa.zipCode, sa.endZipCode);
-    });
-    if (rangeMatch) return true;
-  }
-
-  // Authoritative check against automatic TherapistZipEligibility table distribution pool across ALL assigned clusters
+  // Authoritative check strictly against TherapistZipEligibility table distribution pool
   try {
     const eligibilityRecords = await db.therapistZipEligibility.findMany({
       where: {
@@ -207,11 +197,11 @@ export async function therapistCoversZipAsync(
         return true;
       }
     }
-  } catch {
-    // Fallback if query fails
+  } catch (err) {
+    console.error('[therapistCoversZipAsync] Error checking TherapistZipEligibility:', err);
   }
 
-  return therapist.zipCodes.some((z) => z.trim() === req);
+  return false;
 }
 
 export function therapistCoversZip(therapist: CustomerTherapist, requestedZip: string): boolean {

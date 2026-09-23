@@ -56,10 +56,12 @@ export async function getRotatingTherapistsForZip(
     }
   }
 
-  // Filter active therapists that cover cleanZip via manual service areas or automatic eligibility pool
+  // Filter active therapists that cover cleanZip strictly via TherapistZipEligibility pool
   const eligibleTherapists: CustomerTherapist[] = [];
   for (const t of allTherapists) {
-    if (eligibleTherapistIdsFromPool.has(t.id) || await therapistCoversZipAsync(t, cleanZip)) {
+    if (eligibleTherapistIdsFromPool.has(t.id)) {
+      eligibleTherapists.push(t);
+    } else if (await therapistCoversZipAsync(t, cleanZip)) {
       eligibleTherapists.push(t);
     }
   }

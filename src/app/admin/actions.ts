@@ -135,24 +135,60 @@ export async function shuffleAndDistributeTherapistsAction() {
       };
     }
 
-    // 2. Fetch all state and ZIP boundaries from USZipCode dataset
-    const stateBounds = await db.uSZipCode.groupBy({
-      by: ['state'],
-      _min: { zipCode: true },
-      _max: { zipCode: true },
-      _count: { zipCode: true },
-      orderBy: { state: 'asc' },
+    // 2. Fetch all real USZipCode records ordered by state and zipCode
+    const allZipRecords = await db.uSZipCode.findMany({
+      select: { state: true, zipCode: true },
+      orderBy: [{ state: 'asc' }, { zipCode: 'asc' }],
     });
 
-    if (stateBounds.length === 0) {
+    if (allZipRecords.length === 0) {
       return {
         success: false,
         error: 'USZipCode database dataset is empty. Run seed script before distributing coverage.',
       };
     }
 
+    // Group real ZIP codes by state
+    const zipsByState = new Map<string, string[]>();
+    for (const z of allZipRecords) {
+      if (!z.state || !z.zipCode) continue;
+      const st = z.state.toUpperCase();
+      if (!zipsByState.has(st)) {
+        zipsByState.set(st, []);
+      }
+      zipsByState.get(st)!.push(z.zipCode.trim());
+    }
+
+    // Partition each state's real ZIP codes into compact geographic clusters (e.g. 30 real ZIPs per cluster)
+    const BLOCK_SIZE = 30;
+    const allClusters: Array<{ state: string; startZip: string; endZip: string }> = [];
+
+    for (const [state, zips] of zipsByState.entries()) {
+      for (let i = 0; i < zips.length; i += BLOCK_SIZE) {
+        const chunk = zips.slice(i, i + BLOCK_SIZE);
+        allClusters.push({
+          state,
+          startZip: chunk[0],
+          endZip: chunk[chunk.length - 1],
+        });
+      }
+    }
+
+    if (allClusters.length === 0) {
+      return {
+        success: false,
+        error: 'No valid ZIP clusters could be generated from USZipCode dataset.',
+      };
+    }
+
     // 3. Randomize order of active therapists to avoid static priority biases
     const shuffledTherapists = shuffleArray(activeTherapists);
+    const totalTherapists = shuffledTherapists.length;
+
+    // Determine how many therapists to assign per cluster
+    const therapistsPerCluster = totalTherapists <= 3
+      ? totalTherapists
+      : Math.min(totalTherapists, Math.max(3, Math.floor(totalTherapists / 2)));
 
     const eligibilityData: Array<{
       therapistId: string;
@@ -161,54 +197,26 @@ export async function shuffleAndDistributeTherapistsAction() {
       endZip: string;
     }> = [];
 
-    // Group USZipCode database by state to partition state ZIPs into discrete geographic state/region clusters
-    const stateClusters = await db.uSZipCode.groupBy({
-      by: ['state'],
-      _min: { zipCode: true },
-      _max: { zipCode: true },
-      orderBy: { state: 'asc' },
-    });
-
-    const allClusters: Array<{ state: string; startZip: string; endZip: string }> = [];
-    for (const cl of stateClusters) {
-      if (!cl._min.zipCode || !cl._max.zipCode) continue;
-      allClusters.push({
-        state: cl.state,
-        startZip: cl._min.zipCode,
-        endZip: cl._max.zipCode,
-      });
-    }
-
-    if (allClusters.length > 0) {
-      const totalTherapists = shuffledTherapists.length;
-      const totalClusters = allClusters.length;
-      // Round-robin distribution across geographic clusters so therapists are assigned evenly
-      const basePerCluster = Math.max(1, Math.ceil(totalTherapists / totalClusters));
-      const clusterCapacity = Math.min(totalTherapists, Math.max(1, basePerCluster));
-
-      let therapistIndex = 0;
-      for (let cIdx = 0; cIdx < totalClusters; cIdx++) {
-        const cluster = allClusters[cIdx];
-        for (let k = 0; k < clusterCapacity; k++) {
-          const therapist = shuffledTherapists[(therapistIndex + k) % totalTherapists];
-          eligibilityData.push({
-            therapistId: therapist.id,
-            state: cluster.state,
-            startZip: cluster.startZip,
-            endZip: cluster.endZip,
-          });
-        }
-        therapistIndex = (therapistIndex + 1) % totalTherapists;
+    for (let cIdx = 0; cIdx < allClusters.length; cIdx++) {
+      const cluster = allClusters[cIdx];
+      for (let k = 0; k < therapistsPerCluster; k++) {
+        const therapist = shuffledTherapists[(cIdx + k) % totalTherapists];
+        eligibilityData.push({
+          therapistId: therapist.id,
+          state: cluster.state,
+          startZip: cluster.startZip,
+          endZip: cluster.endZip,
+        });
       }
     }
 
-    // Clear old distribution and write new records
-    await db.therapistZipEligibility.deleteMany({});
-    await db.therapistZipEligibility.createMany({
-      data: eligibilityData,
+    // 4. Clear old distribution and write new records atomically
+    await db.$transaction(async (tx) => {
+      await tx.therapistZipEligibility.deleteMany({});
+      await tx.therapistZipEligibility.createMany({
+        data: eligibilityData,
+      });
     });
-
-    const createdCount = eligibilityData.length;
 
     safeRevalidatePath('/admin/therapists');
     safeRevalidatePath('/admin/settings');
@@ -217,8 +225,8 @@ export async function shuffleAndDistributeTherapistsAction() {
     return {
       success: true,
       therapistCount: activeTherapists.length,
-      distributionRecords: createdCount,
-      message: `Successfully shuffled ${activeTherapists.length} active therapists across ${stateBounds.length} U.S. state coverage blocks (${createdCount} eligibility rules created).`,
+      distributionRecords: eligibilityData.length,
+      message: `Successfully shuffled ${activeTherapists.length} active therapists across ${zipsByState.size} U.S. states (${allClusters.length} geographic clusters, ${eligibilityData.length} eligibility rules created).`,
     };
   } catch (err: unknown) {
     console.error('Error in shuffleAndDistributeTherapistsAction:', err);
