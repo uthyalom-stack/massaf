@@ -136,7 +136,10 @@ function getMissingSchemaObjects(
 
 function stripLeadingSqlComments(statement: string): string {
   return statement
-    .replace(/^\s*(?:--[^\n]*(?:\n|$)|\/\\*[\\s\\S]*?\\*\/\\s*)+/g, '')
+    .split('\\n')
+    .filter((line) => !/^\\s*--/.test(line))
+    .join('\\n')
+    .replace(/^\\s*\\/\\*[\\s\\S]*?\\*\\/\\s*/g, '')
     .trim();
 }
 
