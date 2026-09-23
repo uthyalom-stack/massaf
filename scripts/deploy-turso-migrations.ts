@@ -114,7 +114,12 @@ function getMissingSchemaObjects(
 
   for (const [table, expectedColumns] of expected.columns) {
     const actualColumns = actual.columns.get(table);
-    if (!actualColumns) continue;
+    if (!actualColumns) {
+      for (const column of expectedColumns) {
+        missing.push(`column ${table}.${column}`);
+      }
+      continue;
+    }
     for (const column of expectedColumns) {
       if (!actualColumns.has(column)) {
         missing.push(`column ${table}.${column}`);
@@ -127,6 +132,118 @@ function getMissingSchemaObjects(
   }
 
   return missing;
+}
+
+function statementObjects(
+  statement: string
+): { type: 'table' | 'column' | 'index'; table?: string; name: string }[] {
+  const objects: { type: 'table' | 'column' | 'index'; table?: string; name: string }[] = [];
+
+  const createTable = statement.match(
+    /^CREATE\\s+TABLE(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+"([^"]+)"/i
+  );
+  if (createTable) {
+    objects.push({ type: 'table', name: createTable[1] });
+    return objects;
+  }
+
+  const addColumn = statement.match(
+    /^ALTER\\s+TABLE\\s+"([^"]+)"\\s+ADD\\s+COLUMN\\s+"([^"]+)"/i
+  );
+  if (addColumn) {
+    objects.push({ type: 'column', table: addColumn[1], name: addColumn[2] });
+    return objects;
+  }
+
+  const createIndex = statement.match(
+    /^CREATE\\s+(?:UNIQUE\\s+)?INDEX(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+"([^"]+)"/i
+  );
+  if (createIndex) {
+    objects.push({ type: 'index', name: createIndex[1] });
+  }
+
+  return objects;
+}
+
+function schemaObjectExists(
+  object: { type: 'table' | 'column' | 'index'; table?: string; name: string },
+  actual: Awaited<ReturnType<typeof inspectDatabaseSchema>>
+): boolean {
+  if (object.type === 'table') return actual.tables.has(object.name);
+  if (object.type === 'index') return actual.indexes.has(object.name);
+  return actual.columns.get(object.table ?? '')?.has(object.name) ?? false;
+}
+
+async function repairRecordedMigration(
+  client: Client,
+  migrationName: string,
+  sqlContent: string,
+  actual: Awaited<ReturnType<typeof inspectDatabaseSchema>>
+): Promise<void> {
+  const statements = sqlContent
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+
+  const missingBefore = getMissingSchemaObjects(
+    parseSchemaExpectations(sqlContent),
+    actual
+  );
+
+  if (missingBefore.length === 0) {
+    console.log(`[deploy-turso-migrations] Applied and schema-complete: ${migrationName}`);
+    return;
+  }
+
+  console.log(
+    `[deploy-turso-migrations] Repairing recorded migration '${migrationName}'. Missing schema objects: ${missingBefore.join(', ')}`
+  );
+
+  for (const statement of statements) {
+    const objects = statementObjects(statement);
+
+    if (objects.length === 0) {
+      // This migration was already recorded as finished. Do not replay
+      // statements whose effects cannot be safely inferred from schema state.
+      continue;
+    }
+
+    const missingObjects = objects.filter((object) => !schemaObjectExists(object, actual));
+    if (missingObjects.length === 0) continue;
+
+    if (
+      missingObjects.some(
+        (object) => object.type === 'table' && actual.tables.has(object.name) === false
+      )
+    ) {
+      // CREATE TABLE statements are safe to execute only when the table is
+      // genuinely absent. The statement itself is the repository-authoritative
+      // definition for that table.
+      console.log(
+        `[deploy-turso-migrations] Creating missing table object from recorded migration: ${missingObjects.map((o) => o.name).join(', ')}`
+      );
+    } else {
+      console.log(
+        `[deploy-turso-migrations] Applying missing schema object from recorded migration: ${missingObjects.map((o) => `${o.type} ${o.table ? `${o.table}.` : ''}${o.name}`).join(', ')}`
+      );
+    }
+
+    await client.execute(statement);
+  }
+
+  const refreshed = await inspectDatabaseSchema(client);
+  const stillMissing = getMissingSchemaObjects(
+    parseSchemaExpectations(sqlContent),
+    refreshed
+  );
+
+  if (stillMissing.length > 0) {
+    throw new Error(
+      `Migration '${migrationName}' is recorded as applied, but repair did not restore all expected schema objects. Still missing: ${stillMissing.join(', ')}.`
+    );
+  }
+
+  console.log(`[deploy-turso-migrations] Repaired recorded migration: ${migrationName}`);
 }
 
 function countMigrationStatements(sql: string): number {
@@ -257,13 +374,18 @@ async function deployTursoMigrations() {
           parseSchemaExpectations(migration.sqlContent),
           actualSchema
         );
+
         if (missingFromAppliedMigration.length > 0) {
-          throw new Error(
-            `Migration '${migration.dirName}' is recorded as applied, but the database is missing schema objects: ${missingFromAppliedMigration.join(', ')}. Refusing to continue.`
+          await repairRecordedMigration(
+            client,
+            migration.dirName,
+            migration.sqlContent,
+            actualSchema
           );
+        } else {
+          console.log(`[deploy-turso-migrations] Applied: ${migration.dirName}`);
         }
 
-        console.log(`[deploy-turso-migrations] Applied: ${migration.dirName}`);
         continue;
       }
 
