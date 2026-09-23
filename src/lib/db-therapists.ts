@@ -184,12 +184,29 @@ export async function therapistCoversZipAsync(
   }
 
   if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
-    return therapist.rawServiceAreas.some((sa) => {
+    const rangeMatch = therapist.rawServiceAreas.some((sa) => {
       if (sa.state && sa.state.trim().toUpperCase() !== zipInfo.state) {
         return false;
       }
       return isZipInRange(req, sa.zipCode, sa.endZipCode);
     });
+    if (rangeMatch) return true;
+  }
+
+  // Authoritative check against automatic TherapistZipEligibility table distribution pool
+  try {
+    const eligibilityMatch = await db.therapistZipEligibility.findFirst({
+      where: {
+        therapistId: therapist.id,
+        state: zipInfo.state,
+      },
+    });
+
+    if (eligibilityMatch && isZipInRange(req, eligibilityMatch.startZip, eligibilityMatch.endZip)) {
+      return true;
+    }
+  } catch {
+    // Fallback if query fails
   }
 
   return therapist.zipCodes.some((z) => z.trim() === req);
@@ -203,20 +220,22 @@ export function therapistCoversZip(therapist: CustomerTherapist, requestedZip: s
   const reqState = getStateForZipSync(req);
   if (reqState) {
     if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
-      return therapist.rawServiceAreas.some((sa) => {
+      const match = therapist.rawServiceAreas.some((sa) => {
         if (sa.state && sa.state.trim().toUpperCase() !== reqState) {
           return false; // State mismatch rejected
         }
         return isZipInRange(req, sa.zipCode, sa.endZipCode);
       });
+      if (match) return true;
     }
   }
 
   // Authoritative fallback matching via rawServiceAreas
   if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
-    return therapist.rawServiceAreas.some((sa) =>
+    const match = therapist.rawServiceAreas.some((sa) =>
       isZipInRange(req, sa.zipCode, sa.endZipCode)
     );
+    if (match) return true;
   }
 
   return therapist.zipCodes.some((z) => z.trim() === req);

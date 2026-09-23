@@ -55,6 +55,17 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     return selectedTherapist?.services[0] || null;
   });
 
+  // Selected duration minutes state (30, 45, 60, 90, 120 mins)
+  const [selectedDurationMinutes, setSelectedDurationMinutes] = useState<number>(() => {
+    return selectedService?.durationMinutes || 60;
+  });
+
+  // Calculate dynamic hourly total: (HourlyRate * DurationHours)
+  const calculatedTotal = useMemo(() => {
+    const hourlyRate = selectedTherapist?.startingPrice || 100.0;
+    return Math.round(hourlyRate * (selectedDurationMinutes / 60) * 100) / 100;
+  }, [selectedTherapist, selectedDurationMinutes]);
+
   // Location state
   const [locationType, setLocationType] = useState<'STUDIO' | 'IN_HOME'>(() => {
     if (selectedTherapist?.offersStudio) return 'STUDIO';
@@ -495,7 +506,10 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                     return (
                       <div
                         key={svc.id}
-                        onClick={() => setSelectedService(svc)}
+                        onClick={() => {
+                          setSelectedService(svc);
+                          setSelectedDurationMinutes(svc.durationMinutes || 60);
+                        }}
                         className={`cursor-pointer p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
                           isSelected
                             ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20'
@@ -507,7 +521,10 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                             type="radio"
                             name="service"
                             checked={isSelected}
-                            onChange={() => setSelectedService(svc)}
+                            onChange={() => {
+                              setSelectedService(svc);
+                              setSelectedDurationMinutes(svc.durationMinutes || 60);
+                            }}
                             className="mt-1 h-4 w-4 text-emerald-700 border-slate-300 focus:ring-emerald-600"
                           />
                           <div>
@@ -516,8 +533,8 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                           </div>
                         </div>
                         <div className="text-right shrink-0 pl-7 sm:pl-0">
-                          <p className="text-base font-extrabold text-slate-900">${svc.price}</p>
-                          <p className="text-xs font-medium text-slate-500">{svc.durationMinutes} mins</p>
+                          <p className="text-base font-extrabold text-slate-900">${calculatedTotal}</p>
+                          <p className="text-xs font-medium text-slate-500">{selectedDurationMinutes} mins (${selectedTherapist.startingPrice}/hr)</p>
                         </div>
                       </div>
                     );

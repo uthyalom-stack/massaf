@@ -32,6 +32,25 @@ export async function POST(request: Request) {
 
     const matches = await rankTherapistsForMatch(criteria, activeTherapists);
 
+    // Apply customer-specific 5-therapist rolling rotation if ZIP is supplied
+    let finalMatches = matches;
+    if (criteria.zipCode) {
+      const { getRotatingTherapistsForZip } = await import('@/lib/matching');
+      const { getVerifiedCustomerSession } = await import('@/lib/auth-session');
+
+      const reqCookieHeader = request.headers.get('cookie') || undefined;
+      const customerSession = await getVerifiedCustomerSession(reqCookieHeader);
+
+      const rotatingTherapists = await getRotatingTherapistsForZip(
+        criteria.zipCode,
+        activeTherapists,
+        { customerId: customerSession?.entityId || null }
+      );
+
+      const rotatingIds = new Set(rotatingTherapists.map((t) => t.id));
+      finalMatches = matches.filter((m) => rotatingIds.has(m.therapist.id));
+    }
+
     return NextResponse.json(
       {
         success: true,

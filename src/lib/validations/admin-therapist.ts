@@ -13,6 +13,7 @@ export const therapistBaseSchema = z.object({
     .optional()
     .or(z.literal(''))
     .nullable(),
+  hourlyRate: z.number().positive('Hourly rate must be a positive number').default(100.0),
   isActive: z.boolean().default(true),
   isFeatured: z.boolean().default(false),
   isHomepageSelected: z.boolean().default(false),

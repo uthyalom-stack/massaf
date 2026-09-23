@@ -82,6 +82,7 @@ export async function createTherapistAction(input: unknown) {
         email: validated.email || null,
         phone: validated.phone || null,
         telegramChatId: validated.telegramChatId || null,
+        hourlyRate: validated.hourlyRate,
         isActive: validated.isActive,
         isFeatured: validated.isFeatured,
         isHomepageSelected: validated.isHomepageSelected,
@@ -97,6 +98,111 @@ export async function createTherapistAction(input: unknown) {
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to create therapist record.',
+    };
+  }
+}
+
+/**
+ * Fisher-Yates array shuffling helper for unbiased randomization.
+ */
+function shuffleArray<T>(array: T[]): T[] {
+  const result = [...array];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
+/**
+ * Admin action to shuffle all active therapists and distribute them as evenly as possible
+ * across state/ZIP ranges in the USZipCode dataset pool without row bloat or resetting customer rotation history.
+ */
+export async function shuffleAndDistributeTherapistsAction() {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    // 1. Fetch all active therapists
+    const activeTherapists = await db.therapist.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+    });
+
+    if (activeTherapists.length === 0) {
+      return {
+        success: false,
+        error: 'No active therapists found in database. Activate at least one therapist before distributing coverage.',
+      };
+    }
+
+    // 2. Fetch all state and ZIP boundaries from USZipCode dataset
+    const stateBounds = await db.uSZipCode.groupBy({
+      by: ['state'],
+      _min: { zipCode: true },
+      _max: { zipCode: true },
+      _count: { zipCode: true },
+      orderBy: { state: 'asc' },
+    });
+
+    if (stateBounds.length === 0) {
+      return {
+        success: false,
+        error: 'USZipCode database dataset is empty. Run seed script before distributing coverage.',
+      };
+    }
+
+    // 3. Randomize order of active therapists to avoid static priority biases
+    const shuffledTherapists = shuffleArray(activeTherapists);
+
+    // 4. Atomically refresh TherapistZipEligibility records inside a transaction
+    const createdCount = await db.$transaction(async (tx) => {
+      // Clear previous distribution records
+      await tx.therapistZipEligibility.deleteMany({});
+
+      const eligibilityData: Array<{
+        therapistId: string;
+        state: string;
+        startZip: string;
+        endZip: string;
+      }> = [];
+
+      // Assign ALL active therapists to state/ZIP range blocks so the eligible pool per ZIP includes the full active therapist roster
+      for (let sIdx = 0; sIdx < stateBounds.length; sIdx++) {
+        const bound = stateBounds[sIdx];
+        if (!bound._min.zipCode || !bound._max.zipCode) continue;
+
+        for (const therapist of shuffledTherapists) {
+          eligibilityData.push({
+            therapistId: therapist.id,
+            state: bound.state,
+            startZip: bound._min.zipCode,
+            endZip: bound._max.zipCode,
+          });
+        }
+      }
+
+      await tx.therapistZipEligibility.createMany({
+        data: eligibilityData,
+      });
+
+      return eligibilityData.length;
+    });
+
+    safeRevalidatePath('/admin/therapists');
+    safeRevalidatePath('/admin/settings');
+    safeRevalidatePath('/find-a-therapist');
+
+    return {
+      success: true,
+      therapistCount: activeTherapists.length,
+      distributionRecords: createdCount,
+      message: `Successfully shuffled ${activeTherapists.length} active therapists across ${stateBounds.length} U.S. state coverage blocks (${createdCount} eligibility rules created).`,
+    };
+  } catch (err: unknown) {
+    console.error('Error in shuffleAndDistributeTherapistsAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to shuffle and distribute therapists.',
     };
   }
 }
@@ -1410,6 +1516,7 @@ export async function updateTherapistAction(id: string, input: unknown) {
         ...(validated.email !== undefined && { email: validated.email }),
         ...(validated.phone !== undefined && { phone: validated.phone }),
         ...(validated.telegramChatId !== undefined && { telegramChatId: validated.telegramChatId || null }),
+        ...(validated.hourlyRate !== undefined && { hourlyRate: validated.hourlyRate }),
         ...(validated.isActive !== undefined && { isActive: validated.isActive }),
         ...(validated.isFeatured !== undefined && { isFeatured: validated.isFeatured }),
         ...(validated.isHomepageSelected !== undefined && { isHomepageSelected: validated.isHomepageSelected }),

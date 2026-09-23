@@ -70,6 +70,7 @@ export interface DetailedTherapist {
   email?: string | null;
   phone?: string | null;
   telegramChatId?: string | null;
+  hourlyRate?: number;
   rating: number;
   reviewCount: number;
   isActive: boolean;
@@ -122,6 +123,7 @@ export function EditTherapistForm({
     telegramChatId: therapist.telegramChatId || '',
     profileImage: therapist.profileImage || '',
     bio: therapist.bio || '',
+    hourlyRate: therapist.hourlyRate ?? 100.0,
     isActive: therapist.isActive,
     isFeatured: therapist.isFeatured,
     isHomepageSelected: therapist.isHomepageSelected ?? false,
@@ -306,6 +308,7 @@ export function EditTherapistForm({
         telegramChatId: basicForm.telegramChatId.trim() || undefined,
         profileImage: finalProfileUrl || undefined,
         bio: basicForm.bio.trim() || undefined,
+        hourlyRate: Number(basicForm.hourlyRate) || 100.0,
         isActive: basicForm.isActive,
         isFeatured: basicForm.isFeatured,
         isHomepageSelected: basicForm.isHomepageSelected,
@@ -1053,7 +1056,7 @@ export function EditTherapistForm({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                   Phone Number
@@ -1063,6 +1066,22 @@ export function EditTherapistForm({
                   value={basicForm.phone}
                   onChange={(e) => setBasicForm({ ...basicForm, phone: e.target.value })}
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Hourly Rate ($/hr) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="10"
+                  step="5"
+                  required
+                  value={basicForm.hourlyRate}
+                  onChange={(e) => setBasicForm({ ...basicForm, hourlyRate: parseFloat(e.target.value) || 0 })}
+                  placeholder="100"
+                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-semibold text-emerald-800"
                 />
               </div>
 

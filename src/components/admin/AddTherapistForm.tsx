@@ -13,6 +13,7 @@ export function AddTherapistForm() {
     phone: '',
     telegramChatId: '',
     bio: '',
+    hourlyRate: 100,
     isActive: true,
     isFeatured: false,
     offersStudio: true,
@@ -76,6 +77,7 @@ export function AddTherapistForm() {
         phone: formData.phone.trim() || undefined,
         telegramChatId: formData.telegramChatId.trim() || undefined,
         bio: formData.bio.trim() || undefined,
+        hourlyRate: Number(formData.hourlyRate) || 100,
         isActive: formData.isActive,
         isFeatured: formData.isFeatured,
         offersStudio: formData.offersStudio,
@@ -199,8 +201,8 @@ export function AddTherapistForm() {
             </div>
           </div>
 
-          {/* Phone & Telegram Chat ID */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Phone, Hourly Rate & Telegram Chat ID */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                 Phone Number
@@ -211,6 +213,22 @@ export function AddTherapistForm() {
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                 placeholder="(310) 555-0192"
                 className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                Hourly Rate ($/hr) <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="number"
+                min="10"
+                step="5"
+                required
+                value={formData.hourlyRate}
+                onChange={(e) => setFormData({ ...formData, hourlyRate: parseFloat(e.target.value) || 0 })}
+                placeholder="100"
+                className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-semibold text-emerald-800"
               />
             </div>
 

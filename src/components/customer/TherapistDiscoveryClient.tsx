@@ -102,8 +102,8 @@ export function TherapistDiscoveryClient({
     router.replace(pathname, { scroll: false });
   };
 
-  // Perform authoritative filtering against real database dataset
-  const filteredTherapists = useMemo(() => {
+  // Base filtered therapists
+  const baseFilteredTherapists = useMemo(() => {
     return initialTherapists
       .filter((therapist) => {
         // 1. Service Filtering: Therapist MUST offer the selected active service
@@ -114,28 +114,9 @@ export function TherapistDiscoveryClient({
           }
         }
 
-        // 2. Service Location Type Filtering & ZIP Coverage Matching
-        if (serviceTypeFilter === 'in_home') {
-          if (!therapist.offersInHome) return false;
-          // In-home requires requested ZIP to fall inside therapist coverage
-          if (zipFilter.trim()) {
-            if (!therapistCoversZip(therapist, zipFilter.trim())) {
-              return false;
-            }
-          }
-        } else if (serviceTypeFilter === 'studio') {
-          if (!therapist.offersStudio) return false;
-          // Studio does NOT require in-home ZIP coverage range
-        } else {
-          // 'all' location types
-          if (zipFilter.trim()) {
-            const coversInHome = therapist.offersInHome && therapistCoversZip(therapist, zipFilter.trim());
-            const offersStudioZip = therapist.offersStudio && therapist.zipCodes.some((z) => z.trim() === zipFilter.trim());
-            if (!coversInHome && !offersStudioZip) {
-              return false;
-            }
-          }
-        }
+        // 2. Service Location Type Filtering
+        if (serviceTypeFilter === 'in_home' && !therapist.offersInHome) return false;
+        if (serviceTypeFilter === 'studio' && !therapist.offersStudio) return false;
 
         // 3. City / Region filter
         if (cityFilter.trim()) {
@@ -158,7 +139,6 @@ export function TherapistDiscoveryClient({
         return true;
       })
       .map((therapist) => {
-        // Resolve service-specific price if a specific service is selected
         if (serviceIdFilter !== 'all') {
           const serviceMatch = therapist.services.find((s) => s.id === serviceIdFilter);
           if (serviceMatch) {
@@ -174,10 +154,42 @@ export function TherapistDiscoveryClient({
     initialTherapists,
     serviceIdFilter,
     cityFilter,
-    zipFilter,
     serviceTypeFilter,
     specialtyFilter,
   ]);
+
+  const [filteredTherapists, setFilteredTherapists] = React.useState<CustomerTherapist[]>(baseFilteredTherapists);
+
+  // Apply rolling 5-therapist rotation when ZIP is requested
+  React.useEffect(() => {
+    const cleanZip = zipFilter.trim();
+    if (cleanZip && /^\d{5}$/.test(cleanZip)) {
+      // Execute rotation match via server API or dynamic import
+      const payload = {
+        serviceId: serviceIdFilter !== 'all' ? serviceIdFilter : (availableServices[0]?.id || ''),
+        locationType: serviceTypeFilter === 'studio' ? 'STUDIO' : 'IN_HOME',
+        zipCode: cleanZip,
+      };
+
+      fetch('/api/match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.matches)) {
+            const matchedTherapists = data.matches.map((m: { therapist: CustomerTherapist }) => m.therapist);
+            setFilteredTherapists(matchedTherapists.slice(0, 5));
+          } else {
+            setFilteredTherapists(baseFilteredTherapists.slice(0, 5));
+          }
+        })
+        .catch(() => setFilteredTherapists(baseFilteredTherapists.slice(0, 5)));
+    } else {
+      setFilteredTherapists(baseFilteredTherapists);
+    }
+  }, [zipFilter, serviceIdFilter, serviceTypeFilter, baseFilteredTherapists, availableServices]);
 
   const hasActiveFilters =
     serviceIdFilter !== 'all' ||

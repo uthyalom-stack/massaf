@@ -89,10 +89,11 @@ model Customer {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  bookings  Booking[]
-  reviews   Review[]
-  addresses CustomerAddress[]
-  favorites CustomerFavorite[]
+  bookings        Booking[]
+  reviews         Review[]
+  addresses       CustomerAddress[]
+  favorites       CustomerFavorite[]
+  rotationHistory CustomerRotationHistory[]
 
   @@index([email])
 }
@@ -139,6 +140,7 @@ model Therapist {
   email              String?  @unique
   phone              String?
   telegramChatId     String?
+  hourlyRate         Float    @default(100.0)
   rating             Float    @default(0.0)
   reviewCount        Int      @default(0)
   isActive           Boolean  @default(true)
@@ -149,18 +151,56 @@ model Therapist {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  photos         TherapistPhoto[]
-  services       TherapistService[]
-  availabilities TherapistAvailability[]
-  serviceAreas   ServiceArea[]
-  bookings       Booking[]
-  reviews        Review[]
-  testimonials   Testimonial[]
-  favoritedBy    CustomerFavorite[]
+  photos           TherapistPhoto[]
+  services         TherapistService[]
+  availabilities   TherapistAvailability[]
+  serviceAreas     ServiceArea[]
+  zipEligibility   TherapistZipEligibility[]
+  rotationHistory  CustomerRotationHistory[]
+  bookings         Booking[]
+  reviews          Review[]
+  testimonials     Testimonial[]
+  favoritedBy      CustomerFavorite[]
 
   @@index([isActive])
   @@index([isFeatured])
   @@index([isHomepageSelected])
+}
+
+/// Scalable geographic distribution pool mapping therapists to state/ZIP ranges
+model TherapistZipEligibility {
+  id          String   @id @default(uuid())
+  therapistId String
+  state       String   // 2-letter state postal code e.g. "CA", "NY"
+  startZip    String   // 5-digit U.S. ZIP code start of block
+  endZip      String   // 5-digit U.S. ZIP code end of block
+  createdAt   DateTime @default(now())
+
+  therapist Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+
+  @@index([therapistId])
+  @@index([state])
+  @@index([state, startZip, endZip])
+}
+
+/// Tracks customer and guest therapist exposure for rolling least-recently-seen rotation
+model CustomerRotationHistory {
+  id               String   @id @default(uuid())
+  customerId       String?  // Nullable for guest visitors
+  visitorSessionId String?  // Browser/session identifier token for logged-out visitors
+  zipCode          String   // Searched 5-digit ZIP code
+  therapistId      String
+  searchId         String   // Unique UUID grouping a single 5-therapist result set
+  seenAt           DateTime @default(now())
+
+  therapist Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+  customer  Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([customerId, zipCode])
+  @@index([visitorSessionId, zipCode])
+  @@index([therapistId])
+  @@index([searchId])
+  @@index([seenAt])
 }
 
 /// Gallery photos for therapist profiles
@@ -285,6 +325,10 @@ model Booking {
   zipCode             String?
   notes               String?
   status              BookingStatus       @default(PENDING)
+
+  // Immutable hourly pricing snapshot fields
+  hourlyRateUsed      Float?              // Snapshot of therapist's hourly rate at booking time
+  calculatedTotal     Float?              // Snapshot of calculated total amount ($/hr * durationHrs)
 
   // Provider-agnostic payment information
   amount              Float
