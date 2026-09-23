@@ -64,10 +64,15 @@ export async function getRotatingTherapistsForZip(
     }
   }
 
-  // Fallback to all Therapists if pool is smaller than 5
-  const pool = eligibleTherapists.length >= 5 ? eligibleTherapists : allTherapists;
+  // STRICT ZIP ELIGIBILITY: Never fall back to non-eligible therapists outside the ZIP pool
+  const pool = eligibleTherapists;
+
+  if (pool.length === 0) {
+    return []; // Truthful empty eligibility state
+  }
+
   if (pool.length <= 5) {
-    return pool.slice(0, 5);
+    return pool; // Return all available eligible therapists without injecting non-eligible ones
   }
 
   // 2. Retrieve rotation exposure history for customer or visitor session
@@ -131,8 +136,8 @@ export async function getRotatingTherapistsForZip(
     // If at least 5 unseen therapists exist, expose top 5 unseen
     selectedSet = poolSortedByLeastSeen.slice(0, 5);
   } else if (previousResultSetIds.size > 0 && unseenTherapists.length > 0) {
-    // Dynamic replacement: replace between 1 and 4 therapists from previous result set
-    const replaceCount = Math.min(unseenTherapists.length, 3); // Replace 1-3 therapists
+    // Dynamic replacement without hardcoded cap (1, 2, 3, 4, or 5 therapists replaced based on unseen pool)
+    const replaceCount = Math.min(unseenTherapists.length, 5);
     const retainedFromPrevious = pool.filter(
       (t) => previousResultSetIds.has(t.id) && !unseenTherapists.some((u) => u.id === t.id)
     ).slice(0, 5 - replaceCount);
@@ -143,7 +148,7 @@ export async function getRotatingTherapistsForZip(
 
     selectedSet = [...retainedFromPrevious, ...freshCandidates.slice(0, replaceCount)];
   } else {
-    // Recycled pool: select top 5 least recently seen
+    // Recycled pool: select top 5 least recently seen therapists from the eligible pool
     selectedSet = poolSortedByLeastSeen.slice(0, 5);
   }
 

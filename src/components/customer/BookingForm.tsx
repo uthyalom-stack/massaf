@@ -170,7 +170,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
       selectedTherapist,
       date,
       time,
-      selectedService.durationMinutes
+      selectedDurationMinutes
     );
 
     if (!availabilityCheck.isValid) {
@@ -247,6 +247,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     const payload = {
       therapistId: selectedTherapist.id,
       serviceId: selectedService.id,
+      durationMinutes: selectedDurationMinutes,
       locationType,
       date,
       time,

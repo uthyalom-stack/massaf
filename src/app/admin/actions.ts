@@ -154,39 +154,32 @@ export async function shuffleAndDistributeTherapistsAction() {
     // 3. Randomize order of active therapists to avoid static priority biases
     const shuffledTherapists = shuffleArray(activeTherapists);
 
-    // 4. Atomically refresh TherapistZipEligibility records inside a transaction
-    const createdCount = await db.$transaction(async (tx) => {
-      // Clear previous distribution records
-      await tx.therapistZipEligibility.deleteMany({});
+    const eligibilityData: Array<{
+      therapistId: string;
+      state: string;
+      startZip: string;
+      endZip: string;
+    }> = [];
 
-      const eligibilityData: Array<{
-        therapistId: string;
-        state: string;
-        startZip: string;
-        endZip: string;
-      }> = [];
-
-      // Assign ALL active therapists to state/ZIP range blocks so the eligible pool per ZIP includes the full active therapist roster
-      for (let sIdx = 0; sIdx < stateBounds.length; sIdx++) {
-        const bound = stateBounds[sIdx];
-        if (!bound._min.zipCode || !bound._max.zipCode) continue;
-
-        for (const therapist of shuffledTherapists) {
-          eligibilityData.push({
-            therapistId: therapist.id,
-            state: bound.state,
-            startZip: bound._min.zipCode,
-            endZip: bound._max.zipCode,
-          });
-        }
+    for (const bound of stateBounds) {
+      if (!bound._min.zipCode || !bound._max.zipCode) continue;
+      for (const therapist of shuffledTherapists) {
+        eligibilityData.push({
+          therapistId: therapist.id,
+          state: bound.state,
+          startZip: bound._min.zipCode,
+          endZip: bound._max.zipCode,
+        });
       }
+    }
 
-      await tx.therapistZipEligibility.createMany({
-        data: eligibilityData,
-      });
-
-      return eligibilityData.length;
+    // Clear old distribution and write new records
+    await db.therapistZipEligibility.deleteMany({});
+    await db.therapistZipEligibility.createMany({
+      data: eligibilityData,
     });
+
+    const createdCount = eligibilityData.length;
 
     safeRevalidatePath('/admin/therapists');
     safeRevalidatePath('/admin/settings');

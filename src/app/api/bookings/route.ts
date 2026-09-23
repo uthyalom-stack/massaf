@@ -65,12 +65,13 @@ export async function POST(request: Request) {
     }
 
     const service = therapistService.service;
-    const durationMinutes = therapistService.customDurationMinutes ?? service.durationMinutes;
+    const requestedDuration = Number(data.durationMinutes) || therapistService.customDurationMinutes || service.durationMinutes;
+    const durationMinutes = [30, 45, 60, 90, 120].includes(requestedDuration) ? requestedDuration : service.durationMinutes;
 
     // Server-authoritative hourly rate calculation: Total = HourlyRate * (DurationMinutes / 60)
     const hourlyRateUsed = therapist.hourlyRate || 100.0;
     const calculatedTotal = Math.round(hourlyRateUsed * (durationMinutes / 60) * 100) / 100;
-    const authoritativePrice = therapistService.customPrice ?? calculatedTotal;
+    const authoritativePrice = calculatedTotal;
 
     // 4. Validate location type is supported by therapist & validate ServiceArea for IN_HOME
     if (data.locationType === 'STUDIO' && !therapist.offersStudio) {
