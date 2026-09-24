@@ -159,66 +159,54 @@ export async function shuffleAndDistributeTherapistsAction() {
       zipsByState.get(st)!.push(z.zipCode.trim());
     }
 
-    // Fetch detailed location data for geo-clustering
-    const allZipDetails = await db.uSZipCode.findMany({
-      select: { state: true, city: true, zipCode: true, latitude: true, longitude: true },
-      orderBy: [{ state: 'asc' }, { zipCode: 'asc' }],
-    });
+    // Group real ZIP codes into compact geographic 3-digit SCF regions (~1,000 nationwide regions)
+    // to dramatically reduce database row bloat while maintaining exact ZIP geographic grouping.
+    const scfMap = new Map<string, { state: string; zipCodes: string[] }>();
 
-    const stateMap = new Map<string, typeof allZipDetails>();
-    for (const z of allZipDetails) {
+    for (const z of allZipRecords) {
+      if (!z.state || !z.zipCode) continue;
+      const cleanZip = z.zipCode.trim().padStart(5, '0');
+      const scfPrefix = cleanZip.substring(0, 3);
       const st = z.state.toUpperCase();
-      if (!stateMap.has(st)) stateMap.set(st, []);
-      stateMap.get(st)!.push(z);
+      const key = `${st}_${scfPrefix}`;
+
+      if (!scfMap.has(key)) {
+        scfMap.set(key, { state: st, zipCodes: [] });
+      }
+      scfMap.get(key)!.zipCodes.push(cleanZip);
     }
 
     const allClusters: Array<{ state: string; startZip: string; endZip: string }> = [];
 
-    // Form compact geographic clusters using spatial coordinates (0.2 degree grid ~ 12-14 miles) and city boundaries
-    for (const [state, zips] of stateMap.entries()) {
-      const gridMap = new Map<string, typeof allZipDetails>();
-      for (const z of zips) {
-        let gridKey: string;
-        if (z.latitude != null && z.longitude != null) {
-          const latG = Math.floor(z.latitude / 0.2);
-          const lonG = Math.floor(z.longitude / 0.2);
-          gridKey = `grid_${latG}_${lonG}`;
-        } else {
-          gridKey = `city_${z.city.toLowerCase().trim()}`;
-        }
-        if (!gridMap.has(gridKey)) gridMap.set(gridKey, []);
-        gridMap.get(gridKey)!.push(z);
-      }
+    for (const [, region] of scfMap.entries()) {
+      region.zipCodes.sort((a, b) => a.localeCompare(b));
 
-      for (const [, gridZips] of gridMap.entries()) {
-        gridZips.sort((a, b) => a.zipCode.localeCompare(b.zipCode));
-        let chunk: typeof allZipDetails = [];
-        for (const z of gridZips) {
-          if (chunk.length === 0) {
-            chunk.push(z);
+      let chunk: string[] = [];
+      for (const zip of region.zipCodes) {
+        if (chunk.length === 0) {
+          chunk.push(zip);
+        } else {
+          const firstNum = parseInt(chunk[0], 10);
+          const currNum = parseInt(zip, 10);
+          // Keep range blocks compact: max numeric span 100 and max 50 real ZIPs per range
+          if (!isNaN(firstNum) && !isNaN(currNum) && currNum - firstNum <= 100 && chunk.length < 50) {
+            chunk.push(zip);
           } else {
-            const firstNum = parseInt(chunk[0].zipCode, 10);
-            const currNum = parseInt(z.zipCode, 10);
-            // Cap numeric range span at 100 and chunk size at 30 real ZIPs
-            if (!isNaN(firstNum) && !isNaN(currNum) && currNum - firstNum <= 100 && chunk.length < 30) {
-              chunk.push(z);
-            } else {
-              allClusters.push({
-                state,
-                startZip: chunk[0].zipCode.trim(),
-                endZip: chunk[chunk.length - 1].zipCode.trim(),
-              });
-              chunk = [z];
-            }
+            allClusters.push({
+              state: region.state,
+              startZip: chunk[0],
+              endZip: chunk[chunk.length - 1],
+            });
+            chunk = [zip];
           }
         }
-        if (chunk.length > 0) {
-          allClusters.push({
-            state,
-            startZip: chunk[0].zipCode.trim(),
-            endZip: chunk[chunk.length - 1].zipCode.trim(),
-          });
-        }
+      }
+      if (chunk.length > 0) {
+        allClusters.push({
+          state: region.state,
+          startZip: chunk[0],
+          endZip: chunk[chunk.length - 1],
+        });
       }
     }
 
@@ -258,21 +246,34 @@ export async function shuffleAndDistributeTherapistsAction() {
       }
     }
 
-    // 4. Clear old distribution and write new records atomically with extended transaction timeout
-    await db.$transaction(
-      async (tx) => {
-        await tx.therapistZipEligibility.deleteMany({});
-        // Chunk batch creates if large payload
-        const BATCH_SIZE = 5000;
-        for (let i = 0; i < eligibilityData.length; i += BATCH_SIZE) {
-          const batch = eligibilityData.slice(i, i + BATCH_SIZE);
-          await tx.therapistZipEligibility.createMany({
-            data: batch,
-          });
-        }
-      },
-      { timeout: 30000 }
-    );
+    // 4. Staged batch write & swap strategy to handle large distributions (up to 200+ therapists) without transaction timeout
+    const distributionStartTime = new Date();
+
+    try {
+      const BATCH_SIZE = 10000;
+      for (let i = 0; i < eligibilityData.length; i += BATCH_SIZE) {
+        const batch = eligibilityData.slice(i, i + BATCH_SIZE);
+        await db.therapistZipEligibility.createMany({
+          data: batch,
+        });
+      }
+
+      // Safely delete previous distribution records created prior to this shuffle run
+      await db.therapistZipEligibility.deleteMany({
+        where: {
+          createdAt: { lt: distributionStartTime },
+        },
+      });
+    } catch (writeErr) {
+      // Clean up partial inserts if write fails, leaving previous distribution intact
+      console.error('Error writing distribution batches, rolling back partial inserts:', writeErr);
+      await db.therapistZipEligibility.deleteMany({
+        where: {
+          createdAt: { gte: distributionStartTime },
+        },
+      });
+      throw writeErr;
+    }
 
     safeRevalidatePath('/admin/therapists');
     safeRevalidatePath('/admin/settings');
