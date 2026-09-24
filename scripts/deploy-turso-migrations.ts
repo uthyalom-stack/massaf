@@ -195,6 +195,17 @@ async function deployTursoMigrations() {
     } else {
       console.log(`[deploy-turso-migrations] Migration deployment complete (${newlyAppliedCount} executed, ${markedExistingCount} existing recorded).`);
     }
+
+    // Auto-seed USZipCode table if empty
+    const zipCountRes = await client.execute(`SELECT COUNT(*) as count FROM "USZipCode"`);
+    const zipCount = Number(zipCountRes.rows[0]?.count || 0);
+    console.log(`[deploy-turso-migrations] USZipCode dataset check: ${zipCount} records present.`);
+
+    if (zipCount === 0) {
+      console.log('[deploy-turso-migrations] USZipCode table is empty. Auto-populating 42,555 U.S. ZIP records...');
+      const { importUsZipCodes } = await import('./import-us-zips');
+      await importUsZipCodes();
+    }
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     console.error('[deploy-turso-migrations] FATAL: Migration deployment failed:', errorMsg);

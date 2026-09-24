@@ -61,21 +61,6 @@ export function parseTimeStringToMinutes(timeStr: string): number {
 /**
  * Formats minutes from midnight (e.g. 600) into HH:mm (e.g. "10:00") and 12-hour display string ("10:00 AM").
  */
-/**
- * Generates 30-minute interval preset time options (from 6:00 AM to 10:00 PM by default)
- */
-export function generateTimePresetOptions(
-  startHour = 6,
-  endHour = 22,
-  stepMinutes = 30
-): { value: string; label: string }[] {
-  const options: { value: string; label: string }[] = [];
-  for (let min = startHour * 60; min <= endHour * 60; min += stepMinutes) {
-    options.push(formatMinutesToTimeString(min));
-  }
-  return options;
-}
-
 export function formatMinutesToTimeString(totalMinutes: number): { value: string; label: string } {
   const hours24 = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
@@ -89,6 +74,21 @@ export function formatMinutesToTimeString(totalMinutes: number): { value: string
   const label = `${hours12}:${mm.padStart(2, '0')} ${meridian}`;
 
   return { value, label };
+}
+
+/**
+ * Generates 30-minute time preset options (e.g. 06:00 to 22:00) for dropdown selectors.
+ */
+export function generateTimePresetOptions(startHour = 6, endHour = 22): { value: string; label: string }[] {
+  const options: { value: string; label: string }[] = [];
+  for (let hour = startHour; hour <= endHour; hour++) {
+    for (const min of [0, 30]) {
+      if (hour === endHour && min > 0) break;
+      const totalMinutes = hour * 60 + min;
+      options.push(formatMinutesToTimeString(totalMinutes));
+    }
+  }
+  return options;
 }
 
 /**
