@@ -10,19 +10,12 @@ import {
   removeTherapistPhotoAction,
   assignTherapistServiceAction,
   removeTherapistServiceAction,
-  addServiceAreaAction,
-  removeServiceAreaAction,
   addTherapistAvailabilityAction,
   updateTherapistAvailabilityAction,
   removeTherapistAvailabilityAction,
   deleteTherapistAction,
 } from '@/app/admin/actions';
 import { ConfirmModal } from '@/components/admin/ConfirmModal';
-import { getAllUsStates } from '@/lib/us-states-data';
-import {
-  fetchCitiesForStateAction,
-  fetchZipsForStateAction,
-} from '@/app/actions/locations';
 
 export interface PhotoData {
   id: string;
@@ -43,14 +36,6 @@ export interface ServiceData {
     durationMinutes: number;
     price: number;
   };
-}
-
-export interface ServiceAreaData {
-  id: string;
-  cityName: string;
-  state: string;
-  zipCode: string;
-  endZipCode?: string | null;
 }
 
 export interface AvailabilityData {
@@ -80,7 +65,6 @@ export interface DetailedTherapist {
   offersInHome: boolean;
   photos: PhotoData[];
   services: ServiceData[];
-  serviceAreas: ServiceAreaData[];
   availabilities: AvailabilityData[];
 }
 
@@ -110,7 +94,7 @@ export function EditTherapistForm({
 }: EditTherapistProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<
-    'basic' | 'photos' | 'services' | 'areas' | 'availability'
+    'basic' | 'photos' | 'services' | 'availability'
   >('basic');
 
   const [therapist, setTherapist] = useState<DetailedTherapist>(initialTherapist);
@@ -163,46 +147,6 @@ export function EditTherapistForm({
   const [serviceSaving, setServiceSaving] = useState(false);
   const [serviceMsg, setServiceMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // State for Service Area (Real U.S. Location Dropdowns via Server Actions)
-  const usStatesList = getAllUsStates();
-  const [stateCode, setStateCode] = useState('CA');
-  const [cityName, setCityName] = useState('Los Angeles');
-  const [zipCode, setZipCode] = useState('90001');
-  const [endZipCode, setEndZipCode] = useState('92692');
-  const [availableCities, setAvailableCities] = useState<string[]>(['Los Angeles', 'Beverly Hills', 'Santa Monica', 'Irvine', 'San Francisco', 'San Diego']);
-  const [stateZips, setStateZips] = useState<string[]>([]);
-  const [areaSaving, setAreaSaving] = useState(false);
-  const [areaMsg, setAreaMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  // Async location loaders when state changes
-  const handleStateChange = async (newSegState: string) => {
-    setStateCode(newSegState);
-    const cities = await fetchCitiesForStateAction(newSegState);
-    setAvailableCities(cities);
-    const firstCity = cities[0] || '';
-    setCityName(firstCity);
-
-    const zips = await fetchZipsForStateAction(newSegState);
-    setStateZips(zips);
-    const firstZip = zips[0] || '';
-    const lastZip = zips.length > 1 ? zips[zips.length - 1] : firstZip;
-    setZipCode(firstZip);
-    setEndZipCode(lastZip);
-  };
-
-  // Load state ZIP universe on initial tab load
-  React.useEffect(() => {
-    if (activeTab === 'areas' && stateZips.length === 0) {
-      fetchCitiesForStateAction(stateCode).then(setAvailableCities);
-      fetchZipsForStateAction(stateCode).then((zips) => {
-        setStateZips(zips);
-        if (zips.length > 0 && !zipCode) {
-          setZipCode(zips[0]);
-          setEndZipCode(zips[zips.length - 1]);
-        }
-      });
-    }
-  }, [activeTab, stateCode, stateZips.length, zipCode]);
 
   // State for Availability Add
   const [dayOfWeek, setDayOfWeek] = useState<number>(1); // Monday default
@@ -673,84 +617,6 @@ export function EditTherapistForm({
     });
   };
 
-  // Add Service Area
-  const handleAddArea = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!cityName.trim() || !stateCode.trim() || !zipCode.trim()) return;
-
-    setAreaSaving(true);
-    setAreaMsg(null);
-
-    try {
-      const res = await addServiceAreaAction(therapist.id, {
-        cityName: cityName.trim(),
-        state: stateCode.trim().toUpperCase(),
-        zipCode: zipCode.trim(),
-        endZipCode: endZipCode.trim() || undefined,
-      });
-
-      if (!res.success) {
-        setAreaMsg({ type: 'error', text: res.error || 'Failed to add service area' });
-        return;
-      }
-
-      if (res.serviceArea) {
-        const sa: ServiceAreaData = {
-          id: res.serviceArea.id,
-          cityName: res.serviceArea.cityName,
-          state: res.serviceArea.state,
-          zipCode: res.serviceArea.zipCode,
-          endZipCode: res.serviceArea.endZipCode,
-        };
-        setTherapist((prev) => ({
-          ...prev,
-          serviceAreas: [...prev.serviceAreas, sa],
-        }));
-      }
-
-      setCityName('');
-      setStateCode('');
-      setZipCode('');
-      setEndZipCode('');
-      setAreaMsg({ type: 'success', text: 'Service area added!' });
-      router.refresh();
-    } catch (err) {
-      console.error('Error adding service area:', err);
-      setAreaMsg({ type: 'error', text: 'An unexpected error occurred.' });
-    } finally {
-      setAreaSaving(false);
-    }
-  };
-
-  // Remove Service Area (Trigger Modal)
-  const triggerRemoveArea = (areaId: string, cityName: string) => {
-    setConfirmModal({
-      isOpen: true,
-      title: 'Remove Service Coverage Area?',
-      message: `Are you sure you want to remove '${cityName}' from this therapist's coverage area?`,
-      confirmText: 'Remove Area',
-      isLoading: false,
-      onConfirm: async () => {
-        try {
-          setConfirmModal((prev) => ({ ...prev, isLoading: true }));
-          const res = await removeServiceAreaAction(therapist.id, areaId);
-          if (!res.success) {
-            alert(res.error || 'Failed to remove area');
-            return;
-          }
-          setTherapist((prev) => ({
-            ...prev,
-            serviceAreas: prev.serviceAreas.filter((a) => a.id !== areaId),
-          }));
-          router.refresh();
-        } catch (err) {
-          console.error('Error removing area:', err);
-        } finally {
-          setConfirmModal((prev) => ({ ...prev, isOpen: false, isLoading: false }));
-        }
-      },
-    });
-  };
 
   // Add Availability
   const handleAddAvailability = async (e: React.FormEvent) => {
@@ -989,17 +855,6 @@ export function EditTherapistForm({
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab('areas')}
-          className={`py-3 px-3 sm:px-4 border-b-2 transition-colors cursor-pointer shrink-0 ${
-            activeTab === 'areas'
-              ? 'border-emerald-600 text-emerald-800 font-extrabold'
-              : 'border-transparent text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          4. Service Areas ({therapist.serviceAreas.length})
-        </button>
-        <button
-          type="button"
           onClick={() => setActiveTab('availability')}
           className={`py-3 px-3 sm:px-4 border-b-2 transition-colors cursor-pointer shrink-0 ${
             activeTab === 'availability'
@@ -1007,7 +862,7 @@ export function EditTherapistForm({
               : 'border-transparent text-slate-600 hover:text-slate-900'
           }`}
         >
-          5. Availability ({therapist.availabilities.length})
+          4. Availability ({therapist.availabilities.length})
         </button>
       </div>
 
@@ -1654,163 +1509,7 @@ export function EditTherapistForm({
         </div>
       )}
 
-      {/* TAB 4: SERVICE AREAS */}
-      {activeTab === 'areas' && (
-        <div className="space-y-6 max-w-3xl">
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-            <h2 className="text-lg font-bold text-slate-900">Add Service Coverage Area</h2>
-
-            {areaMsg && (
-              <div
-                className={`p-4 rounded-xl text-xs font-medium ${
-                  areaMsg.type === 'success'
-                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-                    : 'bg-red-50 border border-red-200 text-red-800'
-                }`}
-              >
-                {areaMsg.text}
-              </div>
-            )}
-
-            <form onSubmit={handleAddArea} className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  State
-                </label>
-                <select
-                  required
-                  value={stateCode}
-                  onChange={(e) => handleStateChange(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                >
-                  {usStatesList.map((st) => (
-                    <option key={st.code} value={st.code}>
-                      {st.name} ({st.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  City / Location Label
-                </label>
-                <select
-                  required
-                  value={cityName}
-                  onChange={(e) => setCityName(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                >
-                  {availableCities.map((ct) => (
-                    <option key={ct} value={ct}>
-                      {ct}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Start ZIP
-                </label>
-                {stateZips.length > 0 ? (
-                  <select
-                    required
-                    value={zipCode}
-                    onChange={(e) => setZipCode(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
-                  >
-                    {stateZips.map((z) => (
-                      <option key={z} value={z}>
-                        {z}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    required
-                    maxLength={5}
-                    value={zipCode}
-                    onChange={(e) => setZipCode(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
-                  />
-                )}
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  End ZIP (Multi-City Range)
-                </label>
-                {stateZips.length > 0 ? (
-                  <select
-                    value={endZipCode}
-                    onChange={(e) => setEndZipCode(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
-                  >
-                    {stateZips.map((z) => (
-                      <option key={z} value={z}>
-                        {z}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    maxLength={5}
-                    value={endZipCode}
-                    onChange={(e) => setEndZipCode(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
-                  />
-                )}
-              </div>
-
-              <div className="sm:col-span-4 flex justify-end pt-2">
-                <button
-                  type="submit"
-                  disabled={areaSaving}
-                  className="px-5 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
-                >
-                  {areaSaving ? 'Adding...' : 'Add Coverage Area'}
-                </button>
-              </div>
-            </form>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-            <h2 className="text-lg font-bold text-slate-900">
-              Active Coverage Areas ({therapist.serviceAreas.length})
-            </h2>
-
-            {therapist.serviceAreas.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {therapist.serviceAreas.map((area) => (
-                  <div
-                    key={area.id}
-                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-800"
-                  >
-                    <span>
-                      {area.cityName}, {area.state} &mdash; {area.endZipCode && area.endZipCode !== area.zipCode ? `${area.zipCode}–${area.endZipCode}` : area.zipCode}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => triggerRemoveArea(area.id, area.cityName)}
-                      className="text-slate-400 hover:text-red-600 transition-colors cursor-pointer ml-1"
-                      title="Remove Area"
-                    >
-                      &times;
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-slate-500 italic py-4">No coverage areas added yet.</p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* TAB 5: AVAILABILITY */}
+      {/* TAB 4: AVAILABILITY */}
       {activeTab === 'availability' && (
         <div className="space-y-6 max-w-3xl">
           <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">

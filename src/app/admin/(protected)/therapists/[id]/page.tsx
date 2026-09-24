@@ -30,7 +30,6 @@ export default async function AdminEditTherapistPage({ params }: PageProps) {
       include: {
         photos: { orderBy: { sortOrder: 'asc' } },
         services: { include: { service: true } },
-        serviceAreas: { orderBy: { cityName: 'asc' } },
         availabilities: { orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }] },
       },
     });
@@ -72,13 +71,6 @@ export default async function AdminEditTherapistPage({ params }: PageProps) {
           durationMinutes: s.service.durationMinutes,
           price: s.service.price,
         },
-      })),
-      serviceAreas: dbTherapist.serviceAreas.map((a) => ({
-        id: a.id,
-        cityName: a.cityName,
-        state: a.state,
-        zipCode: a.zipCode,
-        endZipCode: a.endZipCode,
       })),
       availabilities: dbTherapist.availabilities.map((av) => ({
         id: av.id,
