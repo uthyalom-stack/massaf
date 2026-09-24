@@ -16,6 +16,7 @@ import {
   deleteTherapistAction,
 } from '@/app/admin/actions';
 import { ConfirmModal } from '@/components/admin/ConfirmModal';
+import { generateTimePresetOptions } from '@/lib/availability';
 
 export interface PhotoData {
   id: string;
@@ -148,15 +149,202 @@ export function EditTherapistForm({
   const [serviceMsg, setServiceMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
 
-  // State for Availability Add
-  const [dayOfWeek, setDayOfWeek] = useState<number>(1); // Monday default
-  const [startTime, setStartTime] = useState('09:00');
-  const [endTime, setEndTime] = useState('17:00');
+  // Time preset dropdown options (6:00 AM to 10:00 PM in 30-min intervals)
+  const timePresetOptions = React.useMemo(() => generateTimePresetOptions(6, 22, 30), []);
+
+  // Bulk Availability Assignment State
+  const [bulkDays, setBulkDays] = useState<boolean[]>([
+    false, // Sun (0)
+    true,  // Mon (1)
+    true,  // Tue (2)
+    true,  // Wed (3)
+    true,  // Thu (4)
+    true,  // Fri (5)
+    false, // Sat (6)
+  ]);
+  const [bulkStart, setBulkStart] = useState('09:00');
+  const [bulkEnd, setBulkEnd] = useState('17:00');
+
+  // State for Availability Management
   const [availabilitySaving, setAvailabilitySaving] = useState(false);
   const [availabilityMsg, setAvailabilityMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // State for Editing Availability
-  const [editingAvailability, setEditingAvailability] = useState<AvailabilityData | null>(null);
+  // Individual Day Time Row Handler (Updates 1 day independently without affecting others)
+  const handleUpdateDayTime = async (dayIdx: number, newStart: string, newEnd: string, isUnavail: boolean) => {
+    if (!isUnavail && newStart >= newEnd) {
+      setAvailabilityMsg({ type: 'error', text: `${DAYS_OF_WEEK[dayIdx]}: Start time must be strictly before end time.` });
+      return;
+    }
+
+    setAvailabilitySaving(true);
+    setAvailabilityMsg(null);
+
+    try {
+      const existing = therapist.availabilities.find((a) => a.dayOfWeek === dayIdx);
+
+      if (isUnavail) {
+        if (existing) {
+          const res = await removeTherapistAvailabilityAction(therapist.id, existing.id);
+          if (!res.success) {
+            setAvailabilityMsg({ type: 'error', text: res.error || `Failed to update ${DAYS_OF_WEEK[dayIdx]}` });
+            return;
+          }
+          setTherapist((prev) => ({
+            ...prev,
+            availabilities: prev.availabilities.filter((a) => a.id !== existing.id),
+          }));
+        }
+      } else if (existing) {
+        const res = await updateTherapistAvailabilityAction(therapist.id, {
+          availabilityId: existing.id,
+          dayOfWeek: dayIdx,
+          startTime: newStart,
+          endTime: newEnd,
+          isUnavailable: false,
+        });
+        if (!res.success) {
+          setAvailabilityMsg({ type: 'error', text: res.error || `Failed to update ${DAYS_OF_WEEK[dayIdx]}` });
+          return;
+        }
+        if (res.availability) {
+          const updatedAv: AvailabilityData = {
+            id: res.availability.id,
+            dayOfWeek: res.availability.dayOfWeek,
+            specificDate: res.availability.specificDate ? res.availability.specificDate.toISOString() : null,
+            startTime: res.availability.startTime,
+            endTime: res.availability.endTime,
+            isUnavailable: res.availability.isUnavailable,
+          };
+          setTherapist((prev) => ({
+            ...prev,
+            availabilities: prev.availabilities.map((a) => (a.id === existing.id ? updatedAv : a)),
+          }));
+        }
+      } else {
+        const res = await addTherapistAvailabilityAction(therapist.id, {
+          dayOfWeek: dayIdx,
+          startTime: newStart,
+          endTime: newEnd,
+          isUnavailable: false,
+        });
+        if (!res.success) {
+          setAvailabilityMsg({ type: 'error', text: res.error || `Failed to add schedule for ${DAYS_OF_WEEK[dayIdx]}` });
+          return;
+        }
+        if (res.availability) {
+          const newAv: AvailabilityData = {
+            id: res.availability.id,
+            dayOfWeek: res.availability.dayOfWeek,
+            specificDate: res.availability.specificDate ? res.availability.specificDate.toISOString() : null,
+            startTime: res.availability.startTime,
+            endTime: res.availability.endTime,
+            isUnavailable: res.availability.isUnavailable,
+          };
+          setTherapist((prev) => ({
+            ...prev,
+            availabilities: [...prev.availabilities, newAv],
+          }));
+        }
+      }
+
+      setAvailabilityMsg({ type: 'success', text: `Updated ${DAYS_OF_WEEK[dayIdx]} working hours successfully!` });
+      router.refresh();
+    } catch (err) {
+      console.error('Error updating day availability:', err);
+      setAvailabilityMsg({ type: 'error', text: 'An unexpected error occurred while saving availability.' });
+    } finally {
+      setAvailabilitySaving(false);
+    }
+  };
+
+  // Bulk Apply Handler (Applies selected start/end times ONLY to checked days)
+  const handleApplyBulkTime = async () => {
+    if (bulkStart >= bulkEnd) {
+      setAvailabilityMsg({ type: 'error', text: 'Bulk Apply Error: Start time must be strictly before end time.' });
+      return;
+    }
+
+    const selectedIndices = bulkDays.map((sel, idx) => (sel ? idx : -1)).filter((i) => i !== -1);
+    if (selectedIndices.length === 0) {
+      setAvailabilityMsg({ type: 'error', text: 'Please select at least one day to apply bulk working hours.' });
+      return;
+    }
+
+    setAvailabilitySaving(true);
+    setAvailabilityMsg(null);
+
+    let successCount = 0;
+    let failCount = 0;
+
+    try {
+      for (const dayIdx of selectedIndices) {
+        const existing = therapist.availabilities.find((a) => a.dayOfWeek === dayIdx);
+        if (existing) {
+          const res = await updateTherapistAvailabilityAction(therapist.id, {
+            availabilityId: existing.id,
+            dayOfWeek: dayIdx,
+            startTime: bulkStart,
+            endTime: bulkEnd,
+            isUnavailable: false,
+          });
+          if (res.success && res.availability) {
+            const updatedAv: AvailabilityData = {
+              id: res.availability.id,
+              dayOfWeek: res.availability.dayOfWeek,
+              specificDate: res.availability.specificDate ? res.availability.specificDate.toISOString() : null,
+              startTime: res.availability.startTime,
+              endTime: res.availability.endTime,
+              isUnavailable: res.availability.isUnavailable,
+            };
+            setTherapist((prev) => ({
+              ...prev,
+              availabilities: prev.availabilities.map((a) => (a.id === existing.id ? updatedAv : a)),
+            }));
+            successCount++;
+          } else {
+            failCount++;
+          }
+        } else {
+          const res = await addTherapistAvailabilityAction(therapist.id, {
+            dayOfWeek: dayIdx,
+            startTime: bulkStart,
+            endTime: bulkEnd,
+            isUnavailable: false,
+          });
+          if (res.success && res.availability) {
+            const newAv: AvailabilityData = {
+              id: res.availability.id,
+              dayOfWeek: res.availability.dayOfWeek,
+              specificDate: res.availability.specificDate ? res.availability.specificDate.toISOString() : null,
+              startTime: res.availability.startTime,
+              endTime: res.availability.endTime,
+              isUnavailable: res.availability.isUnavailable,
+            };
+            setTherapist((prev) => ({
+              ...prev,
+              availabilities: [...prev.availabilities, newAv],
+            }));
+            successCount++;
+          } else {
+            failCount++;
+          }
+        }
+      }
+
+      if (failCount === 0) {
+        setAvailabilityMsg({ type: 'success', text: `Successfully updated working hours for ${successCount} day(s)!` });
+      } else {
+        setAvailabilityMsg({ type: 'error', text: `Updated ${successCount} day(s), but ${failCount} day(s) failed.` });
+      }
+
+      router.refresh();
+    } catch (err) {
+      console.error('Error applying bulk availability:', err);
+      setAvailabilityMsg({ type: 'error', text: 'An unexpected error occurred during bulk availability update.' });
+    } finally {
+      setAvailabilitySaving(false);
+    }
+  };
 
   // Modal State for Confirming Destructive Actions
   const [confirmModal, setConfirmModal] = useState<{
@@ -618,111 +806,6 @@ export function EditTherapistForm({
   };
 
 
-  // Add Availability
-  const handleAddAvailability = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (startTime >= endTime) {
-      setAvailabilityMsg({ type: 'error', text: 'Start time must be before end time.' });
-      return;
-    }
-
-    setAvailabilitySaving(true);
-    setAvailabilityMsg(null);
-
-    try {
-      const res = await addTherapistAvailabilityAction(therapist.id, {
-        dayOfWeek: Number(dayOfWeek),
-        startTime,
-        endTime,
-        isUnavailable: false,
-      });
-
-      if (!res.success) {
-        setAvailabilityMsg({ type: 'error', text: res.error || 'Failed to add availability' });
-        return;
-      }
-
-      if (res.availability) {
-        const av: AvailabilityData = {
-          id: res.availability.id,
-          dayOfWeek: res.availability.dayOfWeek,
-          specificDate: res.availability.specificDate ? res.availability.specificDate.toISOString() : null,
-          startTime: res.availability.startTime,
-          endTime: res.availability.endTime,
-          isUnavailable: res.availability.isUnavailable,
-        };
-        setTherapist((prev) => ({
-          ...prev,
-          availabilities: [...prev.availabilities, av],
-        }));
-      }
-
-      setAvailabilityMsg({ type: 'success', text: 'Availability rule added!' });
-      router.refresh();
-    } catch (err) {
-      console.error('Error adding availability:', err);
-      setAvailabilityMsg({ type: 'error', text: 'An unexpected error occurred.' });
-    } finally {
-      setAvailabilitySaving(false);
-    }
-  };
-
-  // Save Edited Availability
-  const handleSaveAvailabilityEdit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingAvailability) return;
-
-    if (editingAvailability.startTime >= editingAvailability.endTime) {
-      setAvailabilityMsg({ type: 'error', text: 'Start time must be strictly before end time.' });
-      return;
-    }
-
-    setAvailabilitySaving(true);
-    setAvailabilityMsg(null);
-
-    try {
-      const res = await updateTherapistAvailabilityAction(therapist.id, {
-        availabilityId: editingAvailability.id,
-        dayOfWeek: editingAvailability.dayOfWeek !== null && editingAvailability.dayOfWeek !== undefined
-          ? Number(editingAvailability.dayOfWeek)
-          : null,
-        startTime: editingAvailability.startTime,
-        endTime: editingAvailability.endTime,
-        isUnavailable: editingAvailability.isUnavailable,
-      });
-
-      if (!res.success) {
-        setAvailabilityMsg({ type: 'error', text: res.error || 'Failed to update availability entry' });
-        return;
-      }
-
-      if (res.availability) {
-        const updatedAv: AvailabilityData = {
-          id: res.availability.id,
-          dayOfWeek: res.availability.dayOfWeek,
-          specificDate: res.availability.specificDate ? res.availability.specificDate.toISOString() : null,
-          startTime: res.availability.startTime,
-          endTime: res.availability.endTime,
-          isUnavailable: res.availability.isUnavailable,
-        };
-        setTherapist((prev) => ({
-          ...prev,
-          availabilities: prev.availabilities.map((a) =>
-            a.id === editingAvailability.id ? updatedAv : a
-          ),
-        }));
-      }
-
-      setEditingAvailability(null);
-      setAvailabilityMsg({ type: 'success', text: 'Availability rule updated!' });
-      router.refresh();
-    } catch (err) {
-      console.error('Error editing availability:', err);
-      setAvailabilityMsg({ type: 'error', text: 'An unexpected error occurred.' });
-    } finally {
-      setAvailabilitySaving(false);
-    }
-  };
 
   // Remove Availability (Trigger Modal)
   const triggerRemoveAvailability = (availabilityId: string) => {
@@ -1511,205 +1594,231 @@ export function EditTherapistForm({
 
       {/* TAB 4: AVAILABILITY */}
       {activeTab === 'availability' && (
-        <div className="space-y-6 max-w-3xl">
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-            <h2 className="text-lg font-bold text-slate-900">
-              {editingAvailability ? 'Edit Working Hours Rule' : 'Add Working Hours Rule'}
-            </h2>
+        <div className="space-y-6 max-w-4xl">
+          {availabilityMsg && (
+            <div
+              className={`p-4 rounded-xl text-xs font-medium ${
+                availabilityMsg.type === 'success'
+                  ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                  : 'bg-red-50 border border-red-200 text-red-800'
+              }`}
+            >
+              {availabilityMsg.text}
+            </div>
+          )}
 
-            {availabilityMsg && (
-              <div
-                className={`p-4 rounded-xl text-xs font-medium ${
-                  availabilityMsg.type === 'success'
-                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-                    : 'bg-red-50 border border-red-200 text-red-800'
-                }`}
-              >
-                {availabilityMsg.text}
+          {/* BULK TIME ASSIGNMENT CARD */}
+          <div className="bg-slate-900 text-white rounded-2xl p-6 sm:p-8 shadow-sm space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+              <div>
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>⚡</span>
+                  <span>Bulk Availability Assignment</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Select multiple days to quickly apply the same working hours window in a single click.
+                </p>
               </div>
-            )}
 
-            {editingAvailability ? (
-              <form onSubmit={handleSaveAvailabilityEdit} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Day of Week
-                  </label>
-                  <select
-                    value={editingAvailability.dayOfWeek ?? 0}
-                    onChange={(e) =>
-                      setEditingAvailability({
-                        ...editingAvailability,
-                        dayOfWeek: Number(e.target.value),
-                      })
-                    }
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                  >
-                    {DAYS_OF_WEEK.map((day, idx) => (
-                      <option key={idx} value={idx}>
-                        {day}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              {/* Select All / Deselect All Toggle */}
+              <button
+                type="button"
+                onClick={() => {
+                  const allSelected = bulkDays.every((b) => b);
+                  setBulkDays([!allSelected, !allSelected, !allSelected, !allSelected, !allSelected, !allSelected, !allSelected]);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400 font-semibold text-xs transition-colors cursor-pointer shrink-0"
+              >
+                <span>{bulkDays.every((b) => b) ? 'Deselect All' : 'Select All Days'}</span>
+              </button>
+            </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Start Time
-                  </label>
-                  <input
-                    type="time"
-                    required
-                    value={editingAvailability.startTime}
-                    onChange={(e) =>
-                      setEditingAvailability({
-                        ...editingAvailability,
-                        startTime: e.target.value,
-                      })
-                    }
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                  />
-                </div>
+            {/* Days Selection Checkboxes */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
+                Select Days to Update
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+                {[1, 2, 3, 4, 5, 6, 0].map((dayIdx) => {
+                  const isChecked = bulkDays[dayIdx];
+                  const dayName = DAYS_OF_WEEK[dayIdx];
+                  return (
+                    <label
+                      key={dayIdx}
+                      className={`flex items-center justify-between p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer select-none ${
+                        isChecked
+                          ? 'bg-emerald-950/80 border-emerald-500/80 text-emerald-200'
+                          : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:bg-slate-800'
+                      }`}
+                    >
+                      <span>{dayName}</span>
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          const updated = [...bulkDays];
+                          updated[dayIdx] = e.target.checked;
+                          setBulkDays(updated);
+                        }}
+                        className="rounded text-emerald-500 focus:ring-emerald-500 h-4 w-4 bg-slate-900 border-slate-700"
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    End Time
-                  </label>
-                  <input
-                    type="time"
-                    required
-                    value={editingAvailability.endTime}
-                    onChange={(e) =>
-                      setEditingAvailability({
-                        ...editingAvailability,
-                        endTime: e.target.value,
-                      })
-                    }
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                  />
-                </div>
+            {/* Time Selectors & Apply Button */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end pt-2">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                  Start Time
+                </label>
+                <select
+                  value={bulkStart}
+                  onChange={(e) => setBulkStart(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 text-white rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                >
+                  {timePresetOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label} ({opt.value})
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-                <div className="sm:col-span-3 flex justify-end gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditingAvailability(null)}
-                    className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={availabilitySaving}
-                    className="px-5 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
-                  >
-                    {availabilitySaving ? 'Saving...' : 'Update Schedule Rule'}
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <form onSubmit={handleAddAvailability} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Day of Week
-                  </label>
-                  <select
-                    value={dayOfWeek}
-                    onChange={(e) => setDayOfWeek(Number(e.target.value))}
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                  >
-                    {DAYS_OF_WEEK.map((day, idx) => (
-                      <option key={idx} value={idx}>
-                        {day}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                  End Time
+                </label>
+                <select
+                  value={bulkEnd}
+                  onChange={(e) => setBulkEnd(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 text-white rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                >
+                  {timePresetOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label} ({opt.value})
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Start Time
-                  </label>
-                  <input
-                    type="time"
-                    required
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    End Time
-                  </label>
-                  <input
-                    type="time"
-                    required
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                  />
-                </div>
-
-                <div className="sm:col-span-3 flex justify-end pt-2">
-                  <button
-                    type="submit"
-                    disabled={availabilitySaving}
-                    className="px-5 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
-                  >
-                    {availabilitySaving ? 'Adding...' : 'Add Schedule Rule'}
-                  </button>
-                </div>
-              </form>
-            )}
+              <button
+                type="button"
+                onClick={handleApplyBulkTime}
+                disabled={availabilitySaving}
+                className="w-full py-2.5 px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {availabilitySaving ? 'Applying...' : 'Apply to Selected Days'}
+              </button>
+            </div>
           </div>
 
+          {/* WEEKLY SCHEDULE TABLE (Monday through Sunday in logical weekly order) */}
           <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-            <h2 className="text-lg font-bold text-slate-900">
-              Weekly Working Hours ({therapist.availabilities.length})
-            </h2>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  Weekly Schedule ({therapist.availabilities.length} active day{therapist.availabilities.length !== 1 ? 's' : ''})
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Manage each day of the week independently. Modifying an individual day will not affect other days.
+                </p>
+              </div>
+            </div>
 
-            {therapist.availabilities.length > 0 ? (
-              <div className="divide-y divide-slate-100">
-                {therapist.availabilities.map((av) => (
-                  <div key={av.id} className="py-3 flex items-center justify-between">
-                    <div>
-                      <span className="font-bold text-slate-900 text-sm">
-                        {av.dayOfWeek !== null && av.dayOfWeek !== undefined
-                          ? DAYS_OF_WEEK[av.dayOfWeek]
-                          : 'Specific Date'}
-                      </span>
-                      <span className="text-xs text-slate-500 ml-3 font-mono">
-                        {av.startTime} – {av.endTime}
-                      </span>
+            <div className="divide-y divide-slate-100 space-y-1">
+              {[1, 2, 3, 4, 5, 6, 0].map((dayIdx) => {
+                const dayName = DAYS_OF_WEEK[dayIdx];
+                const existing = therapist.availabilities.find((a) => a.dayOfWeek === dayIdx);
+                const isAvailable = Boolean(existing && !existing.isUnavailable);
+
+                const currentStart = existing?.startTime || '09:00';
+                const currentEnd = existing?.endTime || '17:00';
+
+                return (
+                  <div
+                    key={dayIdx}
+                    className={`py-4 px-3 sm:px-4 rounded-xl transition-colors flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                      isAvailable ? 'bg-slate-50/70 border border-slate-200/60' : 'bg-white'
+                    }`}
+                  >
+                    {/* Day Name & Toggle Indicator */}
+                    <div className="w-40 shrink-0 flex items-center gap-3">
+                      <span className="font-bold text-slate-900 text-sm">{dayName}</span>
+                      {isAvailable ? (
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800 uppercase tracking-wider">
+                          Available
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-500 uppercase tracking-wider">
+                          Unavailable
+                        </span>
+                      )}
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setEditingAvailability(av)}
-                        className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
-                      >
-                        Edit
-                      </button>
+                    {/* Time Selectors & Controls */}
+                    <div className="flex-1 flex flex-wrap items-center gap-3 justify-end">
+                      {isAvailable ? (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={currentStart}
+                              disabled={availabilitySaving}
+                              onChange={(e) => handleUpdateDayTime(dayIdx, e.target.value, currentEnd, false)}
+                              className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
+                            >
+                              {timePresetOptions.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
 
-                      <button
-                        type="button"
-                        onClick={() => triggerRemoveAvailability(av.id)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-                        title="Remove Schedule Rule"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
+                            <span className="text-slate-400 text-xs font-bold">→</span>
+
+                            <select
+                              value={currentEnd}
+                              disabled={availabilitySaving}
+                              onChange={(e) => handleUpdateDayTime(dayIdx, currentStart, e.target.value, false)}
+                              className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
+                            >
+                              {timePresetOptions.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={availabilitySaving}
+                            onClick={() => handleUpdateDayTime(dayIdx, currentStart, currentEnd, true)}
+                            className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:text-rose-700 hover:bg-rose-50 hover:border-rose-200 transition-colors cursor-pointer"
+                          >
+                            Mark Unavailable
+                          </button>
+                        </>
+                      ) : (
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs text-slate-400 italic">No working hours set</span>
+                          <button
+                            type="button"
+                            disabled={availabilitySaving}
+                            onClick={() => handleUpdateDayTime(dayIdx, '09:00', '17:00', false)}
+                            className="px-3.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs transition-colors cursor-pointer shadow-2xs"
+                          >
+                            Set Working Hours
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-slate-500 italic py-4">No schedule rules configured yet.</p>
-            )}
+                );
+              })}
+            </div>
           </div>
         </div>
       )}

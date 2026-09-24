@@ -61,6 +61,21 @@ export function parseTimeStringToMinutes(timeStr: string): number {
 /**
  * Formats minutes from midnight (e.g. 600) into HH:mm (e.g. "10:00") and 12-hour display string ("10:00 AM").
  */
+/**
+ * Generates 30-minute interval preset time options (from 6:00 AM to 10:00 PM by default)
+ */
+export function generateTimePresetOptions(
+  startHour = 6,
+  endHour = 22,
+  stepMinutes = 30
+): { value: string; label: string }[] {
+  const options: { value: string; label: string }[] = [];
+  for (let min = startHour * 60; min <= endHour * 60; min += stepMinutes) {
+    options.push(formatMinutesToTimeString(min));
+  }
+  return options;
+}
+
 export function formatMinutesToTimeString(totalMinutes: number): { value: string; label: string } {
   const hours24 = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
