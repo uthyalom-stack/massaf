@@ -36,8 +36,14 @@ export async function getRotatingTherapistsForZip(
   let eligibleTherapistIdsFromPool = new Set<string>();
   if (zipInfo) {
     try {
+      const { getActiveDistributionTime } = await import('@/lib/db-therapists');
+      const activeTime = await getActiveDistributionTime();
+
       const eligibilityRecords = await db.therapistZipEligibility.findMany({
-        where: { state: zipInfo.state },
+        where: {
+          state: zipInfo.state,
+          ...(activeTime ? { createdAt: activeTime } : {}),
+        },
         select: { therapistId: true, startZip: true, endZip: true },
       });
 

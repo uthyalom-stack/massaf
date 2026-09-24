@@ -246,30 +246,50 @@ export async function shuffleAndDistributeTherapistsAction() {
       }
     }
 
-    // 4. Staged batch write & swap strategy to handle large distributions (up to 200+ therapists) without transaction timeout
+    // 4. Atomic Staging & Instant Timestamp Pointer Swap Strategy
+    // Staging timestamp attached to all new records
     const distributionStartTime = new Date();
+
+    const dataWithTimestamp = eligibilityData.map((item) => ({
+      ...item,
+      createdAt: distributionStartTime,
+    }));
 
     try {
       const BATCH_SIZE = 10000;
-      for (let i = 0; i < eligibilityData.length; i += BATCH_SIZE) {
-        const batch = eligibilityData.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < dataWithTimestamp.length; i += BATCH_SIZE) {
+        const batch = dataWithTimestamp.slice(i, i + BATCH_SIZE);
         await db.therapistZipEligibility.createMany({
           data: batch,
         });
       }
 
-      // Safely delete previous distribution records created prior to this shuffle run
+      // ATOMIC SWAP: Atomically point global siteContent 'active_distribution_timestamp' to distributionStartTime
+      await db.siteContent.upsert({
+        where: { key: 'active_distribution_timestamp' },
+        update: {
+          title: 'Active Distribution Timestamp',
+          content: distributionStartTime.toISOString(),
+        },
+        create: {
+          key: 'active_distribution_timestamp',
+          title: 'Active Distribution Timestamp',
+          content: distributionStartTime.toISOString(),
+        },
+      });
+
+      // Safely cleanup obsolete prior distributions asynchronously
       await db.therapistZipEligibility.deleteMany({
         where: {
           createdAt: { lt: distributionStartTime },
         },
       });
     } catch (writeErr) {
-      // Clean up partial inserts if write fails, leaving previous distribution intact
-      console.error('Error writing distribution batches, rolling back partial inserts:', writeErr);
+      // Clean up staged inserts if write fails before activation pointer swap
+      console.error('Error writing distribution batches, rolling back staged records:', writeErr);
       await db.therapistZipEligibility.deleteMany({
         where: {
-          createdAt: { gte: distributionStartTime },
+          createdAt: distributionStartTime,
         },
       });
       throw writeErr;

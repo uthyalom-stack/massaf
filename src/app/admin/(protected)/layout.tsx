@@ -19,7 +19,6 @@ export default async function ProtectedAdminLayout({
     ? [
         { label: 'Dashboard', href: '/admin/marketer' },
         { label: 'Leaderboard', href: '/admin/leaderboard' },
-        { label: 'My Links', href: '/admin/marketing-links' },
       ]
     : [
         { label: 'Dashboard', href: '/admin' },
@@ -28,7 +27,7 @@ export default async function ProtectedAdminLayout({
         { label: 'Categories', href: '/admin/categories' },
         { label: 'Bookings', href: '/admin/bookings' },
         { label: 'Reviews', href: '/admin/reviews' },
-        { label: 'Marketing Links', href: '/admin/marketing-links' },
+        { label: 'Marketers', href: '/admin/marketers' },
         { label: 'Leaderboard', href: '/admin/leaderboard' },
         { label: 'Settings', href: '/admin/settings' },
       ];

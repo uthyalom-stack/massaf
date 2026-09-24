@@ -25,7 +25,7 @@ export default async function AdminTherapistsPage() {
         _count: {
           select: {
             services: true,
-            serviceAreas: true,
+            zipEligibility: true,
             photos: true,
           },
         },
@@ -51,7 +51,7 @@ export default async function AdminTherapistsPage() {
       offersInHome: t.offersInHome,
       createdAt: t.createdAt.toISOString(),
       servicesCount: t._count.services,
-      serviceAreasCount: t._count.serviceAreas,
+      zipEligibilityCount: t._count.zipEligibility,
       photosCount: t._count.photos,
     }));
   } catch (err) {

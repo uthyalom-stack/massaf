@@ -48,6 +48,20 @@ export interface AvailabilityData {
   isUnavailable: boolean;
 }
 
+export interface ZipCoverageRange {
+  startZip: string;
+  endZip: string;
+  sampleCities: string[];
+  count: number;
+}
+
+export interface ZipCoverageGroup {
+  state: string;
+  stateName: string;
+  ranges: ZipCoverageRange[];
+  totalStateZips: number;
+}
+
 export interface DetailedTherapist {
   id: string;
   name: string;
@@ -77,6 +91,8 @@ interface EditTherapistProps {
     durationMinutes: number;
     price: number;
   }>;
+  zipCoverageGroups?: ZipCoverageGroup[];
+  totalAssignedZips?: number;
 }
 
 const DAYS_OF_WEEK = [
@@ -92,10 +108,12 @@ const DAYS_OF_WEEK = [
 export function EditTherapistForm({
   initialTherapist,
   availableGlobalServices,
+  zipCoverageGroups = [],
+  totalAssignedZips = 0,
 }: EditTherapistProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<
-    'basic' | 'photos' | 'services' | 'availability'
+    'basic' | 'photos' | 'services' | 'availability' | 'zipCoverage'
   >('basic');
 
   const [therapist, setTherapist] = useState<DetailedTherapist>(initialTherapist);
@@ -872,6 +890,17 @@ export function EditTherapistForm({
           }`}
         >
           4. Availability ({therapist.availabilities.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('zipCoverage')}
+          className={`py-3 px-3 sm:px-4 border-b-2 transition-colors cursor-pointer shrink-0 ${
+            activeTab === 'zipCoverage'
+              ? 'border-emerald-600 text-emerald-800 font-extrabold'
+              : 'border-transparent text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          5. ZIP Coverage ({totalAssignedZips})
         </button>
       </div>
 
@@ -1911,6 +1940,71 @@ export function EditTherapistForm({
               </div>
             ) : (
               <p className="text-sm text-slate-500 italic py-4">No schedule rules configured yet.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: READ-ONLY ZIP COVERAGE */}
+      {activeTab === 'zipCoverage' && (
+        <div className="space-y-6 max-w-3xl">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  Automatic Geographic ZIP Coverage (Read-Only)
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Coverage is automatically assigned via central platform ZIP distribution shuffle based on real USZipCode dataset records.
+                </p>
+              </div>
+              <span className="px-3 py-1 rounded-xl text-xs font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-200 shrink-0">
+                Total: {totalAssignedZips} ZIPs Assigned
+              </span>
+            </div>
+
+            {zipCoverageGroups && zipCoverageGroups.length > 0 ? (
+              <div className="space-y-6 pt-2">
+                {zipCoverageGroups.map((group: ZipCoverageGroup) => (
+                  <div key={group.state} className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
+                      <span className="font-extrabold text-slate-900 text-sm">
+                        {group.state} {group.stateName}
+                      </span>
+                      <span className="text-xs font-bold text-slate-600">
+                        {group.totalStateZips} ZIPs in {group.state}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {group.ranges.map((r: ZipCoverageRange, idx: number) => (
+                        <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 bg-white p-3 rounded-lg border border-slate-200 text-xs">
+                          <div>
+                            <span className="font-mono font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                              {r.startZip === r.endZip ? r.startZip : `${r.startZip} – ${r.endZip}`}
+                            </span>
+                            {r.sampleCities.length > 0 && (
+                              <span className="text-slate-500 ml-2">
+                                ({r.sampleCities.join(', ')})
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-slate-600 font-semibold shrink-0">
+                            {r.count} ZIPs
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 space-y-2">
+                <p className="text-slate-600 text-sm font-semibold">No geographic ZIP coverage assigned to this therapist.</p>
+                <p className="text-slate-500 text-xs max-w-md mx-auto">
+                  Run <strong className="text-slate-800">Shuffle & Distribute Therapists</strong> on the main Therapist Roster page to assign automatic ZIP eligibility.
+                </p>
+              </div>
             )}
           </div>
         </div>

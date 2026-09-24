@@ -170,6 +170,24 @@ export function isZipInRange(
 
 import { getZipInfo, getStateForZipSync } from '@/lib/us-locations';
 
+export async function getActiveDistributionTime(): Promise<Date | null> {
+  try {
+    const record = await db.siteContent.findUnique({
+      where: { key: 'active_distribution_timestamp' },
+      select: { content: true },
+    });
+    if (record?.content) {
+      const parsed = new Date(record.content);
+      if (!isNaN(parsed.getTime())) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.error('[getActiveDistributionTime] Error reading active distribution timestamp:', err);
+  }
+  return null;
+}
+
 export async function therapistCoversZipAsync(
   therapist: CustomerTherapist,
   requestedZip: string
@@ -183,12 +201,14 @@ export async function therapistCoversZipAsync(
     return false; // Customer ZIP does not exist in real U.S. database
   }
 
-  // Authoritative check strictly against TherapistZipEligibility table distribution pool
+  // Authoritative check strictly against active TherapistZipEligibility table distribution pool
   try {
+    const activeTime = await getActiveDistributionTime();
     const eligibilityRecords = await db.therapistZipEligibility.findMany({
       where: {
         therapistId: therapist.id,
         state: zipInfo.state,
+        ...(activeTime ? { createdAt: activeTime } : {}),
       },
     });
 

@@ -1,7 +1,7 @@
 import React from 'react';
 import { notFound } from 'next/navigation';
 import { db } from '@/lib/db';
-import { EditTherapistForm, DetailedTherapist } from '@/components/admin/EditTherapistForm';
+import { EditTherapistForm, DetailedTherapist, ZipCoverageGroup } from '@/components/admin/EditTherapistForm';
 
 export const metadata = {
   title: 'Edit Therapist | MASSAF Admin',
@@ -23,6 +23,8 @@ export default async function AdminEditTherapistPage({ params }: PageProps) {
     durationMinutes: number;
     price: number;
   }> = [];
+  let zipCoverageGroups: ZipCoverageGroup[] = [];
+  let totalAssignedZips = 0;
 
   try {
     const dbTherapist = await db.therapist.findUnique({
@@ -31,6 +33,7 @@ export default async function AdminEditTherapistPage({ params }: PageProps) {
         photos: { orderBy: { sortOrder: 'asc' } },
         services: { include: { service: true } },
         availabilities: { orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }] },
+        zipEligibility: { orderBy: [{ state: 'asc' }, { startZip: 'asc' }] },
       },
     });
 
@@ -82,6 +85,57 @@ export default async function AdminEditTherapistPage({ params }: PageProps) {
       })),
     };
 
+    // Group therapist's assigned TherapistZipEligibility ranges by state and resolve city names from USZipCode
+    if (dbTherapist.zipEligibility.length > 0) {
+      const stateGroupMap = new Map<string, Array<{ startZip: string; endZip: string }>>();
+      for (const ze of dbTherapist.zipEligibility) {
+        const st = ze.state.toUpperCase();
+        if (!stateGroupMap.has(st)) stateGroupMap.set(st, []);
+        stateGroupMap.get(st)!.push({ startZip: ze.startZip, endZip: ze.endZip });
+      }
+
+      // Fetch USZipCode matching cities for the therapist's assigned ranges
+      for (const [st, ranges] of stateGroupMap.entries()) {
+        const rangesWithDetails = [];
+        let stateZipCount = 0;
+
+        for (const r of ranges) {
+          const matchingZips = await db.uSZipCode.findMany({
+            where: {
+              state: st,
+              zipCode: { gte: r.startZip, lte: r.endZip },
+            },
+            select: { city: true, zipCode: true },
+          });
+
+          const uniqueCities = Array.from(new Set(matchingZips.map((z) => z.city))).slice(0, 5);
+          stateZipCount += matchingZips.length;
+
+          rangesWithDetails.push({
+            startZip: r.startZip,
+            endZip: r.endZip,
+            sampleCities: uniqueCities,
+            count: matchingZips.length,
+          });
+        }
+
+        totalAssignedZips += stateZipCount;
+
+        // Fetch state full name if available
+        const sampleStateRecord = await db.uSZipCode.findFirst({
+          where: { state: st },
+          select: { stateName: true },
+        });
+
+        zipCoverageGroups.push({
+          state: st,
+          stateName: sampleStateRecord?.stateName || st,
+          ranges: rangesWithDetails,
+          totalStateZips: stateZipCount,
+        });
+      }
+    }
+
     const globalServices = await db.service.findMany({
       where: { isActive: true },
       orderBy: { name: 'asc' },
@@ -106,6 +160,8 @@ export default async function AdminEditTherapistPage({ params }: PageProps) {
     <EditTherapistForm
       initialTherapist={therapistData}
       availableGlobalServices={availableGlobalServices}
+      zipCoverageGroups={zipCoverageGroups}
+      totalAssignedZips={totalAssignedZips}
     />
   );
 }

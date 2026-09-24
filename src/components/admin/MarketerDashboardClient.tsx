@@ -24,9 +24,20 @@ export interface RecentAttributedBooking {
   linkName: string;
 }
 
+export interface MarketerLeaderboardEntry {
+  rank: number;
+  userId: string;
+  name: string;
+  email: string;
+  clicks: number;
+  totalBookings: number;
+  paidRevenue: number;
+}
+
 interface MarketerDashboardClientProps {
   marketerName: string;
   marketerEmail: string;
+  currentUserId?: string;
   stats: {
     totalClicks: number;
     totalBookings: number;
@@ -35,15 +46,18 @@ interface MarketerDashboardClientProps {
   };
   links: MarketerLinkSummary[];
   recentBookings: RecentAttributedBooking[];
+  leaderboard?: MarketerLeaderboardEntry[];
   baseUrl: string;
 }
 
 export function MarketerDashboardClient({
   marketerName,
   marketerEmail,
+  currentUserId,
   stats,
   links,
   recentBookings,
+  leaderboard = [],
   baseUrl,
 }: MarketerDashboardClientProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -244,6 +258,91 @@ export function MarketerDashboardClient({
                             </>
                           )}
                         </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Platform Leaderboard Section */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Platform Performance Leaderboard</h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Rankings across all marketing partners based on verified paid booking revenue.
+            </p>
+          </div>
+          <span className="text-xs font-semibold bg-slate-100 text-slate-700 px-2.5 py-1 rounded-full border border-slate-200">
+            {leaderboard.length} Marketer(s)
+          </span>
+        </div>
+
+        {leaderboard.length === 0 ? (
+          <div className="py-8 text-center text-slate-500 text-sm bg-slate-50 rounded-xl border border-dashed border-slate-200">
+            No active marketer rankings recorded yet.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <th className="py-3.5 px-4 text-center">Rank</th>
+                  <th className="py-3.5 px-4">Marketer Name</th>
+                  <th className="py-3.5 px-4 text-right">Link Clicks</th>
+                  <th className="py-3.5 px-4 text-right">Bookings</th>
+                  <th className="py-3.5 px-4 text-right">Paid Revenue</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 text-sm">
+                {leaderboard.map((entry) => {
+                  const isYou = currentUserId && entry.userId === currentUserId;
+                  return (
+                    <tr
+                      key={entry.userId}
+                      className={`transition-colors ${
+                        isYou ? 'bg-emerald-50/70 font-semibold' : 'hover:bg-slate-50/80'
+                      }`}
+                    >
+                      <td className="py-3.5 px-4 text-center font-bold">
+                        <span className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-xs ${
+                          entry.rank === 1
+                            ? 'bg-amber-100 text-amber-900 font-extrabold border border-amber-300'
+                            : entry.rank === 2
+                            ? 'bg-slate-200 text-slate-800 font-bold'
+                            : entry.rank === 3
+                            ? 'bg-amber-800/10 text-amber-900 font-bold'
+                            : 'text-slate-600'
+                        }`}>
+                          #{entry.rank}
+                        </span>
+                      </td>
+
+                      <td className="py-3.5 px-4 font-semibold text-slate-900">
+                        <div className="flex items-center gap-2">
+                          <span>{entry.name}</span>
+                          {isYou && (
+                            <span className="text-[10px] font-bold uppercase bg-emerald-600 text-white px-2 py-0.5 rounded-full">
+                              You
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="py-3.5 px-4 text-right font-medium text-slate-900">
+                        {entry.clicks.toLocaleString()}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-right font-medium text-slate-900">
+                        {entry.totalBookings.toLocaleString()}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-right font-bold text-emerald-700">
+                        ${entry.paidRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                     </tr>
                   );

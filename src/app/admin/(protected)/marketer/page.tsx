@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { getVerifiedAdminSession } from '@/lib/auth-session';
 import { MarketerDashboardClient, MarketerLinkSummary, RecentAttributedBooking } from '@/components/admin/MarketerDashboardClient';
+import { getMarketerLeaderboardAction } from '@/app/admin/actions';
 
 export const metadata = {
   title: 'Marketer Dashboard | MASSAF Admin',
@@ -143,10 +144,25 @@ export default async function MarketerDashboardPage({ searchParams }: PageProps)
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
 
+  // Fetch leaderboard entries for embedding directly in Marketer Dashboard
+  const leaderboardRes = await getMarketerLeaderboardAction();
+  const leaderboardEntries = leaderboardRes.success && leaderboardRes.leaderboard
+    ? leaderboardRes.leaderboard.map((entry, idx) => ({
+        rank: idx + 1,
+        userId: entry.userId,
+        name: entry.name,
+        email: entry.email,
+        clicks: entry.clicks,
+        totalBookings: entry.totalBookings,
+        paidRevenue: entry.paidRevenue,
+      }))
+    : [];
+
   return (
     <MarketerDashboardClient
       marketerName={marketerUser.name || marketerUser.email}
       marketerEmail={marketerUser.email}
+      currentUserId={session.entityId}
       stats={{
         totalClicks,
         totalBookings,
@@ -155,6 +171,7 @@ export default async function MarketerDashboardPage({ searchParams }: PageProps)
       }}
       links={linksSummary}
       recentBookings={recentBookings}
+      leaderboard={leaderboardEntries}
       baseUrl={baseUrl}
     />
   );

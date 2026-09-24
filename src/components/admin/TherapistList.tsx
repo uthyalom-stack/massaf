@@ -22,7 +22,7 @@ export interface AdminTherapistItem {
   offersInHome: boolean;
   createdAt: string;
   servicesCount: number;
-  serviceAreasCount: number;
+  zipEligibilityCount: number;
   photosCount: number;
 }
 
@@ -248,7 +248,7 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
                   <th scope="col" className="px-6 py-3.5">Status</th>
                   <th scope="col" className="px-6 py-3.5">Rating</th>
                   <th scope="col" className="px-6 py-3.5">Services</th>
-                  <th scope="col" className="px-6 py-3.5">Service Areas</th>
+                  <th scope="col" className="px-6 py-3.5">ZIP Coverage</th>
                   <th scope="col" className="px-6 py-3.5">Photos</th>
                   <th scope="col" className="px-6 py-3.5 text-right">Actions</th>
                 </tr>
@@ -325,9 +325,9 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
                       {therapist.servicesCount} services
                     </td>
 
-                    {/* Service Areas Count */}
+                    {/* ZIP Coverage Count */}
                     <td className="px-6 py-4 text-xs font-medium text-slate-700">
-                      {therapist.serviceAreasCount} areas
+                      {therapist.zipEligibilityCount} ZIP rules
                     </td>
 
                     {/* Photos Count */}
