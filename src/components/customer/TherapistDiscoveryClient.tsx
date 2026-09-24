@@ -5,7 +5,7 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { CustomerTherapist } from '@/types/customer';
 import { TherapistFilters } from '@/components/customer/TherapistFilters';
 import { TherapistResults } from '@/components/customer/TherapistResults';
-import { PublicServiceOption, therapistCoversZip } from '@/lib/db-therapists';
+import { PublicServiceOption } from '@/lib/db-therapists';
 
 interface TherapistDiscoveryClientProps {
   initialTherapists: CustomerTherapist[];
