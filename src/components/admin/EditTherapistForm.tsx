@@ -18,7 +18,7 @@ import {
   deleteTherapistAction,
 } from '@/app/admin/actions';
 import { ConfirmModal } from '@/components/admin/ConfirmModal';
-import { getAllUsStates } from '@/lib/us-locations';
+import { getAllUsStates } from '@/lib/us-states-data';
 import {
   fetchCitiesForStateAction,
   fetchZipsForStateAction,

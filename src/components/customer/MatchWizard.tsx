@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { PublicServiceOption } from '@/lib/db-therapists';
+import { TherapistService as PublicServiceOption } from '@/types/customer';
 import { MatchCriteria } from '@/lib/validations/matching';
 import { MatchedTherapistResult } from '@/lib/matching';
 import { MatchResults } from '@/components/customer/MatchResults';
