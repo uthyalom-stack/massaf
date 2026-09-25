@@ -275,7 +275,7 @@ export function PaymentReviewClient({
                     <div key={img.id} className="border border-slate-200 rounded-xl overflow-hidden bg-slate-100 p-1">
                       {/* Secure image fetch endpoint */}
                       <img
-                        src={`/api/admin/gift-cards/image?key=${encodeURIComponent(img.storageKey)}`}
+                        src={`/api/admin/gift-cards/image?imageId=${encodeURIComponent(img.id)}`}
                         alt="Gift Card Proof"
                         className="w-full h-40 object-contain rounded-lg"
                       />
