@@ -246,12 +246,13 @@ export async function shuffleAndDistributeTherapistsAction() {
       }
     }
 
-    // 4. Atomic Concurrency Lock Acquisition Strategy (Compare-And-Swap)
+    // 4. Atomic Concurrency Lock Acquisition Strategy with Token Ownership
     // Server-side serialization lock using SiteContent key 'distribution_in_progress_lock'
     const LOCK_KEY = 'distribution_in_progress_lock';
+    const lockToken = `LOCKED:${crypto.randomUUID()}`;
     const lockThreshold = new Date(Date.now() - 60000); // 60-second stale lock timeout
 
-    // ATOMIC COMPARE-AND-SWAP: Acquire lock only if UNLOCKED or stale (updatedAt < lockThreshold)
+    // ATOMIC COMPARE-AND-SWAP: Acquire lock with unique lockToken only if UNLOCKED or stale
     const lockAcquired = await db.siteContent.updateMany({
       where: {
         key: LOCK_KEY,
@@ -261,7 +262,7 @@ export async function shuffleAndDistributeTherapistsAction() {
         ],
       },
       data: {
-        content: 'LOCKED',
+        content: lockToken,
         updatedAt: new Date(),
       },
     });
@@ -275,7 +276,7 @@ export async function shuffleAndDistributeTherapistsAction() {
             data: {
               key: LOCK_KEY,
               title: 'Distribution Serialization Lock',
-              content: 'LOCKED',
+              content: lockToken,
             },
           });
         } catch {
@@ -330,7 +331,7 @@ export async function shuffleAndDistributeTherapistsAction() {
         }
       }
 
-      // ATOMIC SWAP: Atomically point global siteContent 'active_distribution_timestamp' to distributionStartTime
+      // Pointer swap: Point global siteContent 'active_distribution_timestamp' to distributionStartTime
       await db.siteContent.upsert({
         where: { key: 'active_distribution_timestamp' },
         update: {
@@ -360,12 +361,17 @@ export async function shuffleAndDistributeTherapistsAction() {
       });
       throw writeErr;
     } finally {
-      // Release execution lock
+      // Release execution lock ONLY if lock is still owned by this invocation's lockToken
       try {
-        await db.siteContent.upsert({
-          where: { key: LOCK_KEY },
-          update: { content: 'UNLOCKED' },
-          create: { key: LOCK_KEY, title: 'Distribution Serialization Lock', content: 'UNLOCKED' },
+        await db.siteContent.updateMany({
+          where: {
+            key: LOCK_KEY,
+            content: lockToken,
+          },
+          data: {
+            content: 'UNLOCKED',
+            updatedAt: new Date(),
+          },
         });
       } catch (lockReleaseErr) {
         console.error('Error releasing distribution lock:', lockReleaseErr);

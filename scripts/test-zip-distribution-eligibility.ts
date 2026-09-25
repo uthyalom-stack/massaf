@@ -36,6 +36,13 @@ async function runAnalysisAndTests() {
   const totalZipCount = await db.uSZipCode.count();
   console.log(`USZipCode Records Count: ${totalZipCount}`);
 
+  // Ensure lock is clear before initial distribution run
+  await db.siteContent.upsert({
+    where: { key: 'distribution_in_progress_lock' },
+    update: { content: 'UNLOCKED', updatedAt: new Date() },
+    create: { key: 'distribution_in_progress_lock', title: 'Distribution Serialization Lock', content: 'UNLOCKED' },
+  });
+
   // 3. Perform shuffle & distribution execution with admin cookie
   console.log('\nExecuting shuffleAndDistributeTherapistsAction()...');
   const distResult = await shuffleAndDistributeTherapistsAction();
@@ -334,6 +341,110 @@ async function runAnalysisAndTests() {
     }
 
     console.log(`SUCCESS: Therapist edit page loaded ${totalAssignedTestRanges} eligibility ranges in ${duration} ms (well within 3000ms threshold)!`);
+
+    // Clean up temporary performance test bulk ranges before concurrency test
+    await db.therapistZipEligibility.deleteMany({ where: { therapistId: testTherapist.id } });
+
+    // Test G: Real Concurrency Serialization & Lock Ownership Token Isolation Test
+    console.log('\n--- Real Concurrency & Lock Ownership Isolation Test ---');
+
+    // Reset distribution lock and active timestamp before concurrent test
+    const resetTime = new Date();
+    await db.siteContent.upsert({
+      where: { key: 'active_distribution_timestamp' },
+      update: { content: resetTime.toISOString() },
+      create: { key: 'active_distribution_timestamp', title: 'Active Distribution Timestamp', content: resetTime.toISOString() },
+    });
+
+    await db.siteContent.upsert({
+      where: { key: 'distribution_in_progress_lock' },
+      update: { content: 'UNLOCKED', updatedAt: new Date() },
+      create: { key: 'distribution_in_progress_lock', title: 'Distribution Serialization Lock', content: 'UNLOCKED' },
+    });
+
+    // Execute two concurrent shuffleAndDistributeTherapistsAction invocations
+    const [resultA, resultB] = await Promise.all([
+      shuffleAndDistributeTherapistsAction(),
+      shuffleAndDistributeTherapistsAction(),
+    ]);
+
+    console.log('Concurrent Execution Result A:', resultA);
+    console.log('Concurrent Execution Result B:', resultB);
+
+    // Exactly one invocation should succeed and the other should be rejected by the serialization lock
+    const successCount = (resultA.success ? 1 : 0) + (resultB.success ? 1 : 0);
+    const lockedCount = (resultA.error?.includes('in progress') ? 1 : 0) + (resultB.error?.includes('in progress') ? 1 : 0);
+
+    console.log(`Concurrent Successes: ${successCount}, Lock Rejections: ${lockedCount}`);
+
+    if (successCount !== 1 || lockedCount !== 1) {
+      console.error('FAILED: Concurrent execution did not properly serialize! One invocation must succeed and one must be rejected.');
+      process.exit(1);
+    }
+    console.log('SUCCESS: Concurrent shuffle invocations properly serialized via lock!');
+
+    // Verify lock token release ownership isolation
+    console.log('\nVerifying Lock Token Ownership Release Protection...');
+    const fakeTokenB = `LOCKED:${crypto.randomUUID()}`;
+    await db.siteContent.upsert({
+      where: { key: 'distribution_in_progress_lock' },
+      update: { content: fakeTokenB, updatedAt: new Date() },
+      create: { key: 'distribution_in_progress_lock', title: 'Distribution Serialization Lock', content: fakeTokenB },
+    });
+
+    // Invocation A attempts release with a different token (fakeTokenA)
+    const fakeTokenA = `LOCKED:${crypto.randomUUID()}`;
+    const releaseAttempt = await db.siteContent.updateMany({
+      where: {
+        key: 'distribution_in_progress_lock',
+        content: fakeTokenA,
+      },
+      data: {
+        content: 'UNLOCKED',
+        updatedAt: new Date(),
+      },
+    });
+
+    console.log(`Lock release count with mismatched token: ${releaseAttempt.count}`);
+    const currentLockInDb = await db.siteContent.findUnique({ where: { key: 'distribution_in_progress_lock' } });
+    console.log(`DB Lock content after mismatched release attempt: ${currentLockInDb?.content}`);
+
+    if (releaseAttempt.count !== 0 || currentLockInDb?.content !== fakeTokenB) {
+      console.error('FAILED: Lock was released by an invocation with a mismatched token!');
+      process.exit(1);
+    }
+    console.log('SUCCESS: Lock token ownership prevented mismatched invocation from releasing active lock!');
+
+    // Verify active distribution timestamp and record consistency
+    const finalActiveTimestampRecord = await db.siteContent.findUnique({ where: { key: 'active_distribution_timestamp' } });
+    console.log(`Final Active Distribution Timestamp: ${finalActiveTimestampRecord?.content}`);
+
+    if (!finalActiveTimestampRecord?.content) {
+      console.error('FAILED: Missing active distribution timestamp after concurrent run!');
+      process.exit(1);
+    }
+
+    const finalTimestamp = new Date(finalActiveTimestampRecord.content);
+    const activeRecordsCount = await db.therapistZipEligibility.count({
+      where: { createdAt: finalTimestamp },
+    });
+    const totalRecordsCount = await db.therapistZipEligibility.count();
+
+    console.log(`Active Eligibility Records matching active timestamp: ${activeRecordsCount}`);
+    console.log(`Total Eligibility Records in database: ${totalRecordsCount}`);
+
+    if (activeRecordsCount !== totalRecordsCount) {
+      console.error(`FAILED: Mixed eligibility rows found! ${totalRecordsCount - activeRecordsCount} orphan rows exist.`);
+      process.exit(1);
+    }
+    console.log('SUCCESS: Active distribution timestamp is valid and zero mixed/orphan eligibility rows exist!');
+
+    // Reset lock to UNLOCKED
+    await db.siteContent.upsert({
+      where: { key: 'distribution_in_progress_lock' },
+      update: { content: 'UNLOCKED', updatedAt: new Date() },
+      create: { key: 'distribution_in_progress_lock', title: 'Distribution Serialization Lock', content: 'UNLOCKED' },
+    });
   }
 
   console.log('\n=== Analysis Completed Successfully ===');

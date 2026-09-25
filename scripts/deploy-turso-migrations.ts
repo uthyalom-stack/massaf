@@ -138,11 +138,13 @@ async function deployTursoMigrations() {
       let isSchemaAlreadyPresent = false;
 
       if (mig.dirName.includes('add_user_id_to_marketing_link')) {
-        isSchemaAlreadyPresent = await checkTableExists(client, 'User');
+        isSchemaAlreadyPresent = await checkColumnExists(client, 'MarketingLink', 'userId');
       } else if (mig.dirName.includes('add_user_is_active')) {
         isSchemaAlreadyPresent = await checkColumnExists(client, 'User', 'isActive');
       } else if (mig.dirName.includes('add_homepage_selection_and_end_zip')) {
-        isSchemaAlreadyPresent = await checkColumnExists(client, 'Therapist', 'isHomepageSelected');
+        const hasHomepageCol = await checkColumnExists(client, 'Therapist', 'isHomepageSelected');
+        const hasEndZipCol = await checkColumnExists(client, 'ServiceArea', 'endZipCode');
+        isSchemaAlreadyPresent = hasHomepageCol && hasEndZipCol;
       } else if (mig.dirName.includes('add_payment_methods_and_gift_cards')) {
         isSchemaAlreadyPresent = await checkTableExists(client, 'GiftCardSubmission');
       } else if (mig.dirName.includes('add_gift_card_images')) {
@@ -150,7 +152,9 @@ async function deployTursoMigrations() {
       } else if (mig.dirName.includes('add_us_zip_code_table')) {
         isSchemaAlreadyPresent = await checkTableExists(client, 'USZipCode');
       } else if (mig.dirName.includes('add_rotation_zip_eligibility_hourly_pricing')) {
-        isSchemaAlreadyPresent = await checkColumnExists(client, 'Therapist', 'hourlyRate');
+        const hasHourlyRate = await checkColumnExists(client, 'Therapist', 'hourlyRate');
+        const hasZipEligibility = await checkTableExists(client, 'TherapistZipEligibility');
+        isSchemaAlreadyPresent = hasHourlyRate && hasZipEligibility;
       }
 
       const migrationId = crypto.randomUUID();
