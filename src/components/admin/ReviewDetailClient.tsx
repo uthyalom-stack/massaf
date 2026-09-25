@@ -10,6 +10,8 @@ export interface SerializedReviewDetail {
   id: string;
   rating: number;
   comment: string | null;
+  authorName?: string | null;
+  source?: string;
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   isPublished: boolean;
   createdAt: string;
@@ -24,7 +26,7 @@ export interface SerializedReviewDetail {
     id: string;
     name: string;
     email: string;
-  };
+  } | null;
   booking: {
     id: string;
     bookingNumber: string;
@@ -292,22 +294,26 @@ export function ReviewDetailClient({ review }: ReviewDetailClientProps) {
             )}
           </section>
 
-          {/* Customer Card */}
+          {/* Customer / Reviewer Card */}
           <section className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
             <h3 className="text-base font-bold text-slate-900 pb-2 border-b border-slate-100">
-              Customer Details
+              Reviewer Details
             </h3>
 
             <div className="space-y-3 text-xs">
               <div>
-                <span className="text-slate-400 font-semibold block uppercase text-[10px]">Customer Name</span>
-                <span className="font-bold text-slate-900 text-sm">{review.customer.name}</span>
+                <span className="text-slate-400 font-semibold block uppercase text-[10px]">Reviewer Name</span>
+                <span className="font-bold text-slate-900 text-sm">
+                  {review.authorName || review.customer?.name || 'Anonymous'}
+                </span>
               </div>
 
-              <div>
-                <span className="text-slate-400 font-semibold block uppercase text-[10px]">Email Address</span>
-                <span className="font-mono text-slate-800">{review.customer.email}</span>
-              </div>
+              {review.customer && (
+                <div>
+                  <span className="text-slate-400 font-semibold block uppercase text-[10px]">Email Address</span>
+                  <span className="font-mono text-slate-800">{review.customer.email}</span>
+                </div>
+              )}
             </div>
           </section>
         </div>

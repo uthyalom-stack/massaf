@@ -15,7 +15,7 @@ import {
   assignBookingTherapistSchema,
   cancelBookingSchema,
 } from '@/lib/validations/admin-booking';
-import { updateReviewStatusSchema } from '@/lib/validations/admin-review';
+import { updateReviewStatusSchema, createAdminReviewSchema } from '@/lib/validations/admin-review';
 import { createMarketingLinkSchema, updateMarketingLinkSchema } from '@/lib/validations/admin-marketing';
 import { BookingStatus, ReviewStatus } from '@prisma/client';
 import { revalidatePath } from 'next/cache';
@@ -1401,6 +1401,83 @@ export async function getMarketerLeaderboardAction() {
 function isValidReviewStatusTransition(currentStatus: ReviewStatus, newStatus: ReviewStatus): boolean {
   if (currentStatus === newStatus) return true;
   return ['PENDING', 'APPROVED', 'REJECTED'].includes(newStatus);
+}
+
+export async function createAdminReviewAction(input: unknown) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    const validated = createAdminReviewSchema.parse(input);
+
+    const therapist = await db.therapist.findUnique({
+      where: { id: validated.therapistId },
+    });
+
+    if (!therapist) {
+      return { success: false, error: 'Therapist not found.' };
+    }
+
+    let reviewDate = new Date();
+    if (validated.createdAt && validated.createdAt.trim()) {
+      const parsedDate = new Date(validated.createdAt);
+      if (!isNaN(parsedDate.getTime())) {
+        reviewDate = parsedDate;
+      }
+    }
+
+    const createdReview = await db.$transaction(async (tx) => {
+      const newReview = await tx.review.create({
+        data: {
+          therapistId: validated.therapistId,
+          customerId: null,
+          authorName: validated.authorName.trim(),
+          rating: validated.rating,
+          comment: validated.comment.trim(),
+          source: 'ADMIN',
+          status: 'APPROVED',
+          isPublished: true,
+          createdAt: reviewDate,
+        },
+      });
+
+      const approvedReviews = await tx.review.findMany({
+        where: {
+          therapistId: validated.therapistId,
+          status: 'APPROVED',
+          isPublished: true,
+        },
+        select: { rating: true },
+      });
+
+      const count = approvedReviews.length;
+      let avgRating = 0;
+      if (count > 0) {
+        const sum = approvedReviews.reduce((acc, r) => acc + r.rating, 0);
+        avgRating = Math.round((sum / count) * 10) / 10;
+      }
+
+      await tx.therapist.update({
+        where: { id: validated.therapistId },
+        data: {
+          rating: avgRating,
+          reviewCount: count,
+        },
+      });
+
+      return newReview;
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/reviews');
+    safeRevalidatePath(`/therapists/${validated.therapistId}`);
+
+    return { success: true, review: createdReview };
+  } catch (err: unknown) {
+    console.error('Error in createAdminReviewAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to create admin review.',
+    };
+  }
 }
 
 export async function updateReviewStatusAction(input: unknown) {

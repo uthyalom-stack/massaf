@@ -71,6 +71,8 @@ export default async function AdminReviewDetailPage({ params }: PageProps) {
         id: rawReview.id,
         rating: rawReview.rating,
         comment: rawReview.comment,
+          authorName: rawReview.authorName,
+          source: rawReview.source,
         status: rawReview.status,
         isPublished: rawReview.isPublished,
         createdAt: rawReview.createdAt.toISOString(),
@@ -81,11 +83,13 @@ export default async function AdminReviewDetailPage({ params }: PageProps) {
           bio: rawReview.therapist.bio,
           profileImage: rawReview.therapist.profileImage,
         },
-        customer: {
-          id: rawReview.customer.id,
-          name: rawReview.customer.name,
-          email: rawReview.customer.email,
-        },
+          customer: rawReview.customer
+            ? {
+                id: rawReview.customer.id,
+                name: rawReview.customer.name,
+                email: rawReview.customer.email,
+              }
+            : null,
         booking: rawReview.booking
           ? {
               id: rawReview.booking.id,

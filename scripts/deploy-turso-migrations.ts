@@ -155,6 +155,8 @@ async function deployTursoMigrations() {
         const hasHourlyRate = await checkColumnExists(client, 'Therapist', 'hourlyRate');
         const hasZipEligibility = await checkTableExists(client, 'TherapistZipEligibility');
         isSchemaAlreadyPresent = hasHourlyRate && hasZipEligibility;
+      } else if (mig.dirName.includes('add_admin_review_fields')) {
+        isSchemaAlreadyPresent = await checkColumnExists(client, 'Review', 'authorName');
       }
 
       const migrationId = crypto.randomUUID();

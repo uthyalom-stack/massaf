@@ -116,6 +116,8 @@ export default async function AdminReviewsPage({ searchParams }: PageProps) {
       id: rev.id,
       rating: rev.rating,
       comment: rev.comment,
+        authorName: rev.authorName,
+        source: rev.source,
       status: rev.status,
       isPublished: rev.isPublished,
       createdAt: rev.createdAt.toISOString(),
@@ -124,11 +126,13 @@ export default async function AdminReviewsPage({ searchParams }: PageProps) {
         name: rev.therapist.name,
         profileImage: rev.therapist.profileImage,
       },
-      customer: {
-        id: rev.customer.id,
-        name: rev.customer.name,
-        email: rev.customer.email,
-      },
+        customer: rev.customer
+          ? {
+              id: rev.customer.id,
+              name: rev.customer.name,
+              email: rev.customer.email,
+            }
+          : null,
       booking: rev.booking
         ? {
             id: rev.booking.id,

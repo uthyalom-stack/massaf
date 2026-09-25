@@ -55,7 +55,7 @@ export default async function CustomerHomePage() {
 
     if (dbReviews.length > 0) {
       dbReviewsFormatted = dbReviews.map((rev) => {
-        const rawName = rev.customer?.name || 'Verified Client';
+        const rawName = rev.authorName || rev.customer?.name || 'Verified Client';
         const nameParts = rawName.trim().split(' ');
         const formattedName =
           nameParts.length > 1

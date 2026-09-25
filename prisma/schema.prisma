@@ -361,23 +361,26 @@ model Booking {
 /// Customer reviews for therapists
 model Review {
   id          String       @id @default(uuid())
-  customerId  String
+  customerId  String?
   therapistId String
   bookingId   String?      @unique
   rating      Int          // 1 to 5 stars
   comment     String?
+  authorName  String?
+  source      String       @default("CUSTOMER") // "CUSTOMER" or "ADMIN"
   status      ReviewStatus @default(APPROVED)
   isPublished Boolean      @default(true)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  customer  Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer  Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
   therapist Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
-  booking   Booking?  @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  booking   Booking?   @relation(fields: [bookingId], references: [id], onDelete: SetNull)
 
   @@index([therapistId])
   @@index([customerId])
   @@index([isPublished])
+  @@index([source])
 }
 
 /// Simple marketing tracking links
