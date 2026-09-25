@@ -101,6 +101,7 @@ export async function executeTherapistCsvImportAction(input: {
     offersStudio: boolean;
     offersInHome: boolean;
     matchedServiceIds: string[];
+    unmatchedServices?: string[];
     parsedAvailabilities: Array<{ dayOfWeek: number; startTime: string; endTime: string }>;
     galleryPhotos: string[];
     classification: string;
@@ -128,6 +129,17 @@ export async function executeTherapistCsvImportAction(input: {
     for (const row of input.rows) {
       if (row.actionChoice === 'SKIP' || row.classification === 'INVALID' || !row.name || !row.name.trim()) {
         skippedCount++;
+        continue;
+      }
+
+      // 1. Unmatched Services Guard: Do NOT silently discard unmatched services
+      if (row.unmatchedServices && row.unmatchedServices.length > 0) {
+        failedCount++;
+        errors.push({
+          rowNumber: row.rowNumber,
+          name: row.name,
+          error: `Cannot import therapist with unmatched service(s): ${row.unmatchedServices.join(', ')}. Create service in MASSAF before importing.`,
+        });
         continue;
       }
 
@@ -222,6 +234,37 @@ export async function executeTherapistCsvImportAction(input: {
 
           updatedCount++;
         } else {
+          // Re-verify duplicate email/phone state in live DB before creation
+          if (row.email) {
+            const emailConflict = await db.therapist.findUnique({
+              where: { email: row.email.toLowerCase().trim() },
+            });
+            if (emailConflict) {
+              failedCount++;
+              errors.push({
+                rowNumber: row.rowNumber,
+                name: row.name,
+                error: `Email address '${row.email}' is registered to existing therapist '${emailConflict.name}'.`,
+              });
+              continue;
+            }
+          }
+
+          if (row.phone) {
+            const phoneConflict = await db.therapist.findFirst({
+              where: { phone: row.phone.trim() },
+            });
+            if (phoneConflict) {
+              failedCount++;
+              errors.push({
+                rowNumber: row.rowNumber,
+                name: row.name,
+                error: `Phone number '${row.phone}' is registered to existing therapist '${phoneConflict.name}'.`,
+              });
+              continue;
+            }
+          }
+
           // CREATE New Therapist
           await db.$transaction(async (tx) => {
             const newTherapist = await tx.therapist.create({

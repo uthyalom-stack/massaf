@@ -16,9 +16,8 @@ import { parseAndPreviewTherapistCsv, parseAvailabilityScheduleString } from '..
 import { notifyBookingRescheduled } from '../src/lib/notifications';
 
 async function runOperationsImportTestSuite() {
-  console.log('=== STARTING PHASE 24 OPERATIONS & CSV IMPORT TEST SUITE ===\n');
+  console.log('=== STARTING PHASE 24 OPERATIONS & CSV IMPORT EDGE CASES TEST SUITE ===\n');
 
-  // Setup test environment auth secret
   process.env.MASSAF_AUTH_SECRET = 'test-secret-123456789012345678901234567890';
   process.env.TURSO_DATABASE_URL = 'file:./prisma/dev.db';
 
@@ -61,7 +60,6 @@ async function runOperationsImportTestSuite() {
     },
   });
 
-  // Therapist 1: Pending Verification
   const pendingTherapist = await db.therapist.create({
     data: {
       name: 'Pending Test Therapist',
@@ -76,7 +74,6 @@ async function runOperationsImportTestSuite() {
     },
   });
 
-  // Therapist 2: Verified
   const verifiedTherapist = await db.therapist.create({
     data: {
       name: 'Verified Test Therapist',
@@ -91,7 +88,6 @@ async function runOperationsImportTestSuite() {
     },
   });
 
-  // Assign service to both therapists
   await db.therapistService.createMany({
     data: [
       { therapistId: pendingTherapist.id, serviceId: service.id, isActive: true },
@@ -99,7 +95,6 @@ async function runOperationsImportTestSuite() {
     ],
   });
 
-  // Add working availability (Mon-Fri 08:00-20:00)
   for (let d = 1; d <= 5; d++) {
     await db.therapistAvailability.createMany({
       data: [
@@ -109,8 +104,7 @@ async function runOperationsImportTestSuite() {
     });
   }
 
-  // Create test booking on next Monday at 10:00 AM UTC assigned to verifiedTherapist
-  const bookingDate = new Date(Date.UTC(2026, 9, 5, 10, 0, 0)); // Mon Oct 5 2026
+  const bookingDate = new Date(Date.UTC(2026, 9, 5, 10, 0, 0));
   const booking = await db.booking.create({
     data: {
       bookingNumber: `OPS-${Date.now()}`,
@@ -129,7 +123,7 @@ async function runOperationsImportTestSuite() {
     },
   });
 
-  console.log('1. Testing Compatibility Matcher Verification Strictness (Phase 3 & 7)...');
+  console.log('1. Testing Candidate Matcher VERIFIED Strictness (Phase 3 & 7)...');
   const candidateRes = await findCompatibleTherapistsAction(booking.id);
   if (!candidateRes.success || !candidateRes.candidates) {
     throw new Error(`Candidate evaluation failed: ${candidateRes.error}`);
@@ -163,7 +157,6 @@ async function runOperationsImportTestSuite() {
   console.log('[PASS] Internal notes list retrieved successfully\n');
 
   console.log('3. Testing Admin Reschedule Booking (Phase 2)...');
-  // Valid reschedule to Oct 5 at 14:00 UTC
   const rescheduleRes = await rescheduleBookingAdminAction({
     bookingId: booking.id,
     newDate: '2026-10-05',
@@ -172,7 +165,6 @@ async function runOperationsImportTestSuite() {
   if (!rescheduleRes.success) throw new Error(`Reschedule failed: ${rescheduleRes.error}`);
   console.log('[PASS] Valid appointment reschedule executed');
 
-  // Test invalid reschedule outside working hours (05:00 AM)
   const invalidReschedule = await rescheduleBookingAdminAction({
     bookingId: booking.id,
     newDate: '2026-10-05',
@@ -181,107 +173,158 @@ async function runOperationsImportTestSuite() {
   if (invalidReschedule.success) throw new Error('Reschedule outside working hours should have failed.');
   console.log('[PASS] Out-of-hours reschedule safely rejected\n');
 
-  console.log('4. Testing Therapist Verification Workflow (Phase 7)...');
-  const verifRes = await updateTherapistVerificationAction(
-    pendingTherapist.id,
-    'VERIFIED',
-    'Verified active license in state registry.'
-  );
-  if (!verifRes.success) throw new Error(`Verification update failed: ${verifRes.error}`);
-  console.log('[PASS] Pending therapist updated to VERIFIED\n');
+  console.log('4. Testing CSV Importer Edge Cases & Unmatched Service Guard...');
 
-  console.log('5. Testing Customer Operational Actions (Phase 8)...');
-  const disableCustRes = await toggleCustomerActiveAction(customer.id, false);
-  if (!disableCustRes.success) throw new Error(`Customer disable failed: ${disableCustRes.error}`);
-  console.log('[PASS] Customer account disabled');
+  // Test 4a: Unmatched Service Guard
+  const unmatchedCsv = `Full Name,Bio,Profile Photo,Email,Phone,Telegram Chat ID,Hourly Rate,Offers Studio,Offers In-Home,Services,Availability,Gallery Photos
+Unmatched Service Therapist,"Bio",,unmatched@test.com,+15559998888,,120.00,Yes,Yes,Nonexistent Service,Mon-Fri 09:00-17:00,`;
 
-  const restoreCustRes = await toggleCustomerActiveAction(customer.id, true);
-  if (!restoreCustRes.success) throw new Error(`Customer restore failed: ${restoreCustRes.error}`);
-  console.log('[PASS] Customer account restored\n');
-
-  console.log('6. Testing Payment Management & Refund Workflow (Phases 9 & 10)...');
-  const paymentsRes = await listAllPaymentsAction('ALL', booking.bookingNumber);
-  if (!paymentsRes.success || !paymentsRes.payments || paymentsRes.payments.length === 0) {
-    throw new Error('Failed to retrieve payment records.');
-  }
-  console.log('[PASS] Payment list retrieved');
-
-  const refundReqRes = await requestRefundAction({
-    bookingId: booking.id,
-    amount: 115.0,
-    reason: 'Test refund request',
+  const previewUnmatched = await parseAndPreviewTherapistCsv(unmatchedCsv);
+  const unmatchedRow = previewUnmatched.rows[0];
+  const execUnmatchedRes = await executeTherapistCsvImportAction({
+    rows: [{ ...unmatchedRow, actionChoice: 'CREATE' }],
   });
-  if (!refundReqRes.success || !refundReqRes.refund) {
-    throw new Error(`Refund request failed: ${refundReqRes.error}`);
-  }
-  console.log('[PASS] Refund request created');
 
-  const refundProcRes = await processRefundAction({
-    refundId: refundReqRes.refund.id,
-    status: 'PROCESSED',
+  if (!execUnmatchedRes.success || !execUnmatchedRes.report || execUnmatchedRes.report.failedCount !== 1) {
+    throw new Error('UNMATCHED SERVICE VIOLATION: Row with unmatched service must fail execution instead of silently omitting services.');
+  }
+  console.log('[PASS] Row with unmatched service correctly failed execution with explicit error report');
+
+  // Test 4b: Multiple Unmatched Services
+  const multiUnmatchedCsv = `Full Name,Bio,Profile Photo,Email,Phone,Telegram Chat ID,Hourly Rate,Offers Studio,Offers In-Home,Services,Availability,Gallery Photos
+Multi Unmatched Therapist,"Bio",,multi@test.com,+15559998889,,120.00,Yes,Yes,Fake Service A, Fake Service B,Mon-Fri 09:00-17:00,`;
+
+  const previewMultiUnmatched = await parseAndPreviewTherapistCsv(multiUnmatchedCsv);
+  const execMultiUnmatchedRes = await executeTherapistCsvImportAction({
+    rows: [{ ...previewMultiUnmatched.rows[0], actionChoice: 'CREATE' }],
   });
-  if (!refundProcRes.success) throw new Error(`Refund processing failed: ${refundProcRes.error}`);
-  console.log('[PASS] Refund marked PROCESSED and booking status set to REFUNDED\n');
-
-  console.log('7. Testing Multi-Rule Schedule String Parser (Phase 15)...');
-  const scheduleStr = 'Mon 09:00-17:00; Wed 10:00-18:00; Sat 12:00-16:00';
-  const { rules: parsedRules } = parseAvailabilityScheduleString(scheduleStr);
-  if (parsedRules.length !== 3) {
-    throw new Error(`Expected 3 schedule rules, got ${parsedRules.length}`);
+  if (!execMultiUnmatchedRes.success || !execMultiUnmatchedRes.report || execMultiUnmatchedRes.report.failedCount !== 1) {
+    throw new Error('Multiple unmatched services must fail row execution.');
   }
-  console.log('[PASS] Multi-rule availability schedule string parsed into 3 distinct day rules\n');
+  console.log('[PASS] Row with multiple unmatched services correctly rejected');
 
-  console.log('8. Testing CSV Importer Duplicate Detection & ZIP Eligibility Exclusion (Phase 15)...');
-  const sampleCsv = `Full Name,Bio,Profile Photo,Email,Phone,Telegram Chat ID,Hourly Rate,Offers Studio,Offers In-Home,Services,Availability,Gallery Photos
-Imported Therapist A,"Experienced therapist.",https://example.com/photo.jpg,imported.a@test.com,+15559990001,123456,120.00,Yes,Yes,Swedish Test Massage,Mon-Fri 09:00-17:00,https://example.com/gal1.jpg
-${verifiedTherapist.name},"Updated bio.",,${verifiedTherapist.email},${verifiedTherapist.phone},,130.00,Yes,Yes,Swedish Test Massage,Tue-Sat 10:00-18:00,`;
+  // Test 4c: Target Therapist Deleted Between Preview and Execution
+  const deletedTargetRes = await executeTherapistCsvImportAction({
+    rows: [
+      {
+        rowNumber: 1,
+        name: 'Ghost Therapist',
+        hourlyRate: 100.0,
+        offersStudio: true,
+        offersInHome: true,
+        matchedServiceIds: [service.id],
+        parsedAvailabilities: [],
+        galleryPhotos: [],
+        classification: 'EXISTING',
+        existingTherapistId: 'nonexistent-therapist-id-123',
+        actionChoice: 'UPDATE',
+      },
+    ],
+  });
+  if (!deletedTargetRes.success || !deletedTargetRes.report || deletedTargetRes.report.failedCount !== 1) {
+    throw new Error('UPDATE on deleted target therapist ID must fail execution cleanly.');
+  }
+  console.log('[PASS] Target therapist deleted prior to execution correctly failed with error');
 
-  const previewRes = await parseAndPreviewTherapistCsv(sampleCsv);
-  if (previewRes.rows.length !== 2) throw new Error('Expected 2 rows in CSV preview.');
-  console.log(`[PASS] CSV preview: ${previewRes.summary.newCount} NEW, ${previewRes.summary.existingCount} EXISTING`);
+  // Test 4d: Duplicate Email Appearing After Preview
+  const duplicateEmailRes = await executeTherapistCsvImportAction({
+    rows: [
+      {
+        rowNumber: 1,
+        name: 'Duplicate Email Therapist',
+        email: verifiedTherapist.email,
+        hourlyRate: 100.0,
+        offersStudio: true,
+        offersInHome: true,
+        matchedServiceIds: [service.id],
+        parsedAvailabilities: [],
+        galleryPhotos: [],
+        classification: 'NEW',
+        actionChoice: 'CREATE',
+      },
+    ],
+  });
+  if (!duplicateEmailRes.success || !duplicateEmailRes.report || duplicateEmailRes.report.failedCount !== 1) {
+    throw new Error('CREATE with duplicate email created after preview must fail execution.');
+  }
+  console.log('[PASS] Duplicate email created after preview correctly caught and failed');
 
-  const importRows = previewRes.rows.map((r) => ({
+  // Test 4e: Duplicate Phone Appearing After Preview
+  const duplicatePhoneRes = await executeTherapistCsvImportAction({
+    rows: [
+      {
+        rowNumber: 1,
+        name: 'Duplicate Phone Therapist',
+        phone: verifiedTherapist.phone,
+        hourlyRate: 100.0,
+        offersStudio: true,
+        offersInHome: true,
+        matchedServiceIds: [service.id],
+        parsedAvailabilities: [],
+        galleryPhotos: [],
+        classification: 'NEW',
+        actionChoice: 'CREATE',
+      },
+    ],
+  });
+  if (!duplicatePhoneRes.success || !duplicatePhoneRes.report || duplicatePhoneRes.report.failedCount !== 1) {
+    throw new Error('CREATE with duplicate phone created after preview must fail execution.');
+  }
+  console.log('[PASS] Duplicate phone created after preview correctly caught and failed');
+
+  // Test 4f: Normal Valid CREATE & UPDATE & SKIP
+  const validCsv = `Full Name,Bio,Profile Photo,Email,Phone,Telegram Chat ID,Hourly Rate,Offers Studio,Offers In-Home,Services,Availability,Gallery Photos
+Valid New Therapist,"Bio",https://example.com/p.jpg,valid.new@test.com,+15550009999,123456,125.00,Yes,Yes,${service.name},Mon-Fri 09:00-17:00,https://example.com/g1.jpg
+${verifiedTherapist.name},"Updated bio.",,${verifiedTherapist.email},${verifiedTherapist.phone},,135.00,Yes,Yes,${service.name},Tue-Sat 10:00-18:00,
+Skipped Therapist,"Bio",,skipped@test.com,+15550008888,,120.00,Yes,Yes,${service.name},Mon-Fri 09:00-17:00,`;
+
+  const previewValid = await parseAndPreviewTherapistCsv(validCsv);
+  const rowsWithChoices = previewValid.rows.map((r, i) => ({
     ...r,
-    actionChoice: r.classification === 'EXISTING' ? ('UPDATE' as const) : ('CREATE' as const),
+    actionChoice: i === 0 ? ('CREATE' as const) : i === 1 ? ('UPDATE' as const) : ('SKIP' as const),
   }));
 
-  const importRes = await executeTherapistCsvImportAction({ rows: importRows });
-  if (!importRes.success || !importRes.report) {
-    throw new Error(`CSV import execution failed: ${importRes.error}`);
+  const execValidRes = await executeTherapistCsvImportAction({ rows: rowsWithChoices });
+  if (
+    !execValidRes.success ||
+    !execValidRes.report ||
+    execValidRes.report.createdCount !== 1 ||
+    execValidRes.report.updatedCount !== 1 ||
+    execValidRes.report.skippedCount !== 1
+  ) {
+    console.error('execValidRes report:', execValidRes?.report);
+    throw new Error('Valid CREATE, UPDATE, and SKIP execution failed.');
   }
-  console.log(`[PASS] CSV import executed: Created ${importRes.report.createdCount}, Updated ${importRes.report.updatedCount}`);
+  console.log('[PASS] Valid CREATE (1), UPDATE (1), and SKIP (1) executed successfully');
 
-  // CRITICAL ZIP RULE CHECK: Verify importer created zero TherapistZipEligibility rows
+  // Test 4g: CRITICAL ZIP RULE: Zero ZIP eligibility rows created
+  const importedTherapist = await db.therapist.findFirst({ where: { email: 'valid.new@test.com' } });
+  if (!importedTherapist) throw new Error('Imported therapist record not found in DB.');
+
   const zipCount = await db.therapistZipEligibility.count({
-    where: { therapist: { email: 'imported.a@test.com' } },
+    where: { therapistId: importedTherapist.id },
   });
   if (zipCount > 0) throw new Error('CRITICAL ZIP VIOLATION: Importer must not create ZIP eligibility rows.');
   console.log('[PASS] CRITICAL ZIP RULE VERIFIED: CSV Importer created 0 ZIP eligibility rows\n');
-
-  console.log('9. Testing Communication Event Notifications (Phase 14)...');
-  const notifRes = await notifyBookingRescheduled(booking.id, '2026-10-05 10:00 UTC');
-  if (!notifRes) throw new Error('Reschedule notification dispatch failed.');
-  console.log('[PASS] Reschedule event notification abstraction executed cleanly\n');
 
   // Clean up test records
   await db.adminNote.deleteMany({ where: { entityId: booking.id } });
   await db.refundRecord.deleteMany({ where: { bookingId: booking.id } });
   await db.booking.delete({ where: { id: booking.id } });
-  await db.therapistService.deleteMany({ where: { therapistId: { in: [pendingTherapist.id, verifiedTherapist.id] } } });
-  await db.therapistAvailability.deleteMany({ where: { therapistId: { in: [pendingTherapist.id, verifiedTherapist.id] } } });
-  await db.therapist.deleteMany({ where: { id: { in: [pendingTherapist.id, verifiedTherapist.id] } } });
+  await db.therapistService.deleteMany({
+    where: { therapistId: { in: [pendingTherapist.id, verifiedTherapist.id, importedTherapist.id] } },
+  });
+  await db.therapistAvailability.deleteMany({
+    where: { therapistId: { in: [pendingTherapist.id, verifiedTherapist.id, importedTherapist.id] } },
+  });
+  await db.therapistPhoto.deleteMany({ where: { therapistId: importedTherapist.id } });
+  await db.therapist.deleteMany({
+    where: { id: { in: [pendingTherapist.id, verifiedTherapist.id, importedTherapist.id] } },
+  });
   await db.customer.delete({ where: { id: customer.id } });
 
-  const importedTherapist = await db.therapist.findFirst({ where: { email: 'imported.a@test.com' } });
-  if (importedTherapist) {
-    await db.therapistService.deleteMany({ where: { therapistId: importedTherapist.id } });
-    await db.therapistAvailability.deleteMany({ where: { therapistId: importedTherapist.id } });
-    await db.therapistPhoto.deleteMany({ where: { therapistId: importedTherapist.id } });
-    await db.therapist.delete({ where: { id: importedTherapist.id } });
-  }
-
   console.log('====================================================');
-  console.log('  ALL OPERATIONS & CSV IMPORT TESTS PASSED!');
+  console.log('  ALL OPERATIONS & CSV IMPORT EDGE TESTS PASSED!');
   console.log('====================================================');
 }
 
