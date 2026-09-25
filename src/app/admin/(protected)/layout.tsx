@@ -2,6 +2,7 @@ import React from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getVerifiedAdminSession } from '@/lib/auth-session';
+import { AdminNotificationBell } from '@/components/admin/AdminNotificationBell';
 
 export default async function ProtectedAdminLayout({
   children,
@@ -15,22 +16,62 @@ export default async function ProtectedAdminLayout({
 
   const isMarketer = session.role === 'STAFF';
 
-  const navLinks = isMarketer
+  const navSections = isMarketer
     ? [
-        { label: 'Dashboard', href: '/admin/marketer' },
-        { label: 'Leaderboard', href: '/admin/leaderboard' },
+        {
+          title: 'PORTAL',
+          links: [
+            { label: 'Dashboard', href: '/admin/marketer' },
+            { label: 'Leaderboard', href: '/admin/leaderboard' },
+          ],
+        },
       ]
     : [
-        { label: 'Dashboard', href: '/admin' },
-        { label: 'Therapists', href: '/admin/therapists' },
-        { label: 'Services', href: '/admin/services' },
-        { label: 'Categories', href: '/admin/categories' },
-        { label: 'Bookings', href: '/admin/bookings' },
-        { label: 'Reviews', href: '/admin/reviews' },
-        { label: 'Marketers', href: '/admin/marketers' },
-        { label: 'Leaderboard', href: '/admin/leaderboard' },
-        { label: 'Settings', href: '/admin/settings' },
+        {
+          title: 'OPERATIONS',
+          links: [
+            { label: 'Dashboard', href: '/admin' },
+            { label: 'Bookings', href: '/admin/bookings' },
+            { label: 'Payments', href: '/admin/payments' },
+            { label: 'Customers', href: '/admin/customers' },
+            { label: 'Notifications', href: '/admin/notifications' },
+          ],
+        },
+        {
+          title: 'PEOPLE',
+          links: [
+            { label: 'Therapists', href: '/admin/therapists' },
+            { label: 'Reviews', href: '/admin/reviews' },
+            { label: 'Testimonials', href: '/admin/testimonials' },
+          ],
+        },
+        {
+          title: 'MARKETING',
+          links: [
+            { label: 'Marketers', href: '/admin/marketers' },
+            { label: 'Marketing Links', href: '/admin/marketing-links' },
+            { label: 'Leaderboard', href: '/admin/leaderboard' },
+          ],
+        },
+        {
+          title: 'CONTENT',
+          links: [
+            { label: 'Content CMS', href: '/admin/content' },
+          ],
+        },
+        {
+          title: 'SYSTEM',
+          links: [
+            { label: 'Services', href: '/admin/services' },
+            { label: 'Categories', href: '/admin/categories' },
+            { label: 'Settings', href: '/admin/settings' },
+            { label: 'Audit Log', href: '/admin/audit-log' },
+            ...(session.role === 'SUPER_ADMIN' ? [{ label: 'Admin Users', href: '/admin/admin-users' }] : []),
+          ],
+        },
       ];
+
+  const flatNavLinks = navSections.flatMap((s) => s.links);
 
   const brandHref = isMarketer ? '/admin/marketer' : '/admin';
 
@@ -57,12 +98,12 @@ export default async function ProtectedAdminLayout({
               </Link>
 
               {/* Desktop Nav */}
-              <nav className="hidden md:flex items-center space-x-1 pl-6 border-l border-slate-800">
-                {navLinks.map((link) => (
+              <nav className="hidden lg:flex items-center space-x-1 pl-6 border-l border-slate-800">
+                {flatNavLinks.slice(0, 7).map((link) => (
                   <Link
                     key={link.href}
                     href={link.href}
-                    className="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
+                    className="px-2.5 py-1.5 rounded-md text-xs font-semibold text-slate-200 hover:text-white hover:bg-slate-800 transition-colors"
                   >
                     {link.label}
                   </Link>
@@ -70,8 +111,10 @@ export default async function ProtectedAdminLayout({
               </nav>
             </div>
 
-            {/* Quick Actions / Session status / Link back to site */}
+            {/* Quick Actions / Notifications / Session status / Link back to site */}
             <div className="flex items-center gap-3">
+              {!isMarketer && <AdminNotificationBell />}
+
               <span className="text-xs text-slate-400 hidden sm:inline-block">
                 Signed in as <strong className="text-slate-200">{session.email}</strong> ({session.role})
               </span>
@@ -102,16 +145,25 @@ export default async function ProtectedAdminLayout({
           </div>
         </div>
 
-        {/* Mobile Navigation Bar */}
-        <div className="md:hidden border-t border-slate-800 px-4 py-2 flex items-center space-x-2 overflow-x-auto text-xs">
-          {navLinks.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="px-3 py-1.5 rounded-md font-medium text-slate-200 hover:bg-slate-800 shrink-0"
-            >
-              {link.label}
-            </Link>
+        {/* Secondary Sub-Header Navigation Bar */}
+        <div className="border-t border-slate-800 bg-slate-950/80 px-4 py-2 overflow-x-auto text-xs flex items-center gap-6">
+          {navSections.map((sec) => (
+            <div key={sec.title} className="flex items-center gap-2 shrink-0">
+              <span className="text-[10px] font-black tracking-widest text-emerald-400 uppercase">
+                {sec.title}:
+              </span>
+              <div className="flex items-center gap-1">
+                {sec.links.map((link) => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className="px-2 py-1 rounded-md font-medium text-slate-300 hover:text-white hover:bg-slate-800 shrink-0 transition-colors"
+                  >
+                    {link.label}
+                  </Link>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </header>

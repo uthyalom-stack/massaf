@@ -17,6 +17,8 @@ interface BookingsPageProps {
     search?: string;
     status?: string;
     dateFilter?: string;
+    quickFilter?: string;
+    paymentStatus?: string;
   }>;
 }
 
@@ -30,6 +32,8 @@ export default async function AdminBookingsPage({ searchParams }: BookingsPagePr
   const search = resolvedParams?.search || '';
   const statusFilter = resolvedParams?.status || 'ALL';
   const dateFilter = resolvedParams?.dateFilter || 'ALL';
+  const quickFilter = resolvedParams?.quickFilter || 'ALL';
+  const paymentStatusFilter = resolvedParams?.paymentStatus || 'ALL';
 
   let bookings: AdminBookingListItem[] = [];
 
@@ -79,6 +83,23 @@ export default async function AdminBookingsPage({ searchParams }: BookingsPagePr
         appointmentDateTime: {
           lt: startOfToday,
         },
+      });
+    }
+
+    if (quickFilter === 'unassigned') {
+      whereConditions.push({
+        therapistId: null,
+        status: { in: ['PENDING', 'CONFIRMED'] },
+      });
+    } else if (quickFilter === 'pending_payment') {
+      whereConditions.push({
+        paymentStatus: 'PENDING',
+      });
+    }
+
+    if (['UNPAID', 'PENDING', 'PAID', 'FAILED', 'REFUNDED'].includes(paymentStatusFilter)) {
+      whereConditions.push({
+        paymentStatus: paymentStatusFilter as Prisma.EnumPaymentStatusFilter,
       });
     }
 

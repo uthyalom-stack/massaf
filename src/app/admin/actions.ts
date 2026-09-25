@@ -17,8 +17,10 @@ import {
 } from '@/lib/validations/admin-booking';
 import { updateReviewStatusSchema, createAdminReviewSchema } from '@/lib/validations/admin-review';
 import { createMarketingLinkSchema, updateMarketingLinkSchema } from '@/lib/validations/admin-marketing';
-import { BookingStatus, ReviewStatus } from '@prisma/client';
+import { BookingStatus, ReviewStatus, VerificationStatus } from '@prisma/client';
 import { revalidatePath } from 'next/cache';
+import { logAdminAction } from '@/lib/admin-audit';
+import { createAdminNotification } from '@/lib/admin-notifications';
 import {
   notifyBookingConfirmed,
   notifyBookingCancelled,
@@ -99,6 +101,606 @@ export async function createTherapistAction(input: unknown) {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to create therapist record.',
     };
+  }
+}
+
+// ====================================================================
+// EXPANDED ADMIN ACTIONS (Payments, Verification, Customers, Audit, Notifications, Testimonials, Admin Users)
+// ====================================================================
+
+// --- Payments & Gift Card Reviews ---
+
+export async function listGiftCardSubmissionsAction(statusFilter: string = 'ALL', search: string = '') {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const whereClause: {
+      status?: 'PENDING' | 'APPROVED' | 'REJECTED';
+      OR?: Array<{
+        booking?: {
+          bookingNumber?: { contains: string };
+          customer?: {
+            name?: { contains: string };
+            email?: { contains: string };
+          };
+        };
+      }>;
+    } = {};
+
+    if (['PENDING', 'APPROVED', 'REJECTED'].includes(statusFilter)) {
+      whereClause.status = statusFilter as 'PENDING' | 'APPROVED' | 'REJECTED';
+    }
+
+    if (search.trim()) {
+      const q = search.trim();
+      whereClause.OR = [
+        { booking: { bookingNumber: { contains: q } } },
+        { booking: { customer: { name: { contains: q } } } },
+        { booking: { customer: { email: { contains: q } } } },
+      ];
+    }
+
+    const submissions = await db.giftCardSubmission.findMany({
+      where: whereClause,
+      include: {
+        images: true,
+        booking: {
+          include: {
+            customer: { select: { id: true, name: true, email: true, phone: true } },
+            service: { select: { id: true, name: true, durationMinutes: true, price: true } },
+            therapist: { select: { id: true, name: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const serialized = submissions.map((sub) => ({
+      id: sub.id,
+      bookingId: sub.bookingId,
+      bookingNumber: sub.booking.bookingNumber,
+      customerName: sub.booking.customer.name,
+      customerEmail: sub.booking.customer.email,
+      customerPhone: sub.booking.customer.phone,
+      serviceName: sub.booking.service.name,
+      therapistName: sub.booking.therapist?.name || 'Unassigned',
+      amount: sub.booking.amount,
+      paymentMethod: sub.booking.paymentMethod || 'GIFT_CARD',
+      cardType: sub.cardType,
+      declaredValue: sub.declaredValue,
+      notes: sub.notes,
+      status: sub.status,
+      rejectionReason: sub.rejectionReason,
+      reviewedAt: sub.reviewedAt ? sub.reviewedAt.toISOString() : null,
+      reviewedBy: sub.reviewedBy,
+      createdAt: sub.createdAt.toISOString(),
+      images: sub.images.map((img) => ({ id: img.id, storageKey: img.storageKey })),
+    }));
+
+    return { success: true, submissions: serialized };
+  } catch (err: unknown) {
+    console.error('Error in listGiftCardSubmissionsAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to list gift card submissions.' };
+  }
+}
+
+// --- Customer Directory Management (Read-Only Portal) ---
+
+export async function listCustomersAction(search: string = '', page: number = 1, pageSize: number = 20) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const skip = Math.max(0, (page - 1) * pageSize);
+    const take = Math.min(100, Math.max(1, pageSize));
+
+    const whereClause: {
+      OR?: Array<
+        | { name?: { contains: string } }
+        | { email?: { contains: string } }
+        | { phone?: { contains: string } }
+      >;
+    } = {};
+
+    if (search.trim()) {
+      const q = search.trim();
+      whereClause.OR = [
+        { name: { contains: q } },
+        { email: { contains: q } },
+        { phone: { contains: q } },
+      ];
+    }
+
+    const [totalCount, rawCustomers] = await Promise.all([
+      db.customer.count({ where: whereClause }),
+      db.customer.findMany({
+        where: whereClause,
+        include: {
+          _count: {
+            select: {
+              bookings: true,
+              reviews: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    const customers = rawCustomers.map((c) => ({
+      id: c.id,
+      name: c.name,
+      email: c.email,
+      phone: c.phone,
+      bookingCount: c._count.bookings,
+      reviewCount: c._count.reviews,
+      createdAt: c.createdAt.toISOString(),
+    }));
+
+    return {
+      success: true,
+      customers,
+      pagination: {
+        totalCount,
+        page,
+        pageSize: take,
+        totalPages: Math.ceil(totalCount / take) || 1,
+      },
+    };
+  } catch (err: unknown) {
+    console.error('Error in listCustomersAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to list customer accounts.' };
+  }
+}
+
+export async function getCustomerDetailsAction(customerId: string) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const customer = await db.customer.findUnique({
+      where: { id: customerId },
+      include: {
+        addresses: { orderBy: { createdAt: 'desc' } },
+        favorites: {
+          include: {
+            therapist: { select: { id: true, name: true, profileImage: true, rating: true } },
+          },
+        },
+        reviews: {
+          include: {
+            therapist: { select: { id: true, name: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+        bookings: {
+          include: {
+            therapist: { select: { id: true, name: true } },
+            service: { select: { id: true, name: true, durationMinutes: true, price: true } },
+            marketingLink: { select: { id: true, code: true, name: true } },
+          },
+          orderBy: { appointmentDateTime: 'desc' },
+        },
+      },
+    });
+
+    if (!customer) {
+      return { success: false, error: 'Customer not found.' };
+    }
+
+    const serialized = {
+      id: customer.id,
+      name: customer.name,
+      email: customer.email,
+      phone: customer.phone,
+      createdAt: customer.createdAt.toISOString(),
+      addresses: customer.addresses.map((a) => ({
+        id: a.id,
+        label: a.label,
+        addressLine1: a.addressLine1,
+        addressLine2: a.addressLine2,
+        city: a.city,
+        state: a.state,
+        zipCode: a.zipCode,
+      })),
+      favorites: customer.favorites.map((f) => ({
+        id: f.id,
+        therapist: f.therapist,
+      })),
+      reviews: customer.reviews.map((r) => ({
+        id: r.id,
+        rating: r.rating,
+        comment: r.comment,
+        status: r.status,
+        therapistName: r.therapist.name,
+        createdAt: r.createdAt.toISOString(),
+      })),
+      bookings: customer.bookings.map((b) => ({
+        id: b.id,
+        bookingNumber: b.bookingNumber,
+        appointmentDateTime: b.appointmentDateTime.toISOString(),
+        durationMinutes: b.durationMinutes,
+        locationType: b.locationType,
+        status: b.status,
+        amount: b.amount,
+        paymentStatus: b.paymentStatus,
+        paymentMethod: b.paymentMethod,
+        therapistName: b.therapist?.name || 'Unassigned',
+        serviceName: b.service.name,
+        marketingCode: b.marketingLink?.code || null,
+      })),
+    };
+
+    return { success: true, customer: serialized };
+  } catch (err: unknown) {
+    console.error('Error in getCustomerDetailsAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to retrieve customer details.' };
+  }
+}
+
+// --- Testimonials Management ---
+
+export async function updateTestimonialAction(id: string, input: unknown) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    const data = input as {
+      authorName?: string;
+      authorLocation?: string;
+      rating?: number;
+      comment?: string;
+      therapistId?: string;
+      isPublished?: boolean;
+    };
+
+    const testimonial = await db.testimonial.findUnique({ where: { id } });
+    if (!testimonial) {
+      return { success: false, error: 'Testimonial not found.' };
+    }
+
+    const updated = await db.testimonial.update({
+      where: { id },
+      data: {
+        ...(data.authorName !== undefined && { authorName: data.authorName.trim() }),
+        ...(data.authorLocation !== undefined && { authorLocation: data.authorLocation ? data.authorLocation.trim() : null }),
+        ...(data.rating !== undefined && { rating: Math.min(5, Math.max(1, Number(data.rating))) }),
+        ...(data.comment !== undefined && { comment: data.comment.trim() }),
+        ...(data.therapistId !== undefined && { therapistId: data.therapistId }),
+        ...(data.isPublished !== undefined && { isPublished: data.isPublished }),
+      },
+    });
+
+    await logAdminAction({
+      session: adminSession,
+      action: 'TESTIMONIAL_UPDATED',
+      entityType: 'Testimonial',
+      entityId: id,
+      description: `Updated testimonial for '${updated.authorName}'`,
+    });
+
+    safeRevalidatePath('/admin/testimonials');
+    safeRevalidatePath('/admin/reviews');
+    return { success: true, testimonial: updated };
+  } catch (err: unknown) {
+    console.error('Error in updateTestimonialAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to update testimonial.' };
+  }
+}
+
+// --- Therapist Verification Workflow ---
+
+export async function updateTherapistVerificationAction(
+  therapistId: string,
+  verificationStatus: VerificationStatus,
+  notes?: string
+) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
+    if (!therapist) {
+      return { success: false, error: 'Therapist not found.' };
+    }
+
+    const updated = await db.therapist.update({
+      where: { id: therapistId },
+      data: {
+        verificationStatus,
+        verificationNotes: notes !== undefined ? (notes ? notes.trim() : null) : therapist.verificationNotes,
+      },
+    });
+
+    await logAdminAction({
+      session: adminSession,
+      action: 'THERAPIST_VERIFICATION_UPDATED',
+      entityType: 'Therapist',
+      entityId: therapistId,
+      description: `Updated verification status for '${therapist.name}' to ${verificationStatus}`,
+      metadata: { verificationStatus, notes },
+    });
+
+    if (verificationStatus === 'REJECTED' || verificationStatus === 'SUSPENDED') {
+      await createAdminNotification({
+        type: 'THERAPIST_VERIFICATION_ALERT',
+        title: `Therapist ${verificationStatus}`,
+        message: `Therapist '${therapist.name}' was set to ${verificationStatus}${notes ? `: ${notes}` : ''}`,
+        link: `/admin/therapists/${therapistId}`,
+      });
+    }
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/therapists');
+    safeRevalidatePath(`/admin/therapists/${therapistId}`);
+    return { success: true, therapist: updated };
+  } catch (err: unknown) {
+    console.error('Error in updateTherapistVerificationAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to update therapist verification status.' };
+  }
+}
+
+// --- Admin User Management (SUPER_ADMIN Only) ---
+
+export async function listAdminUsersAction() {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN']);
+
+    const users = await db.user.findMany({
+      where: {
+        role: { in: ['SUPER_ADMIN', 'ADMIN'] },
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return { success: true, users };
+  } catch (err: unknown) {
+    console.error('Error in listAdminUsersAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to list admin users.' };
+  }
+}
+
+export async function createAdminUserAction(input: { name: string; email: string; role?: 'ADMIN' | 'SUPER_ADMIN' }) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN']);
+
+    if (!input.email || !input.email.includes('@')) {
+      return { success: false, error: 'Valid email address is required.' };
+    }
+
+    if (!input.name || input.name.trim().length < 2) {
+      return { success: false, error: 'Name must be at least 2 characters.' };
+    }
+
+    const email = input.email.trim().toLowerCase();
+    const existing = await db.user.findUnique({ where: { email } });
+    if (existing) {
+      return { success: false, error: `User account with email '${email}' already exists.` };
+    }
+
+    const { generateSecurePassword } = await import('@/lib/marketer-utils');
+    const { hashPassword } = await import('@/lib/auth-password');
+
+    const tempPassword = generateSecurePassword();
+    const passwordHash = await hashPassword(tempPassword);
+    const assignedRole = input.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : 'ADMIN';
+
+    const newUser = await db.user.create({
+      data: {
+        name: input.name.trim(),
+        email,
+        role: assignedRole,
+        passwordHash,
+        isActive: true,
+      },
+    });
+
+    await logAdminAction({
+      session: adminSession,
+      action: 'ADMIN_USER_CREATED',
+      entityType: 'User',
+      entityId: newUser.id,
+      description: `Created new admin user '${newUser.email}' (${assignedRole})`,
+    });
+
+    safeRevalidatePath('/admin/admin-users');
+    return {
+      success: true,
+      user: { id: newUser.id, name: newUser.name, email: newUser.email, role: newUser.role },
+      generatedPassword: tempPassword,
+    };
+  } catch (err: unknown) {
+    console.error('Error in createAdminUserAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to create admin user.' };
+  }
+}
+
+export async function toggleAdminUserActiveAction(userId: string, isActive: boolean) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN']);
+
+    if (userId === adminSession.entityId) {
+      return { success: false, error: 'You cannot deactivate your own administrative account.' };
+    }
+
+    const targetUser = await db.user.findUnique({ where: { id: userId } });
+    if (!targetUser) {
+      return { success: false, error: 'User not found.' };
+    }
+
+    if (!isActive && targetUser.role === 'SUPER_ADMIN') {
+      const activeSuperAdminCount = await db.user.count({
+        where: { role: 'SUPER_ADMIN', isActive: true },
+      });
+      if (activeSuperAdminCount <= 1) {
+        return { success: false, error: 'Cannot deactivate the final active SUPER_ADMIN account.' };
+      }
+    }
+
+    const updated = await db.user.update({
+      where: { id: userId },
+      data: { isActive },
+    });
+
+    await logAdminAction({
+      session: adminSession,
+      action: isActive ? 'ADMIN_USER_REACTIVATED' : 'ADMIN_USER_DEACTIVATED',
+      entityType: 'User',
+      entityId: userId,
+      description: `${isActive ? 'Reactivated' : 'Deactivated'} admin user '${updated.email}'`,
+    });
+
+    safeRevalidatePath('/admin/admin-users');
+    return { success: true, user: updated };
+  } catch (err: unknown) {
+    console.error('Error in toggleAdminUserActiveAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to toggle admin user status.' };
+  }
+}
+
+// --- Admin Audit Log Queries ---
+
+export async function listAuditLogsAction(
+  search: string = '',
+  actionFilter: string = 'ALL',
+  page: number = 1,
+  pageSize: number = 30
+) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const skip = Math.max(0, (page - 1) * pageSize);
+    const take = Math.min(100, Math.max(1, pageSize));
+
+    const whereClause: {
+      action?: string;
+      OR?: Array<
+        | { actorEmail?: { contains: string } }
+        | { description?: { contains: string } }
+        | { entityType?: { contains: string } }
+      >;
+    } = {};
+
+    if (actionFilter !== 'ALL' && actionFilter.trim()) {
+      whereClause.action = actionFilter.trim();
+    }
+
+    if (search.trim()) {
+      const q = search.trim();
+      whereClause.OR = [
+        { actorEmail: { contains: q } },
+        { description: { contains: q } },
+        { entityType: { contains: q } },
+      ];
+    }
+
+    const [totalCount, rawLogs] = await Promise.all([
+      db.adminAuditLog.count({ where: whereClause }),
+      db.adminAuditLog.findMany({
+        where: whereClause,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    const logs = rawLogs.map((l) => ({
+      id: l.id,
+      actorEmail: l.actorEmail,
+      actorRole: l.actorRole,
+      action: l.action,
+      entityType: l.entityType,
+      entityId: l.entityId,
+      description: l.description,
+      metadataJson: l.metadataJson,
+      createdAt: l.createdAt.toISOString(),
+    }));
+
+    return {
+      success: true,
+      logs,
+      pagination: {
+        totalCount,
+        page,
+        pageSize: take,
+        totalPages: Math.ceil(totalCount / take) || 1,
+      },
+    };
+  } catch (err: unknown) {
+    console.error('Error in listAuditLogsAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to list audit log entries.' };
+  }
+}
+
+// --- Admin Notifications Queries & Mutations ---
+
+export async function listAdminNotificationsAction(unreadOnly: boolean = false, take: number = 20) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const [unreadCount, rawNotifications] = await Promise.all([
+      db.adminNotification.count({ where: { isRead: false } }),
+      db.adminNotification.findMany({
+        where: unreadOnly ? { isRead: false } : {},
+        orderBy: { createdAt: 'desc' },
+        take,
+      }),
+    ]);
+
+    const notifications = rawNotifications.map((n) => ({
+      id: n.id,
+      type: n.type,
+      title: n.title,
+      message: n.message,
+      link: n.link,
+      isRead: n.isRead,
+      createdAt: n.createdAt.toISOString(),
+    }));
+
+    return { success: true, unreadCount, notifications };
+  } catch (err: unknown) {
+    console.error('Error in listAdminNotificationsAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to retrieve admin notifications.' };
+  }
+}
+
+export async function markAdminNotificationReadAction(notificationId: string) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    await db.adminNotification.update({
+      where: { id: notificationId },
+      data: { isRead: true },
+    });
+
+    safeRevalidatePath('/admin');
+    return { success: true };
+  } catch (err: unknown) {
+    console.error('Error in markAdminNotificationReadAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to mark notification as read.' };
+  }
+}
+
+export async function markAllAdminNotificationsReadAction() {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    await db.adminNotification.updateMany({
+      where: { isRead: false },
+      data: { isRead: true },
+    });
+
+    safeRevalidatePath('/admin');
+    return { success: true };
+  } catch (err: unknown) {
+    console.error('Error in markAllAdminNotificationsReadAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to mark all notifications as read.' };
   }
 }
 

@@ -157,6 +157,8 @@ async function deployTursoMigrations() {
         isSchemaAlreadyPresent = hasHourlyRate && hasZipEligibility;
       } else if (mig.dirName.includes('add_admin_review_fields')) {
         isSchemaAlreadyPresent = await checkColumnExists(client, 'Review', 'authorName');
+      } else if (mig.dirName.includes('add_audit_notifications_verification')) {
+        isSchemaAlreadyPresent = await checkTableExists(client, 'AdminAuditLog');
       }
 
       const migrationId = crypto.randomUUID();
