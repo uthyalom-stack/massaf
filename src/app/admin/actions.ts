@@ -246,31 +246,53 @@ export async function shuffleAndDistributeTherapistsAction() {
       }
     }
 
-    // 4. Atomic Staging & Concurrency Lock Pointer Swap Strategy
+    // 4. Atomic Concurrency Lock Acquisition Strategy (Compare-And-Swap)
     // Server-side serialization lock using SiteContent key 'distribution_in_progress_lock'
     const LOCK_KEY = 'distribution_in_progress_lock';
-    const activeLock = await db.siteContent.findUnique({
-      where: { key: LOCK_KEY },
-      select: { content: true, updatedAt: true },
+    const lockThreshold = new Date(Date.now() - 60000); // 60-second stale lock timeout
+
+    // ATOMIC COMPARE-AND-SWAP: Acquire lock only if UNLOCKED or stale (updatedAt < lockThreshold)
+    const lockAcquired = await db.siteContent.updateMany({
+      where: {
+        key: LOCK_KEY,
+        OR: [
+          { content: 'UNLOCKED' },
+          { updatedAt: { lt: lockThreshold } },
+        ],
+      },
+      data: {
+        content: 'LOCKED',
+        updatedAt: new Date(),
+      },
     });
 
-    if (activeLock && activeLock.content === 'LOCKED') {
-      const lockAgeMs = Date.now() - new Date(activeLock.updatedAt).getTime();
-      // If lock was acquired within the last 60 seconds, reject concurrent execution safely
-      if (lockAgeMs < 60000) {
+    if (lockAcquired.count === 0) {
+      // If no row was updated, attempt initial creation if key does not exist yet
+      const existingLock = await db.siteContent.findUnique({ where: { key: LOCK_KEY } });
+      if (!existingLock) {
+        try {
+          await db.siteContent.create({
+            data: {
+              key: LOCK_KEY,
+              title: 'Distribution Serialization Lock',
+              content: 'LOCKED',
+            },
+          });
+        } catch {
+          // Unique constraint violation means another process created the lock concurrently
+          return {
+            success: false,
+            error: 'A distribution shuffle is currently in progress. Please wait a moment before trying again.',
+          };
+        }
+      } else {
+        // Lock is actively held by another process
         return {
           success: false,
           error: 'A distribution shuffle is currently in progress. Please wait a moment before trying again.',
         };
       }
     }
-
-    // Acquire execution lock
-    await db.siteContent.upsert({
-      where: { key: LOCK_KEY },
-      update: { title: 'Distribution Serialization Lock', content: 'LOCKED' },
-      create: { key: LOCK_KEY, title: 'Distribution Serialization Lock', content: 'LOCKED' },
-    });
 
     // Staging timestamp attached to all new records
     const distributionStartTime = new Date();

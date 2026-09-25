@@ -99,106 +99,144 @@ async function runAnalysisAndTests() {
 
   console.log('\n=== Step 5: Cold-Cache Production Matching & Eligibility Integration Test ===');
   // 1. Identify active test therapist in DB
-  const testTherapist = await db.therapist.findFirst({
+  let testTherapist = await db.therapist.findFirst({
     where: { isActive: true },
   });
 
   if (!testTherapist) {
-    console.warn('Skipping Step 5: No active therapist found in dev database.');
-  } else {
-    // Ensure an active_distribution_timestamp exists in DB for cold-cache test
-    let activeTimeRecord = await db.siteContent.findUnique({
-      where: { key: 'active_distribution_timestamp' },
+    testTherapist = await db.therapist.create({
+      data: { name: 'Integration Test Therapist', isActive: true, hourlyRate: 100 },
     });
+  }
 
-    if (!activeTimeRecord?.content) {
-      const sampleRule = await db.therapistZipEligibility.findFirst({
-        where: { therapistId: testTherapist.id },
-      });
-      const sampleTime = sampleRule?.createdAt || new Date();
-      activeTimeRecord = await db.siteContent.upsert({
-        where: { key: 'active_distribution_timestamp' },
-        update: { content: sampleTime.toISOString() },
-        create: { key: 'active_distribution_timestamp', title: 'Active Distribution Timestamp', content: sampleTime.toISOString() },
-      });
-    }
+  // Ensure active distribution timestamp and test rule exist
+  const activeTimestamp = new Date();
+  await db.siteContent.upsert({
+    where: { key: 'active_distribution_timestamp' },
+    update: { content: activeTimestamp.toISOString() },
+    create: { key: 'active_distribution_timestamp', title: 'Active Distribution Timestamp', content: activeTimestamp.toISOString() },
+  });
 
-    const activeTimestamp = activeTimeRecord?.content ? new Date(activeTimeRecord.content) : null;
-    console.log(`Active Distribution Timestamp in DB: ${activeTimestamp ? activeTimestamp.toISOString() : 'None'}`);
+  await db.therapistZipEligibility.deleteMany({ where: { therapistId: testTherapist.id } });
+  await db.therapistZipEligibility.create({
+    data: {
+      therapistId: testTherapist.id,
+      state: 'WI',
+      startZip: '53178',
+      endZip: '53178',
+      createdAt: activeTimestamp,
+    },
+  });
 
-    // 3. Query assigned TherapistZipEligibility records for testTherapist
-    const assignedRules = await db.therapistZipEligibility.findMany({
-      where: {
-        therapistId: testTherapist.id,
-        ...(activeTimestamp ? { createdAt: activeTimestamp } : {}),
+  console.log(`Active Distribution Timestamp in DB: ${activeTimestamp.toISOString()}`);
+
+  // 3. Query assigned TherapistZipEligibility records for testTherapist
+  const assignedRules = await db.therapistZipEligibility.findMany({
+    where: {
+      therapistId: testTherapist.id,
+      createdAt: activeTimestamp,
+    },
+    take: 5,
+  });
+
+  if (assignedRules.length > 0) {
+    const assignedRule = assignedRules[0];
+    const validAssignedZip = assignedRule.startZip;
+
+    // Import production therapistCoversZipAsync and getActiveTherapists
+    const { therapistCoversZipAsync, formatDbTherapistToPublic } = await import('../src/lib/db-therapists');
+
+    const fullTherapist = await db.therapist.findUnique({
+      where: { id: testTherapist.id },
+      include: {
+        photos: true,
+        services: { include: { service: true } },
+        serviceAreas: true,
+        availabilities: true,
       },
-      take: 5,
     });
 
-    if (assignedRules.length === 0) {
-      console.warn('Skipping Step 5: Test therapist has no assigned TherapistZipEligibility rules.');
-    } else {
-      const assignedRule = assignedRules[0];
-      const validAssignedZip = assignedRule.startZip;
+    if (fullTherapist) {
+      const publicTherapist = formatDbTherapistToPublic(fullTherapist as any);
 
-      // Import production therapistCoversZipAsync and getActiveTherapists
-      const { therapistCoversZipAsync, formatDbTherapistToPublic } = await import('../src/lib/db-therapists');
+      // Test A: Assigned ZIP must match and return true
+      const isEligibleForAssigned = await therapistCoversZipAsync(publicTherapist, validAssignedZip);
+      console.log(`[Cold Cache] Checking assigned ZIP ${validAssignedZip} for ${testTherapist.name}: ${isEligibleForAssigned}`);
+      if (!isEligibleForAssigned) {
+        console.error(`FAILED: therapistCoversZipAsync returned false for assigned ZIP ${validAssignedZip}`);
+        process.exit(1);
+      }
+      console.log('SUCCESS: Assigned ZIP matched active TherapistZipEligibility rule!');
 
-      const fullTherapist = await db.therapist.findUnique({
-        where: { id: testTherapist.id },
-        include: {
-          photos: true,
-          services: { include: { service: true } },
-          serviceAreas: true,
-          availabilities: true,
+      // Test B: Outside ZIP must return false
+      const outsideZip = '00000'; // Fake/outside ZIP
+      const isEligibleForOutside = await therapistCoversZipAsync(publicTherapist, outsideZip);
+      console.log(`[Cold Cache] Checking outside ZIP ${outsideZip} for ${testTherapist.name}: ${isEligibleForOutside}`);
+      if (isEligibleForOutside) {
+        console.error(`FAILED: therapistCoversZipAsync returned true for outside ZIP ${outsideZip}`);
+        process.exit(1);
+      }
+      console.log('SUCCESS: Outside/nonexistent ZIP rejected by TherapistZipEligibility!');
+
+      // Test C: Stale distribution record from an older timestamp is excluded
+      console.log('\nTesting Stale Distribution Exclusion...');
+      const staleTimestamp = new Date(Date.now() - 3600000); // 1 hour old stale timestamp
+      await db.therapistZipEligibility.create({
+        data: {
+          therapistId: testTherapist.id,
+          state: 'CA',
+          startZip: '90001',
+          endZip: '90005',
+          createdAt: staleTimestamp,
         },
       });
 
-      if (fullTherapist) {
-        const publicTherapist = formatDbTherapistToPublic(fullTherapist as any);
+      // Set active_distribution_timestamp to present time
+      const newActiveTimestamp = new Date();
+      await db.siteContent.upsert({
+        where: { key: 'active_distribution_timestamp' },
+        update: { content: newActiveTimestamp.toISOString() },
+        create: { key: 'active_distribution_timestamp', title: 'Active Distribution Timestamp', content: newActiveTimestamp.toISOString() },
+      });
 
-        // Test A: Assigned ZIP must match and return true
-        const isEligibleForAssigned = await therapistCoversZipAsync(publicTherapist, validAssignedZip);
-        console.log(`[Cold Cache] Checking assigned ZIP ${validAssignedZip} for ${testTherapist.name}: ${isEligibleForAssigned}`);
-        if (!isEligibleForAssigned) {
-          console.error(`FAILED: therapistCoversZipAsync returned false for assigned ZIP ${validAssignedZip}`);
-          process.exit(1);
-        }
-        console.log('SUCCESS: Assigned ZIP matched active TherapistZipEligibility rule!');
-
-        // Test B: Outside ZIP must return false
-        const outsideZip = '00000'; // Fake/outside ZIP
-        const isEligibleForOutside = await therapistCoversZipAsync(publicTherapist, outsideZip);
-        console.log(`[Cold Cache] Checking outside ZIP ${outsideZip} for ${testTherapist.name}: ${isEligibleForOutside}`);
-        if (isEligibleForOutside) {
-          console.error(`FAILED: therapistCoversZipAsync returned true for outside ZIP ${outsideZip}`);
-          process.exit(1);
-        }
-        console.log('SUCCESS: Outside/nonexistent ZIP rejected by TherapistZipEligibility!');
-
-        // Test C: Fail Closed when active_distribution_timestamp is missing
-        console.log('\nTesting Fail-Closed behavior when active_distribution_timestamp is missing...');
-        await db.siteContent.deleteMany({ where: { key: 'active_distribution_timestamp' } });
-
-        const isEligibleWhenMissing = await therapistCoversZipAsync(publicTherapist, validAssignedZip);
-        console.log(`[Fail Closed] therapistCoversZipAsync with missing timestamp: ${isEligibleWhenMissing}`);
-        if (isEligibleWhenMissing) {
-          console.error('FAILED: therapistCoversZipAsync returned true when active distribution timestamp was missing!');
-          process.exit(1);
-        }
-        console.log('SUCCESS: therapistCoversZipAsync failed closed (returned false) when distribution timestamp was missing!');
-
-        // Restore distribution timestamp for subsequent tests
-        if (activeTimestamp) {
-          await db.siteContent.create({
-            data: {
-              key: 'active_distribution_timestamp',
-              title: 'Active Distribution Timestamp',
-              content: activeTimestamp.toISOString(),
-            },
-          });
-        }
+      const isEligibleForStale = await therapistCoversZipAsync(publicTherapist, '90001');
+      console.log(`[Stale Test] therapistCoversZipAsync for stale rule ZIP 90001: ${isEligibleForStale}`);
+      if (isEligibleForStale) {
+        console.error('FAILED: Stale distribution rule granted eligibility!');
+        process.exit(1);
       }
+      console.log('SUCCESS: Stale distribution record from older timestamp was rejected!');
+
+      // Test D: Fail Closed when active_distribution_timestamp is missing in therapistCoversZipAsync
+      console.log('\nTesting Fail-Closed behavior when active_distribution_timestamp is missing...');
+      await db.siteContent.deleteMany({ where: { key: 'active_distribution_timestamp' } });
+
+      const isEligibleWhenMissing = await therapistCoversZipAsync(publicTherapist, validAssignedZip);
+      console.log(`[Fail Closed] therapistCoversZipAsync with missing timestamp: ${isEligibleWhenMissing}`);
+      if (isEligibleWhenMissing) {
+        console.error('FAILED: therapistCoversZipAsync returned true when active distribution timestamp was missing!');
+        process.exit(1);
+      }
+      console.log('SUCCESS: therapistCoversZipAsync failed closed (returned false) when distribution timestamp was missing!');
+
+      // Test E: getRotatingTherapistsForZip fails closed (returns []) when active_distribution_timestamp is missing
+      const { getRotatingTherapistsForZip } = await import('../src/lib/matching');
+      const rotationResultsWhenMissing = await getRotatingTherapistsForZip(validAssignedZip, [publicTherapist]);
+      console.log(`[Fail Closed] getRotatingTherapistsForZip count with missing timestamp: ${rotationResultsWhenMissing.length}`);
+      if (rotationResultsWhenMissing.length !== 0) {
+        console.error('FAILED: getRotatingTherapistsForZip returned non-empty pool when distribution timestamp was missing!');
+        process.exit(1);
+      }
+      console.log('SUCCESS: getRotatingTherapistsForZip failed closed (returned []) when distribution timestamp was missing!');
+
+      // Restore active distribution timestamp
+      await db.siteContent.create({
+        data: {
+          key: 'active_distribution_timestamp',
+          title: 'Active Distribution Timestamp',
+          content: newActiveTimestamp.toISOString(),
+        },
+      });
     }
   }
 

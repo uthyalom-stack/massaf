@@ -36,8 +36,15 @@ async function checkColumnExists(client: Client, tableName: string, columnName: 
 
 /**
  * Custom deployment migration script for Turso / libSQL database deployments.
- * Inspects database schema state and executes pending SQL migrations directly against Turso
- * using @libsql/client while preserving Prisma's exact _prisma_migrations history table.
+ * Required during build ('npm run build') on serverless deployment platforms (e.g., Vercel)
+ * because @libsql/client executes pending SQL migrations directly against remote Turso databases
+ * (handling libsql:// or https:// URLs where standard 'prisma migrate deploy' fails with protocol errors).
+ *
+ * IDEMPOTENCY SAFETY GUARANTEE:
+ * - Inspects sqlite_master and PRAGMA table_info before applying DDL statements.
+ * - If schema tables/columns already exist, marks migration as applied in _prisma_migrations without duplicate execution.
+ * - Idempotently seeds USZipCode table only when count === 0.
+ * - Safe to execute repeatedly during every production build without corrupting or overwriting application data.
  */
 async function deployTursoMigrations() {
   console.log('[deploy-turso-migrations] Starting database migration check...');
