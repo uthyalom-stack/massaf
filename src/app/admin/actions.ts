@@ -14,10 +14,11 @@ import {
   updateBookingStatusSchema,
   assignBookingTherapistSchema,
   cancelBookingSchema,
+  rescheduleBookingAdminSchema,
 } from '@/lib/validations/admin-booking';
 import { updateReviewStatusSchema, createAdminReviewSchema } from '@/lib/validations/admin-review';
 import { createMarketingLinkSchema, updateMarketingLinkSchema } from '@/lib/validations/admin-marketing';
-import { BookingStatus, ReviewStatus, VerificationStatus } from '@prisma/client';
+import { BookingStatus, PaymentStatus, ReviewStatus, VerificationStatus } from '@prisma/client';
 import { revalidatePath } from 'next/cache';
 import { logAdminAction } from '@/lib/admin-audit';
 import { createAdminNotification } from '@/lib/admin-notifications';
@@ -25,10 +26,13 @@ import {
   notifyBookingConfirmed,
   notifyBookingCancelled,
   notifyBookingCompleted,
+  notifyBookingRescheduled,
 } from '@/lib/notifications';
+import { therapistCoversZipAsync } from '@/lib/db-therapists';
+import { getDbScheduleWindowForDate, parseTimeStringToMinutes } from '@/lib/availability';
+import { CustomerTherapist } from '@/types/customer';
 import { deleteFromR2 } from '@/lib/r2';
 import { getVerifiedAdminSession } from '@/lib/auth-session';
-import { parseTimeStringToMinutes } from '@/lib/availability';
 import { hashPassword } from '@/lib/auth-password';
 import { generateLoginId, generateSecurePassword, generateReferralCode } from '@/lib/marketer-utils';
 
@@ -61,6 +65,248 @@ function safeRevalidatePath(path: string) {
 }
 
 // --- Therapist Management ---
+
+// --- Jotform CSV Therapist Import Actions ---
+
+export async function previewTherapistCsvAction(csvContent: string) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    if (!csvContent || !csvContent.trim()) {
+      return { success: false, error: 'CSV file content is empty.' };
+    }
+
+    const { parseAndPreviewTherapistCsv } = await import('@/lib/therapist-import');
+    const result = await parseAndPreviewTherapistCsv(csvContent);
+
+    return { success: true, ...result };
+  } catch (err: unknown) {
+    console.error('Error in previewTherapistCsvAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to parse CSV content.',
+    };
+  }
+}
+
+export async function executeTherapistCsvImportAction(input: {
+  rows: Array<{
+    rowNumber: number;
+    name: string;
+    bio?: string | null;
+    profileImage?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    telegramChatId?: string | null;
+    hourlyRate: number;
+    offersStudio: boolean;
+    offersInHome: boolean;
+    matchedServiceIds: string[];
+    parsedAvailabilities: Array<{ dayOfWeek: number; startTime: string; endTime: string }>;
+    galleryPhotos: string[];
+    classification: string;
+    existingTherapistId?: string | null;
+    actionChoice: 'CREATE' | 'UPDATE' | 'SKIP';
+  }>;
+}) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    if (!input || !Array.isArray(input.rows) || input.rows.length === 0) {
+      return { success: false, error: 'No import rows provided.' };
+    }
+
+    let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+    const errors: Array<{ rowNumber: number; name: string; error: string }> = [];
+
+    for (const row of input.rows) {
+      if (row.actionChoice === 'SKIP' || row.classification === 'INVALID') {
+        skippedCount++;
+        continue;
+      }
+
+      try {
+        if (row.actionChoice === 'UPDATE' && row.existingTherapistId) {
+          // UPDATE Existing Therapist
+          await db.$transaction(async (tx) => {
+            await tx.therapist.update({
+              where: { id: row.existingTherapistId! },
+              data: {
+                name: row.name,
+                ...(row.bio !== undefined && { bio: row.bio || null }),
+                ...(row.profileImage !== undefined && { profileImage: row.profileImage || null }),
+                ...(row.email !== undefined && { email: row.email || null }),
+                ...(row.phone !== undefined && { phone: row.phone || null }),
+                ...(row.telegramChatId !== undefined && { telegramChatId: row.telegramChatId || null }),
+                hourlyRate: row.hourlyRate || 100.0,
+                offersStudio: row.offersStudio,
+                offersInHome: row.offersInHome,
+              },
+            });
+
+            // Service assignments
+            for (const serviceId of row.matchedServiceIds) {
+              await tx.therapistService.upsert({
+                where: {
+                  therapistId_serviceId: {
+                    therapistId: row.existingTherapistId!,
+                    serviceId,
+                  },
+                },
+                update: { isActive: true },
+                create: {
+                  therapistId: row.existingTherapistId!,
+                  serviceId,
+                  isActive: true,
+                },
+              });
+            }
+
+            // Availability schedule rules
+            if (row.parsedAvailabilities && row.parsedAvailabilities.length > 0) {
+              for (const av of row.parsedAvailabilities) {
+                const existingAv = await tx.therapistAvailability.findFirst({
+                  where: {
+                    therapistId: row.existingTherapistId!,
+                    dayOfWeek: av.dayOfWeek,
+                    startTime: av.startTime,
+                    endTime: av.endTime,
+                  },
+                });
+                if (!existingAv) {
+                  await tx.therapistAvailability.create({
+                    data: {
+                      therapistId: row.existingTherapistId!,
+                      dayOfWeek: av.dayOfWeek,
+                      startTime: av.startTime,
+                      endTime: av.endTime,
+                    },
+                  });
+                }
+              }
+            }
+
+            // Gallery photos
+            if (row.galleryPhotos && row.galleryPhotos.length > 0) {
+              let sortOrder = 1;
+              for (const photoUrl of row.galleryPhotos) {
+                if (photoUrl) {
+                  await tx.therapistPhoto.create({
+                    data: {
+                      therapistId: row.existingTherapistId!,
+                      url: photoUrl,
+                      sortOrder: sortOrder++,
+                    },
+                  });
+                }
+              }
+            }
+          });
+
+          updatedCount++;
+        } else {
+          // CREATE New Therapist
+          await db.$transaction(async (tx) => {
+            const newTherapist = await tx.therapist.create({
+              data: {
+                name: row.name,
+                bio: row.bio || null,
+                profileImage: row.profileImage || null,
+                email: row.email || null,
+                phone: row.phone || null,
+                telegramChatId: row.telegramChatId || null,
+                hourlyRate: row.hourlyRate || 100.0,
+                offersStudio: row.offersStudio,
+                offersInHome: row.offersInHome,
+                isActive: true,
+                verificationStatus: 'VERIFIED', // Business bulk imported existing known therapists
+              },
+            });
+
+            // Services
+            for (const serviceId of row.matchedServiceIds) {
+              await tx.therapistService.create({
+                data: {
+                  therapistId: newTherapist.id,
+                  serviceId,
+                  isActive: true,
+                },
+              });
+            }
+
+            // Availability
+            if (row.parsedAvailabilities && row.parsedAvailabilities.length > 0) {
+              for (const av of row.parsedAvailabilities) {
+                await tx.therapistAvailability.create({
+                  data: {
+                    therapistId: newTherapist.id,
+                    dayOfWeek: av.dayOfWeek,
+                    startTime: av.startTime,
+                    endTime: av.endTime,
+                  },
+                });
+              }
+            }
+
+            // Gallery Photos
+            if (row.galleryPhotos && row.galleryPhotos.length > 0) {
+              let sortOrder = 1;
+              for (const photoUrl of row.galleryPhotos) {
+                if (photoUrl) {
+                  await tx.therapistPhoto.create({
+                    data: {
+                      therapistId: newTherapist.id,
+                      url: photoUrl,
+                      sortOrder: sortOrder++,
+                    },
+                  });
+                }
+              }
+            }
+          });
+
+          createdCount++;
+        }
+      } catch (rowErr: unknown) {
+        failedCount++;
+        const msg = rowErr instanceof Error ? rowErr.message : 'Unknown database error';
+        errors.push({ rowNumber: row.rowNumber, name: row.name, error: msg });
+        console.error(`Error importing row #${row.rowNumber} (${row.name}):`, rowErr);
+      }
+    }
+
+    await logAdminAction({
+      session: adminSession,
+      action: 'THERAPIST_CSV_IMPORT_EXECUTED',
+      entityType: 'Therapist',
+      description: `Executed therapist CSV import. Created ${createdCount}, updated ${updatedCount}, skipped ${skippedCount}, failed ${failedCount}.`,
+      metadata: { createdCount, updatedCount, skippedCount, failedCount, errorsCount: errors.length },
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/therapists');
+
+    return {
+      success: true,
+      report: {
+        createdCount,
+        updatedCount,
+        skippedCount,
+        failedCount,
+        errors,
+      },
+    };
+  } catch (err: unknown) {
+    console.error('Error in executeTherapistCsvImportAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to execute CSV import.',
+    };
+  }
+}
 
 export async function createTherapistAction(input: unknown) {
   try {
@@ -109,6 +355,99 @@ export async function createTherapistAction(input: unknown) {
 // ====================================================================
 
 // --- Payments & Gift Card Reviews ---
+
+// --- Payments Management (All Payment Records) ---
+
+export async function listAllPaymentsAction(
+  paymentStatusFilter: string = 'ALL',
+  search: string = ''
+) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const whereClause: {
+      paymentStatus?: 'PAID' | 'PENDING' | 'UNPAID' | 'FAILED' | 'REFUNDED';
+      OR?: Array<
+        | { bookingNumber?: { contains: string } }
+        | { customer?: { name?: { contains: string } } }
+        | { customer?: { email?: { contains: string } } }
+        | { paymentReference?: { contains: string } }
+      >;
+    } = {};
+
+    if (['PAID', 'PENDING', 'UNPAID', 'FAILED', 'REFUNDED'].includes(paymentStatusFilter)) {
+      whereClause.paymentStatus = paymentStatusFilter as PaymentStatus;
+    }
+
+    if (search.trim()) {
+      const q = search.trim();
+      whereClause.OR = [
+        { bookingNumber: { contains: q } },
+        { customer: { name: { contains: q } } },
+        { customer: { email: { contains: q } } },
+        { paymentReference: { contains: q } },
+      ];
+    }
+
+    const bookings = await db.booking.findMany({
+      where: whereClause,
+      include: {
+        customer: { select: { id: true, name: true, email: true, phone: true } },
+        therapist: { select: { id: true, name: true } },
+        service: { select: { id: true, name: true } },
+        giftCardSubmission: {
+          include: { images: true },
+        },
+        refunds: {
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const serialized = bookings.map((b) => ({
+      id: b.id,
+      bookingNumber: b.bookingNumber,
+      customerId: b.customerId,
+      customerName: b.customer?.name || 'Customer',
+      customerEmail: b.customer?.email || '',
+      serviceName: b.service?.name || 'Service',
+      therapistName: b.therapist?.name || 'Unassigned',
+      amount: b.amount,
+      paymentStatus: b.paymentStatus,
+      paymentMethod: b.paymentMethod || 'OTHER',
+      paymentReference: b.paymentReference,
+      bookingStatus: b.status,
+      createdAt: b.createdAt.toISOString(),
+      giftCardSubmission: b.giftCardSubmission ? {
+        id: b.giftCardSubmission.id,
+        cardType: b.giftCardSubmission.cardType,
+        cardCode: b.giftCardSubmission.cardCode,
+        declaredValue: b.giftCardSubmission.declaredValue,
+        notes: b.giftCardSubmission.notes,
+        status: b.giftCardSubmission.status,
+        rejectionReason: b.giftCardSubmission.rejectionReason,
+        imageIds: b.giftCardSubmission.images.map((img) => img.id),
+      } : null,
+      refunds: b.refunds.map((r) => ({
+        id: r.id,
+        amount: r.amount,
+        reason: r.reason,
+        status: r.status,
+        requestedBy: r.requestedBy,
+        processedBy: r.processedBy,
+        failureReason: r.failureReason,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+    }));
+
+    return { success: true, payments: serialized };
+  } catch (err: unknown) {
+    console.error('Error in listAllPaymentsAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to list payments.' };
+  }
+}
 
 export async function listGiftCardSubmissionsAction(statusFilter: string = 'ALL', search: string = '') {
   try {
@@ -254,35 +593,72 @@ export async function listCustomersAction(search: string = '', page: number = 1,
   }
 }
 
+export async function toggleCustomerActiveAction(customerId: string, isActive: boolean) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const customer = await db.customer.findUnique({ where: { id: customerId } });
+    if (!customer) {
+      return { success: false, error: 'Customer account not found.' };
+    }
+
+    const updated = await db.customer.update({
+      where: { id: customerId },
+      data: { isActive },
+    });
+
+    await logAdminAction({
+      session: adminSession,
+      action: isActive ? 'CUSTOMER_REACTIVATED' : 'CUSTOMER_DEACTIVATED',
+      entityType: 'Customer',
+      entityId: customerId,
+      description: `${isActive ? 'Reactivated' : 'Deactivated'} customer account '${customer.email}'`,
+    });
+
+    safeRevalidatePath('/admin/customers');
+    safeRevalidatePath(`/admin/customers/${customerId}`);
+    return { success: true, customer: updated };
+  } catch (err: unknown) {
+    console.error('Error in toggleCustomerActiveAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to update customer status.' };
+  }
+}
+
 export async function getCustomerDetailsAction(customerId: string) {
   try {
     await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
 
-    const customer = await db.customer.findUnique({
-      where: { id: customerId },
-      include: {
-        addresses: { orderBy: { createdAt: 'desc' } },
-        favorites: {
-          include: {
-            therapist: { select: { id: true, name: true, profileImage: true, rating: true } },
+    const [customer, internalNotes] = await Promise.all([
+      db.customer.findUnique({
+        where: { id: customerId },
+        include: {
+          addresses: { orderBy: { createdAt: 'desc' } },
+          favorites: {
+            include: {
+              therapist: { select: { id: true, name: true, profileImage: true, rating: true } },
+            },
+          },
+          reviews: {
+            include: {
+              therapist: { select: { id: true, name: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+          },
+          bookings: {
+            include: {
+              therapist: { select: { id: true, name: true } },
+              service: { select: { id: true, name: true, durationMinutes: true, price: true } },
+              marketingLink: { select: { id: true, code: true, name: true } },
+            },
+            orderBy: { appointmentDateTime: 'desc' },
           },
         },
-        reviews: {
-          include: {
-            therapist: { select: { id: true, name: true } },
-          },
-          orderBy: { createdAt: 'desc' },
-        },
-        bookings: {
-          include: {
-            therapist: { select: { id: true, name: true } },
-            service: { select: { id: true, name: true, durationMinutes: true, price: true } },
-            marketingLink: { select: { id: true, code: true, name: true } },
-          },
-          orderBy: { appointmentDateTime: 'desc' },
-        },
-      },
-    });
+      }),
+      db.adminNote.findMany({
+        where: { entityType: 'CUSTOMER', entityId: customerId },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
 
     if (!customer) {
       return { success: false, error: 'Customer not found.' };
@@ -293,7 +669,16 @@ export async function getCustomerDetailsAction(customerId: string) {
       name: customer.name,
       email: customer.email,
       phone: customer.phone,
+      isActive: customer.isActive,
       createdAt: customer.createdAt.toISOString(),
+      internalNotes: internalNotes.map((n) => ({
+        id: n.id,
+        entityType: n.entityType,
+        entityId: n.entityId,
+        authorEmail: n.authorEmail,
+        content: n.content,
+        createdAt: n.createdAt.toISOString(),
+      })),
       addresses: customer.addresses.map((a) => ({
         id: a.id,
         label: a.label,
@@ -639,6 +1024,100 @@ export async function listAuditLogsAction(
 }
 
 // --- Admin Notifications Queries & Mutations ---
+
+// --- Internal Admin Notes ---
+
+export async function createAdminNoteAction(input: {
+  entityType: 'BOOKING' | 'CUSTOMER' | 'THERAPIST' | string;
+  entityId: string;
+  content: string;
+}) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    if (!input || !input.entityType || !input.entityId || !input.content || !input.content.trim()) {
+      return { success: false, error: 'Entity type, entity ID, and note content are required.' };
+    }
+
+    const cleanEntityType = input.entityType.toUpperCase().trim();
+    const cleanContent = input.content.trim();
+
+    const note = await db.adminNote.create({
+      data: {
+        entityType: cleanEntityType,
+        entityId: input.entityId,
+        authorId: adminSession.entityId !== 'env-admin' ? adminSession.entityId : null,
+        authorEmail: adminSession.email,
+        content: cleanContent,
+      },
+    });
+
+    await logAdminAction({
+      session: adminSession,
+      action: 'ADMIN_NOTE_CREATED',
+      entityType: cleanEntityType,
+      entityId: input.entityId,
+      description: `Added internal note to ${cleanEntityType} (${input.entityId})`,
+      metadata: { noteId: note.id, content: cleanContent },
+    });
+
+    safeRevalidatePath('/admin');
+    if (cleanEntityType === 'BOOKING') safeRevalidatePath(`/admin/bookings/${input.entityId}`);
+    if (cleanEntityType === 'CUSTOMER') safeRevalidatePath(`/admin/customers/${input.entityId}`);
+    if (cleanEntityType === 'THERAPIST') safeRevalidatePath(`/admin/therapists/${input.entityId}`);
+
+    return {
+      success: true,
+      note: {
+        id: note.id,
+        entityType: note.entityType,
+        entityId: note.entityId,
+        authorEmail: note.authorEmail,
+        content: note.content,
+        createdAt: note.createdAt.toISOString(),
+      },
+    };
+  } catch (err: unknown) {
+    console.error('Error in createAdminNoteAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to create internal admin note.',
+    };
+  }
+}
+
+export async function listAdminNotesAction(entityType: string, entityId: string) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const cleanEntityType = entityType.toUpperCase().trim();
+
+    const rawNotes = await db.adminNote.findMany({
+      where: {
+        entityType: cleanEntityType,
+        entityId,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const notes = rawNotes.map((n) => ({
+      id: n.id,
+      entityType: n.entityType,
+      entityId: n.entityId,
+      authorEmail: n.authorEmail,
+      content: n.content,
+      createdAt: n.createdAt.toISOString(),
+    }));
+
+    return { success: true, notes };
+  } catch (err: unknown) {
+    console.error('Error in listAdminNotesAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to list internal admin notes.',
+    };
+  }
+}
 
 export async function listAdminNotificationsAction(unreadOnly: boolean = false, take: number = 20) {
   try {
@@ -1314,6 +1793,114 @@ export async function approveGiftCardPaymentAction(bookingId: string) {
   } catch (err: unknown) {
     console.error('Error approving gift card payment:', err);
     return { success: false, error: err instanceof Error ? err.message : 'Failed to approve gift card payment.' };
+  }
+}
+
+// --- Refund Workflow Actions ---
+
+export async function requestRefundAction(input: {
+  bookingId: string;
+  amount?: number;
+  reason?: string;
+}) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const booking = await db.booking.findUnique({ where: { id: input.bookingId } });
+    if (!booking) {
+      return { success: false, error: 'Booking not found.' };
+    }
+
+    if (booking.paymentStatus !== 'PAID') {
+      return { success: false, error: `Refund can only be requested for PAID bookings (current payment status: ${booking.paymentStatus}).` };
+    }
+
+    const refundAmount = input.amount !== undefined && input.amount > 0 ? input.amount : booking.amount;
+
+    const refund = await db.refundRecord.create({
+      data: {
+        bookingId: booking.id,
+        amount: refundAmount,
+        reason: input.reason ? input.reason.trim() : 'Admin initiated refund request',
+        status: 'REQUESTED',
+        requestedBy: adminSession.email,
+      },
+    });
+
+    await logAdminAction({
+      session: adminSession,
+      action: 'REFUND_REQUESTED',
+      entityType: 'Booking',
+      entityId: booking.id,
+      description: `Refund of $${refundAmount.toFixed(2)} requested for booking ${booking.bookingNumber}`,
+      metadata: { refundId: refund.id, amount: refundAmount, reason: input.reason },
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/payments');
+    safeRevalidatePath(`/admin/bookings/${booking.id}`);
+
+    return { success: true, refund };
+  } catch (err: unknown) {
+    console.error('Error in requestRefundAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to request refund.' };
+  }
+}
+
+export async function processRefundAction(input: {
+  refundId: string;
+  status: 'APPROVED' | 'PROCESSED' | 'FAILED';
+  failureReason?: string;
+}) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const refund = await db.refundRecord.findUnique({
+      where: { id: input.refundId },
+      include: { booking: true },
+    });
+
+    if (!refund) {
+      return { success: false, error: 'Refund record not found.' };
+    }
+
+    const updatedRefund = await db.refundRecord.update({
+      where: { id: input.refundId },
+      data: {
+        status: input.status,
+        processedBy: adminSession.email,
+        failureReason: input.failureReason ? input.failureReason.trim() : null,
+      },
+    });
+
+    // If refund is PROCESSED, update Booking paymentStatus & status truthfully
+    if (input.status === 'PROCESSED') {
+      await db.booking.update({
+        where: { id: refund.bookingId },
+        data: {
+          paymentStatus: 'REFUNDED',
+          status: 'REFUNDED',
+        },
+      });
+    }
+
+    await logAdminAction({
+      session: adminSession,
+      action: `REFUND_${input.status}`,
+      entityType: 'Booking',
+      entityId: refund.bookingId,
+      description: `Refund for booking ${refund.booking.bookingNumber} marked as ${input.status}`,
+      metadata: { refundId: refund.id, status: input.status, failureReason: input.failureReason },
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/payments');
+    safeRevalidatePath(`/admin/bookings/${refund.bookingId}`);
+
+    return { success: true, refund: updatedRefund };
+  } catch (err: unknown) {
+    console.error('Error in processRefundAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to process refund.' };
   }
 }
 
@@ -2577,6 +3164,333 @@ export async function assignBookingTherapistAction(input: unknown) {
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Unable to assign therapist to booking. Please try again.',
+    };
+  }
+}
+
+export interface ChecklistItem {
+  pass: boolean;
+  label: string;
+}
+
+export interface TherapistChecklistResult {
+  therapistId: string;
+  therapistName: string;
+  isCompatible: boolean;
+  checklist: {
+    activeAndVerified: ChecklistItem;
+    locationSupported: ChecklistItem;
+    serviceCompatible: ChecklistItem;
+    zipCovered: ChecklistItem;
+    scheduleAvailable: ChecklistItem;
+    noBookingConflict: ChecklistItem;
+  };
+  reasons: string[];
+}
+
+export async function evaluateTherapistCompatibilityForBooking(
+  therapistId: string,
+  bookingParams: {
+    appointmentDateTime: Date;
+    durationMinutes: number;
+    locationType: 'STUDIO' | 'IN_HOME';
+    zipCode?: string | null;
+    serviceId: string;
+    excludeBookingId?: string;
+  }
+): Promise<TherapistChecklistResult> {
+  const therapist = await db.therapist.findUnique({
+    where: { id: therapistId },
+    include: {
+      services: true,
+      availabilities: true,
+    },
+  });
+
+  if (!therapist) {
+    return {
+      therapistId,
+      therapistName: 'Unknown Therapist',
+      isCompatible: false,
+      checklist: {
+        activeAndVerified: { pass: false, label: '✕ Therapist not found' },
+        locationSupported: { pass: false, label: '✕ Location check unavailable' },
+        serviceCompatible: { pass: false, label: '✕ Service check unavailable' },
+        zipCovered: { pass: false, label: '✕ ZIP check unavailable' },
+        scheduleAvailable: { pass: false, label: '✕ Schedule check unavailable' },
+        noBookingConflict: { pass: false, label: '✕ Conflict check unavailable' },
+      },
+      reasons: ['Therapist record not found'],
+    };
+  }
+
+  const reasons: string[] = [];
+
+  // 1. Active & Verification
+  const activeAndVerified =
+    therapist.isActive &&
+    therapist.verificationStatus !== 'REJECTED' &&
+    therapist.verificationStatus !== 'SUSPENDED';
+  if (!activeAndVerified) {
+    reasons.push(`Therapist status is ${therapist.verificationStatus} (active: ${therapist.isActive})`);
+  }
+
+  // 2. Location Type Supported
+  const locationSupported =
+    bookingParams.locationType === 'STUDIO' ? therapist.offersStudio : therapist.offersInHome;
+  if (!locationSupported) {
+    reasons.push(
+      `Therapist does not offer ${bookingParams.locationType === 'STUDIO' ? 'Studio' : 'In-Home'} sessions`
+    );
+  }
+
+  // 3. Service Compatible
+  const serviceCompatible = therapist.services.some(
+    (s) => s.serviceId === bookingParams.serviceId && s.isActive
+  );
+  if (!serviceCompatible) {
+    reasons.push('Therapist does not offer this service');
+  }
+
+  // 4. ZIP Covered
+  let zipCovered = true;
+  if (bookingParams.locationType === 'IN_HOME' && bookingParams.zipCode) {
+    zipCovered = await therapistCoversZipAsync({ id: therapist.id } as unknown as CustomerTherapist, bookingParams.zipCode);
+  }
+  if (!zipCovered) {
+    reasons.push(`Therapist does not cover ZIP ${bookingParams.zipCode} for in-home sessions`);
+  }
+
+  // 5. Schedule Available
+  const appDate = bookingParams.appointmentDateTime;
+  const ymd = appDate.toISOString().split('T')[0];
+  const window = getDbScheduleWindowForDate(therapist.availabilities, ymd);
+
+  const startMins = appDate.getUTCHours() * 60 + appDate.getUTCMinutes();
+  const endMins = startMins + bookingParams.durationMinutes;
+
+  let scheduleAvailable = false;
+  if (window) {
+    scheduleAvailable = startMins >= window.startMinutes && endMins <= window.endMinutes;
+  }
+  if (!scheduleAvailable) {
+    reasons.push(
+      window
+        ? `Outside working hours (${window.hoursStr})`
+        : `Therapist has no working hours scheduled on ${ymd}`
+    );
+  }
+
+  // 6. Booking Conflict Check
+  const appStart = bookingParams.appointmentDateTime.getTime();
+  const appEnd = appStart + bookingParams.durationMinutes * 60 * 1000;
+
+  const existingBookings = await db.booking.findMany({
+    where: {
+      therapistId: therapist.id,
+      id: bookingParams.excludeBookingId ? { not: bookingParams.excludeBookingId } : undefined,
+      status: { notIn: ['CANCELLED', 'REFUNDED'] },
+    },
+    select: { id: true, appointmentDateTime: true, durationMinutes: true },
+  });
+
+  let noBookingConflict = true;
+  for (const b of existingBookings) {
+    const existStart = b.appointmentDateTime.getTime();
+    const existEnd = existStart + b.durationMinutes * 60 * 1000;
+    if (appStart < existEnd && appEnd > existStart) {
+      noBookingConflict = false;
+      break;
+    }
+  }
+  if (!noBookingConflict) {
+    reasons.push('Appointment conflicts with an existing booking for this therapist');
+  }
+
+  const isCompatible =
+    activeAndVerified &&
+    locationSupported &&
+    serviceCompatible &&
+    zipCovered &&
+    scheduleAvailable &&
+    noBookingConflict;
+
+  const appTimeStr = `${String(appDate.getUTCHours()).padStart(2, '0')}:${String(
+    appDate.getUTCMinutes()
+  ).padStart(2, '0')}`;
+
+  return {
+    therapistId: therapist.id,
+    therapistName: therapist.name,
+    isCompatible,
+    checklist: {
+      activeAndVerified: {
+        pass: activeAndVerified,
+        label: activeAndVerified ? '✓ Active & verified' : '✕ Inactive or unverified',
+      },
+      locationSupported: {
+        pass: locationSupported,
+        label: locationSupported
+          ? `✓ Offers ${bookingParams.locationType === 'STUDIO' ? 'Studio' : 'In-Home'}`
+          : `✕ No ${bookingParams.locationType === 'STUDIO' ? 'Studio' : 'In-Home'} support`,
+      },
+      serviceCompatible: {
+        pass: serviceCompatible,
+        label: serviceCompatible ? '✓ Service compatible' : '✕ Service not offered',
+      },
+      zipCovered: {
+        pass: zipCovered,
+        label: zipCovered
+          ? bookingParams.locationType === 'IN_HOME'
+            ? `✓ ZIP ${bookingParams.zipCode} covered`
+            : '✓ ZIP covered (Studio)'
+          : `✕ ZIP ${bookingParams.zipCode} not covered`,
+      },
+      scheduleAvailable: {
+        pass: scheduleAvailable,
+        label: scheduleAvailable
+          ? `✓ Available at ${appTimeStr}`
+          : window
+          ? `✕ Outside schedule (${window.hoursStr})`
+          : `✕ Unavailable on this day`,
+      },
+      noBookingConflict: {
+        pass: noBookingConflict,
+        label: noBookingConflict ? '✓ No booking conflict' : '✕ Already booked at this time',
+      },
+    },
+    reasons,
+  };
+}
+
+export async function rescheduleBookingAdminAction(input: unknown) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    const validated = rescheduleBookingAdminSchema.parse(input);
+
+    const booking = await db.booking.findUnique({
+      where: { id: validated.bookingId },
+      include: { therapist: true, service: true, customer: true },
+    });
+
+    if (!booking) {
+      return { success: false, error: 'Booking not found.' };
+    }
+
+    if (booking.status === 'CANCELLED' || booking.status === 'COMPLETED' || booking.status === 'REFUNDED') {
+      return { success: false, error: `Cannot reschedule booking with status '${booking.status}'.` };
+    }
+
+    const [year, month, day] = validated.newDate.split('-').map(Number);
+    const [hours, minutes] = validated.newTime.split(':').map(Number);
+    const newAppointmentDateTime = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0, 0));
+
+    const targetTherapistId = validated.newTherapistId || booking.therapistId;
+
+    if (targetTherapistId) {
+      const compatibility = await evaluateTherapistCompatibilityForBooking(targetTherapistId, {
+        appointmentDateTime: newAppointmentDateTime,
+        durationMinutes: booking.durationMinutes,
+        locationType: booking.locationType,
+        zipCode: booking.zipCode,
+        serviceId: booking.serviceId,
+        excludeBookingId: booking.id,
+      });
+
+      if (!compatibility.isCompatible) {
+        return {
+          success: false,
+          error: `Reschedule validation failed: ${compatibility.reasons.join('; ')}`,
+          checklist: compatibility.checklist,
+        };
+      }
+    }
+
+    const oldDateTimeStr = booking.appointmentDateTime.toISOString();
+
+    const updated = await db.booking.update({
+      where: { id: booking.id },
+      data: {
+        appointmentDateTime: newAppointmentDateTime,
+        ...(validated.newTherapistId ? { therapistId: validated.newTherapistId } : {}),
+      },
+    });
+
+    await logAdminAction({
+      session: adminSession,
+      action: 'BOOKING_RESCHEDULED',
+      entityType: 'Booking',
+      entityId: booking.id,
+      description: `Rescheduled booking ${booking.bookingNumber} from ${oldDateTimeStr} to ${newAppointmentDateTime.toISOString()}`,
+      metadata: {
+        bookingId: booking.id,
+        bookingNumber: booking.bookingNumber,
+        oldAppointmentDateTime: oldDateTimeStr,
+        newAppointmentDateTime: newAppointmentDateTime.toISOString(),
+        therapistId: targetTherapistId,
+      },
+    });
+
+    try {
+      await notifyBookingRescheduled(updated.id, oldDateTimeStr);
+    } catch (notifErr) {
+      console.error('Error dispatching reschedule notification:', notifErr);
+    }
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/calendar');
+    safeRevalidatePath('/admin/bookings');
+    safeRevalidatePath(`/admin/bookings/${booking.id}`);
+
+    return { success: true, booking: updated };
+  } catch (err: unknown) {
+    console.error('Error in rescheduleBookingAdminAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to reschedule booking.',
+    };
+  }
+}
+
+export async function findCompatibleTherapistsAction(bookingId: string) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+
+    const booking = await db.booking.findUnique({
+      where: { id: bookingId },
+    });
+
+    if (!booking) {
+      return { success: false, error: 'Booking not found.' };
+    }
+
+    const activeTherapists = await db.therapist.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+
+    const results: TherapistChecklistResult[] = [];
+
+    for (const t of activeTherapists) {
+      const evalRes = await evaluateTherapistCompatibilityForBooking(t.id, {
+        appointmentDateTime: booking.appointmentDateTime,
+        durationMinutes: booking.durationMinutes,
+        locationType: booking.locationType,
+        zipCode: booking.zipCode,
+        serviceId: booking.serviceId,
+        excludeBookingId: booking.id,
+      });
+      results.push(evalRes);
+    }
+
+    results.sort((a, b) => (b.isCompatible === a.isCompatible ? 0 : b.isCompatible ? 1 : -1));
+
+    return { success: true, candidates: results };
+  } catch (err: unknown) {
+    console.error('Error in findCompatibleTherapistsAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to evaluate candidate therapists.',
     };
   }
 }

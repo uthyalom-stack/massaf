@@ -199,6 +199,18 @@ export async function POST(request: Request) {
       return sub;
     });
 
+    try {
+      const { createAdminNotification } = await import('@/lib/admin-notifications');
+      await createAdminNotification({
+        type: 'GIFT_CARD_SUBMITTED',
+        title: 'New Gift Card Submitted for Review',
+        message: `Gift card submitted for booking ${booking.bookingNumber}`,
+        link: '/admin/payments',
+      });
+    } catch (notifErr) {
+      console.error('Error creating admin notification for gift card submission:', notifErr);
+    }
+
     // Send Telegram Notification to Admin Destination
     const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
     if (adminChatId) {

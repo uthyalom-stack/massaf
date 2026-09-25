@@ -11,7 +11,6 @@ export const metadata = {
   title: 'Booking Details | MASSAF Admin',
 };
 
-// Force dynamic rendering so booking details reflect real-time database state
 export const dynamic = 'force-dynamic';
 
 interface BookingDetailPageProps {
@@ -20,46 +19,48 @@ interface BookingDetailPageProps {
 
 export default async function AdminBookingDetailPage({ params }: BookingDetailPageProps) {
   const session = await getVerifiedAdminSession();
-  if (!session) {
-    redirect('/admin/login');
-  }
-  if (session.role === 'STAFF') {
-    redirect('/admin/marketer');
-  }
+  if (!session) redirect('/admin/login');
+  if (session.role === 'STAFF') redirect('/admin/marketer');
 
   const { id } = await params;
 
-  if (!id) {
-    notFound();
-  }
+  if (!id) notFound();
 
   let bookingData: BookingDetailData | null = null;
   let availableTherapists: BookingDetailTherapistOption[] = [];
 
   try {
-    const booking = await db.booking.findUnique({
-      where: { id },
-      include: {
-        customer: true,
-        therapist: true,
-        service: true,
-        giftCardSubmission: {
-          include: {
-            images: true,
+    const [booking, dbTherapists, auditLogs, internalNotes, refunds] = await Promise.all([
+      db.booking.findUnique({
+        where: { id },
+        include: {
+          customer: true,
+          therapist: true,
+          service: true,
+          giftCardSubmission: {
+            include: { images: true },
           },
         },
-      },
-    });
+      }),
+      db.therapist.findMany({
+        where: { isActive: true },
+        orderBy: { name: 'asc' },
+      }),
+      db.adminAuditLog.findMany({
+        where: { entityType: 'Booking', entityId: id },
+        orderBy: { createdAt: 'desc' },
+      }),
+      db.adminNote.findMany({
+        where: { entityType: 'BOOKING', entityId: id },
+        orderBy: { createdAt: 'desc' },
+      }),
+      db.refundRecord.findMany({
+        where: { bookingId: id },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
 
-    if (!booking) {
-      notFound();
-    }
-
-    // Fetch active therapists from DB for assignment selector
-    const dbTherapists = await db.therapist.findMany({
-      where: { isActive: true },
-      orderBy: { name: 'asc' },
-    });
+    if (!booking) notFound();
 
     availableTherapists = dbTherapists.map((t) => ({
       id: t.id,
@@ -68,11 +69,6 @@ export default async function AdminBookingDetailPage({ params }: BookingDetailPa
       offersStudio: t.offersStudio,
       offersInHome: t.offersInHome,
     }));
-
-    const therapistName = booking.therapist?.name || 'Unassigned';
-    const serviceName = booking.service?.name || 'Unspecified Service';
-    const serviceDescription = booking.service?.description || null;
-    const servicePrice = booking.service?.price || booking.amount;
 
     bookingData = {
       id: booking.id,
@@ -93,6 +89,8 @@ export default async function AdminBookingDetailPage({ params }: BookingDetailPa
       state: booking.state,
       zipCode: booking.zipCode,
       notes: booking.notes,
+      reminder24hSentAt: booking.reminder24hSentAt ? booking.reminder24hSentAt.toISOString() : null,
+      reminder3hSentAt: booking.reminder3hSentAt ? booking.reminder3hSentAt.toISOString() : null,
       customer: {
         id: booking.customer.id,
         name: booking.customer.name,
@@ -100,11 +98,11 @@ export default async function AdminBookingDetailPage({ params }: BookingDetailPa
         phone: booking.customer.phone,
       },
       therapistId: booking.therapistId,
-      therapistName,
+      therapistName: booking.therapist?.name || 'Unassigned',
       serviceId: booking.serviceId,
-      serviceName,
-      serviceDescription,
-      servicePrice,
+      serviceName: booking.service?.name || 'Service',
+      serviceDescription: booking.service?.description || null,
+      servicePrice: booking.service?.price || booking.amount,
       giftCardSubmission: booking.giftCardSubmission ? {
         id: booking.giftCardSubmission.id,
         cardType: booking.giftCardSubmission.cardType,
@@ -117,16 +115,41 @@ export default async function AdminBookingDetailPage({ params }: BookingDetailPa
         reviewedBy: booking.giftCardSubmission.reviewedBy,
         imageIds: booking.giftCardSubmission.images.map((img) => img.id),
       } : null,
+      auditLogs: auditLogs.map((l) => ({
+        id: l.id,
+        actorEmail: l.actorEmail,
+        actorRole: l.actorRole,
+        action: l.action,
+        description: l.description,
+        metadataJson: l.metadataJson,
+        createdAt: l.createdAt.toISOString(),
+      })),
+      internalNotes: internalNotes.map((n) => ({
+        id: n.id,
+        entityType: n.entityType,
+        entityId: n.entityId,
+        authorEmail: n.authorEmail,
+        content: n.content,
+        createdAt: n.createdAt.toISOString(),
+      })),
+      refunds: refunds.map((r) => ({
+        id: r.id,
+        amount: r.amount,
+        reason: r.reason,
+        status: r.status,
+        requestedBy: r.requestedBy,
+        processedBy: r.processedBy,
+        failureReason: r.failureReason,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      })),
     };
-
   } catch (error) {
     console.error('Error loading booking detail in admin:', error);
     notFound();
   }
 
-  if (!bookingData) {
-    notFound();
-  }
+  if (!bookingData) notFound();
 
   return (
     <BookingDetailClient

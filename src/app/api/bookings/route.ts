@@ -268,6 +268,18 @@ export async function POST(request: Request) {
 
     const createdBooking = bookingResult.booking;
 
+    try {
+      const { createAdminNotification } = await import('@/lib/admin-notifications');
+      await createAdminNotification({
+        type: 'BOOKING_CREATED',
+        title: 'New Booking Created',
+        message: `Booking ${createdBooking.bookingNumber} created for ${customerName}`,
+        link: `/admin/bookings/${createdBooking.id}`,
+      });
+    } catch (notifErr) {
+      console.error('Error creating admin notification for new booking:', notifErr);
+    }
+
     // Await notification dispatch with failure isolation
     try {
       const { notifyBookingCreated } = await import('@/lib/notifications');

@@ -105,6 +105,213 @@ ${appUrl}`;
 }
 
 /**
+ * 8. BOOKING RESCHEDULED NOTIFICATION
+ */
+export async function notifyBookingRescheduled(
+  bookingId: string,
+  oldDateTimeStr: string
+): Promise<NotificationResult> {
+  const channelResults: ChannelResult[] = [];
+  try {
+    const booking = await getBookingWithDetails(bookingId);
+    if (!booking || !booking.customer) {
+      return { success: false, channelResults: [], error: 'Booking or customer record not found' };
+    }
+
+    const newFormattedDate = formatUtcDateString(booking.appointmentDateTime);
+    const newFormattedTime = formatUtcTimeString(booking.appointmentDateTime);
+    const appUrl = getAppUrl();
+    const bookingUrl = `${appUrl}/booking/success?id=${booking.id}`;
+
+    const custEmailRes = await sendEmail({
+      to: booking.customer.email,
+      subject: `MASSAF Appointment Rescheduled — ${booking.bookingNumber}`,
+      text: `Hello ${booking.customer.name},
+
+Your appointment ${booking.bookingNumber} has been successfully rescheduled.
+
+Previous Date/Time: ${oldDateTimeStr}
+New Date: ${newFormattedDate}
+New Time: ${newFormattedTime}
+Therapist: ${booking.therapist ? booking.therapist.name : 'Assigned Specialist'}
+Service: ${booking.service.name} (${booking.durationMinutes} mins)
+
+View details:
+${bookingUrl}
+
+Warm regards,
+MASSAF Team`,
+    });
+
+    channelResults.push({
+      channel: 'email',
+      recipient: booking.customer.email,
+      success: custEmailRes.success,
+      error: custEmailRes.error,
+    });
+
+    if (booking.therapist) {
+      if (booking.therapist.telegramChatId) {
+        const tgRes = await sendTelegramMessage({
+          chatId: booking.therapist.telegramChatId,
+          message: `APPOINTMENT RESCHEDULED
+
+Booking: ${booking.bookingNumber}
+Customer: ${booking.customer.name}
+Previous: ${oldDateTimeStr}
+New Date: ${newFormattedDate}
+New Time: ${newFormattedTime}`,
+        });
+        channelResults.push({
+          channel: 'telegram',
+          recipient: `therapist_tg_${booking.therapist.telegramChatId}`,
+          success: tgRes.success,
+          error: tgRes.error,
+        });
+      } else if (booking.therapist.email) {
+        const thEmailRes = await sendEmail({
+          to: booking.therapist.email,
+          subject: `APPOINTMENT RESCHEDULED — ${booking.bookingNumber}`,
+          text: `Hello ${booking.therapist.name},
+
+An appointment assigned to you has been rescheduled.
+
+Booking Ref: ${booking.bookingNumber}
+Customer: ${booking.customer.name}
+Previous: ${oldDateTimeStr}
+New Date: ${newFormattedDate}
+New Time: ${newFormattedTime}`,
+        });
+        channelResults.push({
+          channel: 'email',
+          recipient: booking.therapist.email,
+          success: thEmailRes.success,
+          error: thEmailRes.error,
+        });
+      }
+    }
+
+    return {
+      success: channelResults.some((r) => r.success),
+      channelResults,
+    };
+  } catch (error) {
+    console.error('[Notification Isolation] notifyBookingRescheduled error:', error);
+    return {
+      success: false,
+      channelResults,
+      error: error instanceof Error ? error.message : 'Unknown notification error',
+    };
+  }
+}
+
+/**
+ * 9. THERAPIST ASSIGNED NOTIFICATION
+ */
+export async function notifyTherapistAssigned(bookingId: string): Promise<NotificationResult> {
+  const channelResults: ChannelResult[] = [];
+  try {
+    const booking = await getBookingWithDetails(bookingId);
+    if (!booking || !booking.customer) {
+      return { success: false, channelResults: [], error: 'Booking or customer record not found' };
+    }
+
+    const formattedDate = formatUtcDateString(booking.appointmentDateTime);
+    const formattedTime = formatUtcTimeString(booking.appointmentDateTime);
+
+    if (booking.therapist) {
+      const emailRes = await sendEmail({
+        to: booking.customer.email,
+        subject: `Therapist Assigned — ${booking.bookingNumber}`,
+        text: `Hello ${booking.customer.name},
+
+Therapist ${booking.therapist.name} has been assigned to your appointment on ${formattedDate} at ${formattedTime}!
+
+Booking Ref: ${booking.bookingNumber}
+Service: ${booking.service.name} (${booking.durationMinutes} mins)
+
+Warm regards,
+MASSAF Team`,
+      });
+
+      channelResults.push({
+        channel: 'email',
+        recipient: booking.customer.email,
+        success: emailRes.success,
+        error: emailRes.error,
+      });
+    }
+
+    return {
+      success: channelResults.some((r) => r.success),
+      channelResults,
+    };
+  } catch (error) {
+    console.error('[Notification Isolation] notifyTherapistAssigned error:', error);
+    return {
+      success: false,
+      channelResults,
+      error: error instanceof Error ? error.message : 'Unknown notification error',
+    };
+  }
+}
+
+/**
+ * 10. PAYMENT RECEIVED NOTIFICATION
+ */
+export async function notifyPaymentReceived(bookingId: string): Promise<NotificationResult> {
+  return notifyBookingConfirmed(bookingId);
+}
+
+/**
+ * 11. PAYMENT ISSUE NOTIFICATION
+ */
+export async function notifyPaymentIssue(
+  bookingId: string,
+  details?: string
+): Promise<NotificationResult> {
+  const channelResults: ChannelResult[] = [];
+  try {
+    const booking = await getBookingWithDetails(bookingId);
+    if (!booking || !booking.customer) {
+      return { success: false, channelResults: [], error: 'Booking or customer record not found' };
+    }
+
+    const emailRes = await sendEmail({
+      to: booking.customer.email,
+      subject: `MASSAF Payment Verification Update — ${booking.bookingNumber}`,
+      text: `Hello ${booking.customer.name},
+
+There was an issue processing or verifying payment for your booking ${booking.bookingNumber}.${details ? `\nDetails: ${details}` : ''}
+
+Please update your payment or contact support to keep your appointment reserved.
+
+Warm regards,
+MASSAF Team`,
+    });
+
+    channelResults.push({
+      channel: 'email',
+      recipient: booking.customer.email,
+      success: emailRes.success,
+      error: emailRes.error,
+    });
+
+    return {
+      success: emailRes.success,
+      channelResults,
+    };
+  } catch (error) {
+    console.error('[Notification Isolation] notifyPaymentIssue error:', error);
+    return {
+      success: false,
+      channelResults,
+      error: error instanceof Error ? error.message : 'Unknown notification error',
+    };
+  }
+}
+
+/**
  * 2. PAYMENT CONFIRMATION NOTIFICATION
  * Triggers when server verifies payment (PAID + CONFIRMED).
  */
