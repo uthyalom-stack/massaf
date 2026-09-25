@@ -94,42 +94,75 @@ export default async function AdminEditTherapistPage({ params }: PageProps) {
         stateGroupMap.get(st)!.push({ startZip: ze.startZip, endZip: ze.endZip });
       }
 
-      // Fetch USZipCode matching cities for the therapist's assigned ranges
+      const uniqueStates = Array.from(stateGroupMap.keys());
+
+      // Batch query all USZipCodes for the involved states in a single database query
+      const allStateZips = await db.uSZipCode.findMany({
+        where: {
+          state: { in: uniqueStates },
+        },
+        select: {
+          state: true,
+          stateName: true,
+          city: true,
+          zipCode: true,
+        },
+        orderBy: {
+          zipCode: 'asc',
+        },
+      });
+
+      // Group state ZIP records in memory for fast range evaluation
+      const zipsByState = new Map<string, Array<{ zipCode: string; city: string; stateName: string }>>();
+      const stateNameMap = new Map<string, string>();
+
+      for (const z of allStateZips) {
+        const st = z.state.toUpperCase();
+        if (!zipsByState.has(st)) {
+          zipsByState.set(st, []);
+        }
+        zipsByState.get(st)!.push(z);
+        if (!stateNameMap.has(st) && z.stateName) {
+          stateNameMap.set(st, z.stateName);
+        }
+      }
+
       for (const [st, ranges] of stateGroupMap.entries()) {
+        const stateZips = zipsByState.get(st) || [];
         const rangesWithDetails = [];
         let stateZipCount = 0;
 
         for (const r of ranges) {
-          const matchingZips = await db.uSZipCode.findMany({
-            where: {
-              state: st,
-              zipCode: { gte: r.startZip, lte: r.endZip },
-            },
-            select: { city: true, zipCode: true },
-          });
+          const matchingZips = stateZips.filter(
+            (z) => z.zipCode >= r.startZip && z.zipCode <= r.endZip
+          );
 
-          const uniqueCities = Array.from(new Set(matchingZips.map((z) => z.city))).slice(0, 5);
-          stateZipCount += matchingZips.length;
+          const uniqueCities: string[] = [];
+          const citySet = new Set<string>();
+          for (const z of matchingZips) {
+            if (!citySet.has(z.city)) {
+              citySet.add(z.city);
+              uniqueCities.push(z.city);
+              if (uniqueCities.length === 5) break;
+            }
+          }
+
+          const rangeCount = matchingZips.length;
+          stateZipCount += rangeCount;
 
           rangesWithDetails.push({
             startZip: r.startZip,
             endZip: r.endZip,
             sampleCities: uniqueCities,
-            count: matchingZips.length,
+            count: rangeCount,
           });
         }
 
         totalAssignedZips += stateZipCount;
 
-        // Fetch state full name if available
-        const sampleStateRecord = await db.uSZipCode.findFirst({
-          where: { state: st },
-          select: { stateName: true },
-        });
-
         zipCoverageGroups.push({
           state: st,
-          stateName: sampleStateRecord?.stateName || st,
+          stateName: stateNameMap.get(st) || st,
           ranges: rangesWithDetails,
           totalStateZips: stateZipCount,
         });
