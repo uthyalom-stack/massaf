@@ -246,11 +246,24 @@ export async function shuffleAndDistributeTherapistsAction() {
       }
     }
 
-    // 4. Atomic Concurrency Lock Acquisition Strategy with Token Ownership
+    // 4. Atomic Concurrency Lock Acquisition Strategy with Token Ownership & Heartbeat
     // Server-side serialization lock using SiteContent key 'distribution_in_progress_lock'
     const LOCK_KEY = 'distribution_in_progress_lock';
     const lockToken = `LOCKED:${crypto.randomUUID()}`;
-    const lockThreshold = new Date(Date.now() - 60000); // 60-second stale lock timeout
+    // Increase stale threshold to 5 minutes to prevent false takeover during long network/staging operations
+    const lockThreshold = new Date(Date.now() - 300000);
+
+    // Helper to refresh lock timestamp during batch processing
+    const refreshLock = async () => {
+      try {
+        await db.siteContent.updateMany({
+          where: { key: LOCK_KEY, content: lockToken },
+          data: { updatedAt: new Date() },
+        });
+      } catch (err) {
+        console.warn('Failed to refresh distribution lock heartbeat:', err);
+      }
+    };
 
     // ATOMIC COMPARE-AND-SWAP: Acquire lock with unique lockToken only if UNLOCKED or stale
     const lockAcquired = await db.siteContent.updateMany({
@@ -306,6 +319,7 @@ export async function shuffleAndDistributeTherapistsAction() {
     try {
       const BATCH_SIZE = 10000;
       for (let i = 0; i < dataWithTimestamp.length; i += BATCH_SIZE) {
+        await refreshLock();
         const batch = dataWithTimestamp.slice(i, i + BATCH_SIZE);
         await db.therapistZipEligibility.createMany({
           data: batch,

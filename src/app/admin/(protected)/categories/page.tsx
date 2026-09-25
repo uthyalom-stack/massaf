@@ -1,10 +1,19 @@
 import { db } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
+import { getVerifiedAdminSession } from '@/lib/auth-session';
 import { createServiceCategoryAction, deleteServiceCategoryAction } from '@/app/admin/actions';
 
 export const revalidate = 0;
 
 export default async function AdminCategoriesPage() {
+  const session = await getVerifiedAdminSession();
+  if (!session) {
+    redirect('/admin/login');
+  }
+  if (session.role === 'STAFF') {
+    redirect('/admin/marketer');
+  }
   const categories = await db.serviceCategory.findMany({
     orderBy: { sortOrder: 'asc' },
     include: {

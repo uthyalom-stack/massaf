@@ -1,6 +1,8 @@
 import React from 'react';
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
+import { getVerifiedAdminSession } from '@/lib/auth-session';
 import { ReviewDetailClient, SerializedReviewDetail } from '@/components/admin/ReviewDetailClient';
 
 export const metadata = {
@@ -15,6 +17,14 @@ interface PageProps {
 }
 
 export default async function AdminReviewDetailPage({ params }: PageProps) {
+  const session = await getVerifiedAdminSession();
+  if (!session) {
+    redirect('/admin/login');
+  }
+  if (session.role === 'STAFF') {
+    redirect('/admin/marketer');
+  }
+
   const { id } = await params;
 
   let serializedReview: SerializedReviewDetail | null = null;

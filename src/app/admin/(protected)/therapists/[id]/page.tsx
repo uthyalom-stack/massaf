@@ -1,6 +1,7 @@
 import React from 'react';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { db } from '@/lib/db';
+import { getVerifiedAdminSession } from '@/lib/auth-session';
 import { EditTherapistForm, DetailedTherapist, ZipCoverageGroup } from '@/components/admin/EditTherapistForm';
 
 export const metadata = {
@@ -14,6 +15,14 @@ interface PageProps {
 }
 
 export default async function AdminEditTherapistPage({ params }: PageProps) {
+  const session = await getVerifiedAdminSession();
+  if (!session) {
+    redirect('/admin/login');
+  }
+  if (session.role === 'STAFF') {
+    redirect('/admin/marketer');
+  }
+
   const { id } = await params;
 
   let therapistData: DetailedTherapist | null = null;

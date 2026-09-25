@@ -1,6 +1,7 @@
 import React from 'react';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { db } from '@/lib/db';
+import { getVerifiedAdminSession } from '@/lib/auth-session';
 import BookingDetailClient, {
   BookingDetailData,
   BookingDetailTherapistOption,
@@ -18,6 +19,14 @@ interface BookingDetailPageProps {
 }
 
 export default async function AdminBookingDetailPage({ params }: BookingDetailPageProps) {
+  const session = await getVerifiedAdminSession();
+  if (!session) {
+    redirect('/admin/login');
+  }
+  if (session.role === 'STAFF') {
+    redirect('/admin/marketer');
+  }
+
   const { id } = await params;
 
   if (!id) {
