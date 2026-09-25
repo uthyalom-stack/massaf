@@ -1124,14 +1124,36 @@ export async function deleteTestimonialAction(id: string) {
 export async function updateSiteContentAction(key: string, title: string, content: string) {
   try {
     await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
-    if (!key || !title || !content) {
+
+    const ALLOWED_CMS_KEYS = new Set([
+      'support',
+      'help',
+      'contact',
+      'therapist-verification',
+      'safety',
+      'terms',
+      'privacy',
+      'cancellation-policy',
+      'accessibility',
+    ]);
+
+    const cleanKey = key ? key.trim().toLowerCase() : '';
+
+    if (!cleanKey || !title || !content) {
       return { success: false, error: 'Key, title, and content are required.' };
     }
 
+    if (!ALLOWED_CMS_KEYS.has(cleanKey)) {
+      return {
+        success: false,
+        error: `Unauthorized content key '${key}'. CMS updates are restricted to user-facing content pages.`,
+      };
+    }
+
     const updated = await db.siteContent.upsert({
-      where: { key },
+      where: { key: cleanKey },
       update: { title, content },
-      create: { key, title, content },
+      create: { key: cleanKey, title, content },
     });
 
     safeRevalidatePath(`/${key}`);

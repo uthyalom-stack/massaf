@@ -216,6 +216,60 @@ async function runAdminPortalAuditTests() {
   }
   console.log('[PASS] SUPER_ADMIN caller successfully executed createMarketerAction');
 
+  // Test 6: SiteContent CMS Key Allowlist & Internal Key Protection
+  console.log('\n6. Testing SiteContent CMS Key Allowlist & Operational Key Overwrite Rejections...');
+  const { updateSiteContentAction } = await import('../src/app/admin/actions');
+
+  // Ensure active distribution timestamp exists
+  const origTimestamp = new Date().toISOString();
+  await db.siteContent.upsert({
+    where: { key: 'active_distribution_timestamp' },
+    update: { content: origTimestamp },
+    create: { key: 'active_distribution_timestamp', title: 'Active Timestamp', content: origTimestamp },
+  });
+
+  // 1. SUPER_ADMIN can update allowed CMS key ('terms')
+  setSession(superAdminToken);
+  const superTermsRes = await updateSiteContentAction('terms', 'Terms of Service', 'Updated Terms Content');
+  if (!superTermsRes.success) {
+    console.error('FAILED: SUPER_ADMIN could not update allowed CMS key "terms"!');
+    process.exit(1);
+  }
+  console.log('[PASS] SUPER_ADMIN successfully updated allowed CMS key "terms"');
+
+  // 2. ADMIN can update allowed CMS key ('privacy')
+  setSession(adminToken);
+  const adminPrivacyRes = await updateSiteContentAction('privacy', 'Privacy Policy', 'Updated Privacy Content');
+  if (!adminPrivacyRes.success) {
+    console.error('FAILED: ADMIN could not update allowed CMS key "privacy"!');
+    process.exit(1);
+  }
+  console.log('[PASS] ADMIN successfully updated allowed CMS key "privacy"');
+
+  // 3. Attempting to overwrite 'active_distribution_timestamp' via CMS is REJECTED
+  const tsOverwriteRes = await updateSiteContentAction('active_distribution_timestamp', 'Malicious Timestamp', '2000-01-01T00:00:00.000Z');
+  if (tsOverwriteRes.success) {
+    console.error('FAILED: updateSiteContentAction allowed overwriting "active_distribution_timestamp"!');
+    process.exit(1);
+  }
+  console.log('[PASS] updateSiteContentAction rejected overwrite attempt on "active_distribution_timestamp"');
+
+  // 4. Attempting to overwrite 'distribution_in_progress_lock' via CMS is REJECTED
+  const lockOverwriteRes = await updateSiteContentAction('distribution_in_progress_lock', 'Malicious Lock', 'UNLOCKED');
+  if (lockOverwriteRes.success) {
+    console.error('FAILED: updateSiteContentAction allowed overwriting "distribution_in_progress_lock"!');
+    process.exit(1);
+  }
+  console.log('[PASS] updateSiteContentAction rejected overwrite attempt on "distribution_in_progress_lock"');
+
+  // 5. Verify distribution timestamp in DB remained untouched by rejected attempt
+  const currentTsRecord = await db.siteContent.findUnique({ where: { key: 'active_distribution_timestamp' } });
+  if (currentTsRecord?.content !== origTimestamp) {
+    console.error(`FAILED: Distribution timestamp record was corrupted! Expected ${origTimestamp}, got ${currentTsRecord?.content}`);
+    process.exit(1);
+  }
+  console.log('[PASS] Distribution state remained completely intact after rejected CMS overwrite attempts');
+
   console.log('\n====================================================');
   console.log('  ALL ADMIN PORTAL AUTHORIZATION & SECURITY AUDIT TESTS PASSED!');
   console.log('====================================================');
