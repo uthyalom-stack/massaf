@@ -159,6 +159,8 @@ async function deployTursoMigrations() {
         isSchemaAlreadyPresent = await checkColumnExists(client, 'Review', 'authorName');
       } else if (mig.dirName.includes('add_audit_notifications_verification')) {
         isSchemaAlreadyPresent = await checkTableExists(client, 'AdminAuditLog');
+      } else if (mig.dirName.includes('add_is_test_data_markers')) {
+        isSchemaAlreadyPresent = await checkColumnExists(client, 'Customer', 'isTest');
       }
 
       const migrationId = crypto.randomUUID();

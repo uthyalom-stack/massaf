@@ -704,6 +704,255 @@ export async function markAllAdminNotificationsReadAction() {
   }
 }
 
+// --- Super Admin Controlled Test Data Cleanup ---
+
+export async function getTestDataPreviewAction() {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN']);
+
+    // Find test customer and test therapist IDs
+    const [testCustomers, testTherapists] = await Promise.all([
+      db.customer.findMany({ where: { isTest: true }, select: { id: true } }),
+      db.therapist.findMany({ where: { isTest: true }, select: { id: true } }),
+    ]);
+
+    const testCustomerIds = testCustomers.map((c) => c.id);
+    const testTherapistIds = testTherapists.map((t) => t.id);
+
+    // Find test bookings where isTest is true OR customer/therapist is a test entity
+    const testBookings = await db.booking.findMany({
+      where: {
+        OR: [
+          { isTest: true },
+          ...(testCustomerIds.length > 0 ? [{ customerId: { in: testCustomerIds } }] : []),
+          ...(testTherapistIds.length > 0 ? [{ therapistId: { in: testTherapistIds } }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+
+    const testBookingIds = testBookings.map((b) => b.id);
+
+    const [
+      testGiftCardsCount,
+      testReviewsCount,
+      testNotificationsCount,
+      testMarketingLinksCount,
+      testTestimonialsCount,
+    ] = await Promise.all([
+      db.giftCardSubmission.count({
+        where: {
+          ...(testBookingIds.length > 0 ? { bookingId: { in: testBookingIds } } : { id: 'none' }),
+        },
+      }),
+      db.review.count({
+        where: {
+          OR: [
+            { source: 'ADMIN', authorName: { contains: 'Test' } },
+            ...(testCustomerIds.length > 0 ? [{ customerId: { in: testCustomerIds } }] : []),
+            ...(testTherapistIds.length > 0 ? [{ therapistId: { in: testTherapistIds } }] : []),
+            ...(testBookingIds.length > 0 ? [{ bookingId: { in: testBookingIds } }] : []),
+          ],
+        },
+      }),
+      db.adminNotification.count({ where: { isTest: true } }),
+      db.marketingLink.count({ where: { isTest: true } }),
+      db.testimonial.count({ where: { isTest: true } }),
+    ]);
+
+    const totalTestRecords =
+      testCustomers.length +
+      testTherapists.length +
+      testBookings.length +
+      testGiftCardsCount +
+      testReviewsCount +
+      testNotificationsCount +
+      testMarketingLinksCount +
+      testTestimonialsCount;
+
+    return {
+      success: true,
+      preview: {
+        customersCount: testCustomers.length,
+        therapistsCount: testTherapists.length,
+        bookingsCount: testBookings.length,
+        giftCardsCount: testGiftCardsCount,
+        reviewsCount: testReviewsCount,
+        notificationsCount: testNotificationsCount,
+        marketingLinksCount: testMarketingLinksCount,
+        testimonialsCount: testTestimonialsCount,
+        totalTestRecords,
+      },
+    };
+  } catch (err: unknown) {
+    console.error('Error in getTestDataPreviewAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to retrieve test data preview.' };
+  }
+}
+
+export async function deleteTestDataAction(input: { confirmPhrase: string }) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN']);
+
+    if (!input || input.confirmPhrase !== 'DELETE TEST DATA') {
+      return {
+        success: false,
+        error: 'Confirmation phrase mismatch. You must type "DELETE TEST DATA" verbatim to execute cleanup.',
+      };
+    }
+
+    // 1. Identify test entities
+    const [testCustomers, testTherapists] = await Promise.all([
+      db.customer.findMany({ where: { isTest: true }, select: { id: true } }),
+      db.therapist.findMany({ where: { isTest: true }, select: { id: true } }),
+    ]);
+
+    const testCustomerIds = testCustomers.map((c) => c.id);
+    const testTherapistIds = testTherapists.map((t) => t.id);
+
+    const testBookings = await db.booking.findMany({
+      where: {
+        OR: [
+          { isTest: true },
+          ...(testCustomerIds.length > 0 ? [{ customerId: { in: testCustomerIds } }] : []),
+          ...(testTherapistIds.length > 0 ? [{ therapistId: { in: testTherapistIds } }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+
+    const testBookingIds = testBookings.map((b) => b.id);
+
+    // Fetch storage keys for R2 image cleanup before database deletion
+    const testGiftCardImages = testBookingIds.length > 0
+      ? await db.giftCardImage.findMany({
+          where: { giftCardSubmission: { bookingId: { in: testBookingIds } } },
+          select: { storageKey: true },
+        })
+      : [];
+
+    const storageKeysToDelete = testGiftCardImages.map((img) => img.storageKey);
+
+    // 2. Perform cascading deletion inside atomic transaction
+    const deletionCounts = await db.$transaction(async (tx) => {
+      // Delete GiftCardSubmissions & GiftCardImages
+      let giftCardsDel = 0;
+      if (testBookingIds.length > 0) {
+        const gcResult = await tx.giftCardSubmission.deleteMany({
+          where: { bookingId: { in: testBookingIds } },
+        });
+        giftCardsDel = gcResult.count;
+      }
+
+      // Delete Reviews attached to test bookings, customers, or therapists
+      const reviewsDel = await tx.review.deleteMany({
+        where: {
+          OR: [
+            { source: 'ADMIN', authorName: { contains: 'Test' } },
+            ...(testCustomerIds.length > 0 ? [{ customerId: { in: testCustomerIds } }] : []),
+            ...(testTherapistIds.length > 0 ? [{ therapistId: { in: testTherapistIds } }] : []),
+            ...(testBookingIds.length > 0 ? [{ bookingId: { in: testBookingIds } }] : []),
+          ],
+        },
+      });
+
+      // Delete CustomerRotationHistory records for test customers or therapists
+      await tx.customerRotationHistory.deleteMany({
+        where: {
+          OR: [
+            ...(testCustomerIds.length > 0 ? [{ customerId: { in: testCustomerIds } }] : []),
+            ...(testTherapistIds.length > 0 ? [{ therapistId: { in: testTherapistIds } }] : []),
+          ],
+        },
+      });
+
+      // Delete test Bookings
+      let bookingsDel = 0;
+      if (testBookingIds.length > 0) {
+        const bResult = await tx.booking.deleteMany({
+          where: { id: { in: testBookingIds } },
+        });
+        bookingsDel = bResult.count;
+      }
+
+      // Delete test Customers and their addresses/favorites
+      let customersDel = 0;
+      if (testCustomerIds.length > 0) {
+        await tx.customerAddress.deleteMany({ where: { customerId: { in: testCustomerIds } } });
+        await tx.customerFavorite.deleteMany({ where: { customerId: { in: testCustomerIds } } });
+        const cResult = await tx.customer.deleteMany({ where: { id: { in: testCustomerIds } } });
+        customersDel = cResult.count;
+      }
+
+      // Delete test Therapists and their dependent records
+      let therapistsDel = 0;
+      if (testTherapistIds.length > 0) {
+        await tx.therapistPhoto.deleteMany({ where: { therapistId: { in: testTherapistIds } } });
+        await tx.therapistService.deleteMany({ where: { therapistId: { in: testTherapistIds } } });
+        await tx.serviceArea.deleteMany({ where: { therapistId: { in: testTherapistIds } } });
+        await tx.therapistAvailability.deleteMany({ where: { therapistId: { in: testTherapistIds } } });
+        await tx.therapistZipEligibility.deleteMany({ where: { therapistId: { in: testTherapistIds } } });
+        const tResult = await tx.therapist.deleteMany({ where: { id: { in: testTherapistIds } } });
+        therapistsDel = tResult.count;
+      }
+
+      // Delete test Notifications, MarketingLinks, and Testimonials
+      const notificationsDel = await tx.adminNotification.deleteMany({ where: { isTest: true } });
+      const marketingLinksDel = await tx.marketingLink.deleteMany({ where: { isTest: true } });
+      const testimonialsDel = await tx.testimonial.deleteMany({ where: { isTest: true } });
+
+      return {
+        customers: customersDel,
+        therapists: therapistsDel,
+        bookings: bookingsDel,
+        giftCards: giftCardsDel,
+        reviews: reviewsDel.count,
+        notifications: notificationsDel.count,
+        marketingLinks: marketingLinksDel.count,
+        testimonials: testimonialsDel.count,
+      };
+    });
+
+    // 3. Async Cloudflare R2 object cleanup for deleted gift card proof images
+    if (storageKeysToDelete.length > 0) {
+      try {
+        const { deleteFromR2 } = await import('@/lib/r2');
+        for (const key of storageKeysToDelete) {
+          await deleteFromR2(key);
+        }
+      } catch (r2Err) {
+        console.error('Error cleaning up R2 objects for test gift card images:', r2Err);
+      }
+    }
+
+    // 4. Record Audit Log entry
+    await logAdminAction({
+      session: adminSession,
+      action: 'TEST_DATA_CLEANUP_EXECUTED',
+      entityType: 'System',
+      description: `Executed test data cleanup. Deleted ${deletionCounts.customers} customers, ${deletionCounts.therapists} therapists, ${deletionCounts.bookings} bookings, ${deletionCounts.giftCards} gift card submissions, ${deletionCounts.reviews} reviews.`,
+      metadata: deletionCounts,
+    });
+
+    safeRevalidatePath('/admin');
+    safeRevalidatePath('/admin/settings');
+    safeRevalidatePath('/admin/bookings');
+    safeRevalidatePath('/admin/payments');
+    safeRevalidatePath('/admin/customers');
+    safeRevalidatePath('/admin/therapists');
+    safeRevalidatePath('/admin/reviews');
+
+    return {
+      success: true,
+      message: `Test data cleanup executed successfully. Removed ${deletionCounts.customers} customers, ${deletionCounts.therapists} therapists, ${deletionCounts.bookings} bookings, ${deletionCounts.giftCards} gift card submissions, and ${deletionCounts.reviews} reviews.`,
+      deletionCounts,
+    };
+  } catch (err: unknown) {
+    console.error('Error in deleteTestDataAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to execute test data cleanup.' };
+  }
+}
+
 /**
  * Fisher-Yates array shuffling helper for unbiased randomization.
  */

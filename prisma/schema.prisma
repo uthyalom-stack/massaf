@@ -94,6 +94,7 @@ model Customer {
   name      String
   email     String    @unique
   phone     String
+  isTest    Boolean   @default(false)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -104,6 +105,7 @@ model Customer {
   rotationHistory CustomerRotationHistory[]
 
   @@index([email])
+  @@index([isTest])
 }
 
 /// Saved in-home appointment addresses for customers
@@ -158,6 +160,7 @@ model Therapist {
   offersInHome       Boolean            @default(true)
   verificationStatus VerificationStatus @default(VERIFIED)
   verificationNotes  String?
+  isTest             Boolean            @default(false)
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -175,6 +178,7 @@ model Therapist {
   @@index([isActive])
   @@index([isFeatured])
   @@index([isHomepageSelected])
+  @@index([isTest])
 }
 
 /// Scalable geographic distribution pool mapping therapists to state/ZIP ranges
@@ -350,6 +354,7 @@ model Booking {
   reminder24hSentAt DateTime?
   reminder3hSentAt  DateTime?
 
+  isTest    Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -366,6 +371,7 @@ model Booking {
   @@index([marketingLinkId])
   @@index([appointmentDateTime])
   @@index([status])
+  @@index([isTest])
 }
 
 /// Customer reviews for therapists
@@ -402,6 +408,7 @@ model MarketingLink {
   destinationUrl String   @default("/")
   clicks         Int      @default(0)
   isActive       Boolean  @default(true)
+  isTest         Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -411,6 +418,7 @@ model MarketingLink {
   @@index([code])
   @@index([isActive])
   @@index([userId])
+  @@index([isTest])
 }
 
 /// Persistent short-lived single-use authentication verification tokens
@@ -462,6 +470,7 @@ model Testimonial {
   comment        String
   isPublished    Boolean   @default(true)
   sortOrder      Int       @default(0)
+  isTest         Boolean   @default(false)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -469,6 +478,7 @@ model Testimonial {
 
   @@index([therapistId])
   @@index([isPublished])
+  @@index([isTest])
 }
 
 /// Customer gift card payment submissions awaiting administrative review
@@ -550,8 +560,10 @@ model AdminNotification {
   message   String
   link      String?  // Optional target admin route URL
   isRead    Boolean  @default(false)
+  isTest    Boolean  @default(false)
   createdAt DateTime @default(now())
 
   @@index([isRead])
   @@index([createdAt])
+  @@index([isTest])
 }

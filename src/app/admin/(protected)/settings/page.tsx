@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { getVerifiedAdminSession } from '@/lib/auth-session';
+import { TestDataCleanupSection } from '@/components/admin/TestDataCleanupSection';
 
 export const metadata = {
   title: 'Settings | MASSAF Admin',
@@ -19,7 +20,8 @@ function maskWalletAddress(address: string | undefined): string {
 
 export default async function AdminSettingsPage() {
   const session = await getVerifiedAdminSession();
-  if (session?.role === 'STAFF') {
+  if (!session) redirect('/admin/login');
+  if (session.role === 'STAFF') {
     redirect('/admin/marketer');
   }
 
@@ -255,6 +257,9 @@ export default async function AdminSettingsPage() {
         </div>
 
       </div>
+
+      {/* Danger Zone: Test Data Cleanup (SUPER_ADMIN Only) */}
+      {session.role === 'SUPER_ADMIN' && <TestDataCleanupSection />}
 
       {/* Security Note */}
       <div className="bg-slate-900 text-slate-300 rounded-2xl p-5 text-xs flex items-center gap-3">
