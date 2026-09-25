@@ -39,10 +39,15 @@ export async function getRotatingTherapistsForZip(
       const { getActiveDistributionTime } = await import('@/lib/db-therapists');
       const activeTime = await getActiveDistributionTime();
 
+      if (!activeTime) {
+        // FAIL CLOSED: If active distribution timestamp is missing, return empty pool immediately
+        return [];
+      }
+
       const eligibilityRecords = await db.therapistZipEligibility.findMany({
         where: {
           state: zipInfo.state,
-          ...(activeTime ? { createdAt: activeTime } : {}),
+          createdAt: activeTime,
         },
         select: { therapistId: true, startZip: true, endZip: true },
       });
@@ -284,27 +289,31 @@ export async function rankTherapistsForMatch(
 
       locationCompatible = true;
 
-      // Check if therapist covers specified city/ZIP
+      const matchesZip = zipClean ? await therapistCoversZipAsync(therapist, zipClean) : false;
       const matchesCity =
         locQueryClean &&
         (therapist.location.toLowerCase().includes(locQueryClean) ||
           therapist.serviceAreas.some((sa) => sa.toLowerCase().includes(locQueryClean)));
 
-      const matchesZip = zipClean ? await therapistCoversZipAsync(therapist, zipClean) : false;
-
-      if (locQueryClean || zipClean) {
-        if (matchesCity || matchesZip) {
+      if (zipClean) {
+        // AUTHORITATIVE ZIP ELIGIBILITY: When customer supplies explicit ZIP, ZIP eligibility is mandatory.
+        // A city match alone cannot override an explicit ZIP mismatch.
+        if (matchesZip) {
           points += 30;
-          const matchDetail = zipClean
-            ? `ZIP ${zipClean}`
-            : locQueryClean.toUpperCase();
-          reasons.push(`Provides in-home service in ${matchDetail}`);
+          reasons.push(`Provides in-home service in ZIP ${zipClean}`);
         } else {
-          // Specified location outside therapist's service area
+          locationCompatible = false;
+        }
+      } else if (locQueryClean) {
+        // Fallback for location query without explicit ZIP
+        if (matchesCity) {
+          points += 30;
+          reasons.push(`Provides in-home service in ${locQueryClean.toUpperCase()}`);
+        } else {
           locationCompatible = false;
         }
       } else {
-        // No specific location specified by user, but offers in-home
+        // No location query or ZIP specified
         points += 20;
         reasons.push('Offers in-home appointments');
       }

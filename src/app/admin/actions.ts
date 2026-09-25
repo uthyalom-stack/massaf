@@ -246,7 +246,32 @@ export async function shuffleAndDistributeTherapistsAction() {
       }
     }
 
-    // 4. Atomic Staging & Instant Timestamp Pointer Swap Strategy
+    // 4. Atomic Staging & Concurrency Lock Pointer Swap Strategy
+    // Server-side serialization lock using SiteContent key 'distribution_in_progress_lock'
+    const LOCK_KEY = 'distribution_in_progress_lock';
+    const activeLock = await db.siteContent.findUnique({
+      where: { key: LOCK_KEY },
+      select: { content: true, updatedAt: true },
+    });
+
+    if (activeLock && activeLock.content === 'LOCKED') {
+      const lockAgeMs = Date.now() - new Date(activeLock.updatedAt).getTime();
+      // If lock was acquired within the last 60 seconds, reject concurrent execution safely
+      if (lockAgeMs < 60000) {
+        return {
+          success: false,
+          error: 'A distribution shuffle is currently in progress. Please wait a moment before trying again.',
+        };
+      }
+    }
+
+    // Acquire execution lock
+    await db.siteContent.upsert({
+      where: { key: LOCK_KEY },
+      update: { title: 'Distribution Serialization Lock', content: 'LOCKED' },
+      create: { key: LOCK_KEY, title: 'Distribution Serialization Lock', content: 'LOCKED' },
+    });
+
     // Staging timestamp attached to all new records
     const distributionStartTime = new Date();
 
@@ -264,6 +289,25 @@ export async function shuffleAndDistributeTherapistsAction() {
         });
       }
 
+      // Check if a newer active distribution was activated while staging
+      const currentActive = await db.siteContent.findUnique({
+        where: { key: 'active_distribution_timestamp' },
+      });
+
+      if (currentActive?.content) {
+        const currentActiveTime = new Date(currentActive.content);
+        if (!isNaN(currentActiveTime.getTime()) && currentActiveTime > distributionStartTime) {
+          // Roll back staged records so we do not overwrite a newer distribution
+          await db.therapistZipEligibility.deleteMany({
+            where: { createdAt: distributionStartTime },
+          });
+          return {
+            success: false,
+            error: 'A newer distribution was activated concurrently. Staged distribution rolled back safely.',
+          };
+        }
+      }
+
       // ATOMIC SWAP: Atomically point global siteContent 'active_distribution_timestamp' to distributionStartTime
       await db.siteContent.upsert({
         where: { key: 'active_distribution_timestamp' },
@@ -278,7 +322,7 @@ export async function shuffleAndDistributeTherapistsAction() {
         },
       });
 
-      // Safely cleanup obsolete prior distributions asynchronously
+      // Safely cleanup obsolete prior distributions created before this active run
       await db.therapistZipEligibility.deleteMany({
         where: {
           createdAt: { lt: distributionStartTime },
@@ -293,6 +337,17 @@ export async function shuffleAndDistributeTherapistsAction() {
         },
       });
       throw writeErr;
+    } finally {
+      // Release execution lock
+      try {
+        await db.siteContent.upsert({
+          where: { key: LOCK_KEY },
+          update: { content: 'UNLOCKED' },
+          create: { key: LOCK_KEY, title: 'Distribution Serialization Lock', content: 'UNLOCKED' },
+        });
+      } catch (lockReleaseErr) {
+        console.error('Error releasing distribution lock:', lockReleaseErr);
+      }
     }
 
     safeRevalidatePath('/admin/therapists');
@@ -1213,7 +1268,8 @@ export async function getMarketerStatsAction(userId?: string) {
 
 export async function getMarketerLeaderboardAction() {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'STAFF']);
+    const session = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'STAFF']);
+    const isStaff = session.role === 'STAFF';
 
     const marketers = await db.user.findMany({
       where: { role: 'STAFF' },
@@ -1251,10 +1307,13 @@ export async function getMarketerLeaderboardAction() {
         }
       }
 
+      // PRIVACY ENFORCEMENT: Omit private email addresses for STAFF callers server-side unless it's their own account
+      const safeEmail = isStaff && m.id !== session.entityId ? '' : m.email;
+
       return {
         userId: m.id,
         name: m.name || m.email,
-        email: m.email,
+        email: safeEmail,
         clicks,
         totalBookings,
         paidRevenue: Math.round(paidRevenue * 100) / 100,

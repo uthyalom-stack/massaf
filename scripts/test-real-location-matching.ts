@@ -34,6 +34,49 @@ async function runRealLocationTests() {
   // 2. Production Customer Matching Path Tests via rankTherapistsForMatch on COLD CACHE
   console.log('\n2. Testing Customer Matching Flow via rankTherapistsForMatch() on COLD CACHE...');
 
+  const { db } = await import('../src/lib/db');
+
+  // Ensure active distribution timestamp exists in DB for staged test eligibility
+  const testDistributionTime = new Date();
+  await db.siteContent.upsert({
+    where: { key: 'active_distribution_timestamp' },
+    update: { content: testDistributionTime.toISOString() },
+    create: { key: 'active_distribution_timestamp', title: 'Active Distribution Timestamp', content: testDistributionTime.toISOString() },
+  });
+
+  // Seed/Stage test therapists and authoritative TherapistZipEligibility records in DB
+  const createdTherapistIds: string[] = [];
+  async function stageTestTherapist(id: string, name: string, eligibilityRules: Array<{ state: string; startZip: string; endZip: string }>) {
+    await db.therapist.upsert({
+      where: { id },
+      update: { name, isActive: true },
+      create: { id, name, isActive: true, hourlyRate: 100 },
+    });
+    createdTherapistIds.push(id);
+
+    await db.therapistZipEligibility.deleteMany({ where: { therapistId: id } });
+    for (const rule of eligibilityRules) {
+      await db.therapistZipEligibility.create({
+        data: {
+          therapistId: id,
+          state: rule.state,
+          startZip: rule.startZip,
+          endZip: rule.endZip,
+          createdAt: testDistributionTime,
+        },
+      });
+    }
+  }
+
+  await stageTestTherapist('therapist-ca', 'California Practitioner', [{ state: 'CA', startZip: '90001', endZip: '92692' }]);
+  await stageTestTherapist('therapist-in', 'Indiana Practitioner', [{ state: 'IN', startZip: '46001', endZip: '46298' }]);
+  await stageTestTherapist('therapist-multi', 'Multi-State Practitioner', [
+    { state: 'CA', startZip: '90001', endZip: '92692' },
+    { state: 'IN', startZip: '46001', endZip: '46298' },
+  ]);
+  await stageTestTherapist('therapist-ny', 'New York Practitioner', [{ state: 'NY', startZip: '00501', endZip: '00510' }]);
+  await stageTestTherapist('therapist-fake-range', 'Fake Range Practitioner', [{ state: 'CA', startZip: '90001', endZip: '99999' }]);
+
   const serviceId = 'svc-deep-tissue';
 
   // Test Fixture A: California Therapist (90001 - 92692)
@@ -48,9 +91,7 @@ async function runRealLocationTests() {
     location: 'Los Angeles, CA',
     serviceAreas: ['Los Angeles, CA'],
     zipCodes: ['90001'],
-    rawServiceAreas: [
-      { id: 'sa-ca', cityName: 'Los Angeles', state: 'CA', zipCode: '90001', endZipCode: '92692' },
-    ],
+    rawServiceAreas: [],
     startingPrice: 120,
     availability: 'Available',
     offersStudio: true,
@@ -78,9 +119,7 @@ async function runRealLocationTests() {
     location: 'Indianapolis, IN',
     serviceAreas: ['Indianapolis, IN'],
     zipCodes: ['46001'],
-    rawServiceAreas: [
-      { id: 'sa-in', cityName: 'Indianapolis', state: 'IN', zipCode: '46001', endZipCode: '46298' },
-    ],
+    rawServiceAreas: [],
     startingPrice: 100,
     availability: 'Available',
     offersStudio: true,
@@ -108,10 +147,7 @@ async function runRealLocationTests() {
     location: 'Los Angeles, CA & Indianapolis, IN',
     serviceAreas: ['Los Angeles, CA', 'Indianapolis, IN'],
     zipCodes: ['90001', '46001'],
-    rawServiceAreas: [
-      { id: 'sa-m1', cityName: 'Los Angeles', state: 'CA', zipCode: '90001', endZipCode: '92692' },
-      { id: 'sa-m2', cityName: 'Indianapolis', state: 'IN', zipCode: '46001', endZipCode: '46298' },
-    ],
+    rawServiceAreas: [],
     startingPrice: 110,
     availability: 'Available',
     offersStudio: true,
@@ -139,9 +175,7 @@ async function runRealLocationTests() {
     location: 'Holtsville, NY',
     serviceAreas: ['Holtsville, NY'],
     zipCodes: ['00501'],
-    rawServiceAreas: [
-      { id: 'sa-ny', cityName: 'Holtsville', state: 'NY', zipCode: '00501', endZipCode: '00510' },
-    ],
+    rawServiceAreas: [],
     startingPrice: 130,
     availability: 'Available',
     offersStudio: true,
@@ -215,7 +249,22 @@ async function runRealLocationTests() {
   const res8 = await runMatchOnColdCache('99998', [therapistFakeRange]);
   assert(res8.length === 0, 'Case 8: Numerically plausible ZIP 99998 absent from USZipCode DB returns NO MATCH');
 
-  console.log('\n✅ ALL 8 COLD-CACHE rankTherapistsForMatch() TEST CASES PASSED SUCCESSFULLY!');
+  // 9. Negative Test: Customer ZIP is valid and matches therapist city, but therapist lacks TherapistZipEligibility for that ZIP -> EXCLUDED
+  // Therapist CA has city "Los Angeles, CA" and rule 90001-90050. Customer supplies valid LA ZIP 90001 (eligible) vs valid LA ZIP 91303 (outside rule range 90001-90050).
+  await stageTestTherapist('therapist-ca-narrow', 'CA Narrow Practitioner', [{ state: 'CA', startZip: '90001', endZip: '90050' }]);
+  const therapistCANarrow: CustomerTherapist = {
+    ...therapistCA,
+    id: 'therapist-ca-narrow',
+    location: 'Los Angeles, CA',
+    serviceAreas: ['Los Angeles, CA'],
+  };
+
+  const res9a = await runMatchOnColdCache('90001', [therapistCANarrow]);
+  const res9b = await runMatchOnColdCache('91303', [therapistCANarrow]);
+  assert(res9a.length === 1, 'Case 9a: Explicit ZIP 90001 inside TherapistZipEligibility matches therapist in Los Angeles');
+  assert(res9b.length === 0, 'Case 9b: Explicit ZIP 91303 outside TherapistZipEligibility is EXCLUDED even if city matches Los Angeles');
+
+  console.log('\n✅ ALL 9 COLD-CACHE rankTherapistsForMatch() TEST CASES PASSED SUCCESSFULLY!');
 }
 
 runRealLocationTests();

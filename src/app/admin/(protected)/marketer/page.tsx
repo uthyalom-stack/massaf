@@ -32,7 +32,7 @@ export default async function MarketerDashboardPage({ searchParams }: PageProps)
     targetUserId = resolvedSearchParams.userId;
   }
 
-  // Fetch marketer user details
+  // Fetch marketer user details & validate target user is an active STAFF marketer
   const marketerUser = await db.user.findUnique({
     where: { id: targetUserId },
     select: {
@@ -40,10 +40,11 @@ export default async function MarketerDashboardPage({ searchParams }: PageProps)
       name: true,
       email: true,
       role: true,
+      isActive: true,
     },
   });
 
-  if (!marketerUser) {
+  if (!marketerUser || marketerUser.role !== 'STAFF' || !marketerUser.isActive) {
     redirect('/admin');
   }
 

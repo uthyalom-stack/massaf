@@ -204,11 +204,16 @@ export async function therapistCoversZipAsync(
   // Authoritative check strictly against active TherapistZipEligibility table distribution pool
   try {
     const activeTime = await getActiveDistributionTime();
+    if (!activeTime) {
+      // FAIL CLOSED: If active distribution timestamp is missing, reject eligibility immediately
+      return false;
+    }
+
     const eligibilityRecords = await db.therapistZipEligibility.findMany({
       where: {
         therapistId: therapist.id,
         state: zipInfo.state,
-        ...(activeTime ? { createdAt: activeTime } : {}),
+        createdAt: activeTime,
       },
     });
 
