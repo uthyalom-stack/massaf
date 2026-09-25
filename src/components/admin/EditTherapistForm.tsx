@@ -10,19 +10,13 @@ import {
   removeTherapistPhotoAction,
   assignTherapistServiceAction,
   removeTherapistServiceAction,
-  addServiceAreaAction,
-  removeServiceAreaAction,
   addTherapistAvailabilityAction,
   updateTherapistAvailabilityAction,
   removeTherapistAvailabilityAction,
   deleteTherapistAction,
 } from '@/app/admin/actions';
+import { generateTimePresetOptions } from '@/lib/availability';
 import { ConfirmModal } from '@/components/admin/ConfirmModal';
-import { getAllUsStates } from '@/lib/us-locations';
-import {
-  fetchCitiesForStateAction,
-  fetchZipsForStateAction,
-} from '@/app/actions/locations';
 
 export interface PhotoData {
   id: string;
@@ -45,14 +39,6 @@ export interface ServiceData {
   };
 }
 
-export interface ServiceAreaData {
-  id: string;
-  cityName: string;
-  state: string;
-  zipCode: string;
-  endZipCode?: string | null;
-}
-
 export interface AvailabilityData {
   id: string;
   dayOfWeek?: number | null;
@@ -60,6 +46,20 @@ export interface AvailabilityData {
   startTime: string;
   endTime: string;
   isUnavailable: boolean;
+}
+
+export interface ZipCoverageRange {
+  startZip: string;
+  endZip: string;
+  sampleCities: string[];
+  count: number;
+}
+
+export interface ZipCoverageGroup {
+  state: string;
+  stateName: string;
+  ranges: ZipCoverageRange[];
+  totalStateZips: number;
 }
 
 export interface DetailedTherapist {
@@ -80,7 +80,6 @@ export interface DetailedTherapist {
   offersInHome: boolean;
   photos: PhotoData[];
   services: ServiceData[];
-  serviceAreas: ServiceAreaData[];
   availabilities: AvailabilityData[];
 }
 
@@ -92,6 +91,8 @@ interface EditTherapistProps {
     durationMinutes: number;
     price: number;
   }>;
+  zipCoverageGroups?: ZipCoverageGroup[];
+  totalAssignedZips?: number;
 }
 
 const DAYS_OF_WEEK = [
@@ -107,10 +108,12 @@ const DAYS_OF_WEEK = [
 export function EditTherapistForm({
   initialTherapist,
   availableGlobalServices,
+  zipCoverageGroups = [],
+  totalAssignedZips = 0,
 }: EditTherapistProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<
-    'basic' | 'photos' | 'services' | 'areas' | 'availability'
+    'basic' | 'photos' | 'services' | 'availability' | 'zipCoverage'
   >('basic');
 
   const [therapist, setTherapist] = useState<DetailedTherapist>(initialTherapist);
@@ -163,46 +166,6 @@ export function EditTherapistForm({
   const [serviceSaving, setServiceSaving] = useState(false);
   const [serviceMsg, setServiceMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // State for Service Area (Real U.S. Location Dropdowns via Server Actions)
-  const usStatesList = getAllUsStates();
-  const [stateCode, setStateCode] = useState('CA');
-  const [cityName, setCityName] = useState('Los Angeles');
-  const [zipCode, setZipCode] = useState('90001');
-  const [endZipCode, setEndZipCode] = useState('92692');
-  const [availableCities, setAvailableCities] = useState<string[]>(['Los Angeles', 'Beverly Hills', 'Santa Monica', 'Irvine', 'San Francisco', 'San Diego']);
-  const [stateZips, setStateZips] = useState<string[]>([]);
-  const [areaSaving, setAreaSaving] = useState(false);
-  const [areaMsg, setAreaMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  // Async location loaders when state changes
-  const handleStateChange = async (newSegState: string) => {
-    setStateCode(newSegState);
-    const cities = await fetchCitiesForStateAction(newSegState);
-    setAvailableCities(cities);
-    const firstCity = cities[0] || '';
-    setCityName(firstCity);
-
-    const zips = await fetchZipsForStateAction(newSegState);
-    setStateZips(zips);
-    const firstZip = zips[0] || '';
-    const lastZip = zips.length > 1 ? zips[zips.length - 1] : firstZip;
-    setZipCode(firstZip);
-    setEndZipCode(lastZip);
-  };
-
-  // Load state ZIP universe on initial tab load
-  React.useEffect(() => {
-    if (activeTab === 'areas' && stateZips.length === 0) {
-      fetchCitiesForStateAction(stateCode).then(setAvailableCities);
-      fetchZipsForStateAction(stateCode).then((zips) => {
-        setStateZips(zips);
-        if (zips.length > 0 && !zipCode) {
-          setZipCode(zips[0]);
-          setEndZipCode(zips[zips.length - 1]);
-        }
-      });
-    }
-  }, [activeTab, stateCode, stateZips.length, zipCode]);
 
   // State for Availability Add
   const [dayOfWeek, setDayOfWeek] = useState<number>(1); // Monday default
@@ -211,8 +174,16 @@ export function EditTherapistForm({
   const [availabilitySaving, setAvailabilitySaving] = useState(false);
   const [availabilityMsg, setAvailabilityMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // State for Bulk Availability Assignment
+  const [selectedBulkDays, setSelectedBulkDays] = useState<number[]>([1, 2, 3, 4, 5]); // Mon-Fri default
+  const [bulkStartTime, setBulkStartTime] = useState('09:00');
+  const [bulkEndTime, setBulkEndTime] = useState('17:00');
+  const [bulkSaving, setBulkSaving] = useState(false);
+
   // State for Editing Availability
   const [editingAvailability, setEditingAvailability] = useState<AvailabilityData | null>(null);
+
+  const timePresetOptions = generateTimePresetOptions();
 
   // Modal State for Confirming Destructive Actions
   const [confirmModal, setConfirmModal] = useState<{
@@ -673,84 +644,6 @@ export function EditTherapistForm({
     });
   };
 
-  // Add Service Area
-  const handleAddArea = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!cityName.trim() || !stateCode.trim() || !zipCode.trim()) return;
-
-    setAreaSaving(true);
-    setAreaMsg(null);
-
-    try {
-      const res = await addServiceAreaAction(therapist.id, {
-        cityName: cityName.trim(),
-        state: stateCode.trim().toUpperCase(),
-        zipCode: zipCode.trim(),
-        endZipCode: endZipCode.trim() || undefined,
-      });
-
-      if (!res.success) {
-        setAreaMsg({ type: 'error', text: res.error || 'Failed to add service area' });
-        return;
-      }
-
-      if (res.serviceArea) {
-        const sa: ServiceAreaData = {
-          id: res.serviceArea.id,
-          cityName: res.serviceArea.cityName,
-          state: res.serviceArea.state,
-          zipCode: res.serviceArea.zipCode,
-          endZipCode: res.serviceArea.endZipCode,
-        };
-        setTherapist((prev) => ({
-          ...prev,
-          serviceAreas: [...prev.serviceAreas, sa],
-        }));
-      }
-
-      setCityName('');
-      setStateCode('');
-      setZipCode('');
-      setEndZipCode('');
-      setAreaMsg({ type: 'success', text: 'Service area added!' });
-      router.refresh();
-    } catch (err) {
-      console.error('Error adding service area:', err);
-      setAreaMsg({ type: 'error', text: 'An unexpected error occurred.' });
-    } finally {
-      setAreaSaving(false);
-    }
-  };
-
-  // Remove Service Area (Trigger Modal)
-  const triggerRemoveArea = (areaId: string, cityName: string) => {
-    setConfirmModal({
-      isOpen: true,
-      title: 'Remove Service Coverage Area?',
-      message: `Are you sure you want to remove '${cityName}' from this therapist's coverage area?`,
-      confirmText: 'Remove Area',
-      isLoading: false,
-      onConfirm: async () => {
-        try {
-          setConfirmModal((prev) => ({ ...prev, isLoading: true }));
-          const res = await removeServiceAreaAction(therapist.id, areaId);
-          if (!res.success) {
-            alert(res.error || 'Failed to remove area');
-            return;
-          }
-          setTherapist((prev) => ({
-            ...prev,
-            serviceAreas: prev.serviceAreas.filter((a) => a.id !== areaId),
-          }));
-          router.refresh();
-        } catch (err) {
-          console.error('Error removing area:', err);
-        } finally {
-          setConfirmModal((prev) => ({ ...prev, isOpen: false, isLoading: false }));
-        }
-      },
-    });
-  };
 
   // Add Availability
   const handleAddAvailability = async (e: React.FormEvent) => {
@@ -989,17 +882,6 @@ export function EditTherapistForm({
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab('areas')}
-          className={`py-3 px-3 sm:px-4 border-b-2 transition-colors cursor-pointer shrink-0 ${
-            activeTab === 'areas'
-              ? 'border-emerald-600 text-emerald-800 font-extrabold'
-              : 'border-transparent text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          4. Service Areas ({therapist.serviceAreas.length})
-        </button>
-        <button
-          type="button"
           onClick={() => setActiveTab('availability')}
           className={`py-3 px-3 sm:px-4 border-b-2 transition-colors cursor-pointer shrink-0 ${
             activeTab === 'availability'
@@ -1007,7 +889,18 @@ export function EditTherapistForm({
               : 'border-transparent text-slate-600 hover:text-slate-900'
           }`}
         >
-          5. Availability ({therapist.availabilities.length})
+          4. Availability ({therapist.availabilities.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('zipCoverage')}
+          className={`py-3 px-3 sm:px-4 border-b-2 transition-colors cursor-pointer shrink-0 ${
+            activeTab === 'zipCoverage'
+              ? 'border-emerald-600 text-emerald-800 font-extrabold'
+              : 'border-transparent text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          5. ZIP Coverage ({totalAssignedZips})
         </button>
       </div>
 
@@ -1654,169 +1547,17 @@ export function EditTherapistForm({
         </div>
       )}
 
-      {/* TAB 4: SERVICE AREAS */}
-      {activeTab === 'areas' && (
-        <div className="space-y-6 max-w-3xl">
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-            <h2 className="text-lg font-bold text-slate-900">Add Service Coverage Area</h2>
-
-            {areaMsg && (
-              <div
-                className={`p-4 rounded-xl text-xs font-medium ${
-                  areaMsg.type === 'success'
-                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-                    : 'bg-red-50 border border-red-200 text-red-800'
-                }`}
-              >
-                {areaMsg.text}
-              </div>
-            )}
-
-            <form onSubmit={handleAddArea} className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  State
-                </label>
-                <select
-                  required
-                  value={stateCode}
-                  onChange={(e) => handleStateChange(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                >
-                  {usStatesList.map((st) => (
-                    <option key={st.code} value={st.code}>
-                      {st.name} ({st.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  City / Location Label
-                </label>
-                <select
-                  required
-                  value={cityName}
-                  onChange={(e) => setCityName(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                >
-                  {availableCities.map((ct) => (
-                    <option key={ct} value={ct}>
-                      {ct}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Start ZIP
-                </label>
-                {stateZips.length > 0 ? (
-                  <select
-                    required
-                    value={zipCode}
-                    onChange={(e) => setZipCode(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
-                  >
-                    {stateZips.map((z) => (
-                      <option key={z} value={z}>
-                        {z}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    required
-                    maxLength={5}
-                    value={zipCode}
-                    onChange={(e) => setZipCode(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
-                  />
-                )}
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  End ZIP (Multi-City Range)
-                </label>
-                {stateZips.length > 0 ? (
-                  <select
-                    value={endZipCode}
-                    onChange={(e) => setEndZipCode(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
-                  >
-                    {stateZips.map((z) => (
-                      <option key={z} value={z}>
-                        {z}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    maxLength={5}
-                    value={endZipCode}
-                    onChange={(e) => setEndZipCode(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none font-mono"
-                  />
-                )}
-              </div>
-
-              <div className="sm:col-span-4 flex justify-end pt-2">
-                <button
-                  type="submit"
-                  disabled={areaSaving}
-                  className="px-5 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
-                >
-                  {areaSaving ? 'Adding...' : 'Add Coverage Area'}
-                </button>
-              </div>
-            </form>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-            <h2 className="text-lg font-bold text-slate-900">
-              Active Coverage Areas ({therapist.serviceAreas.length})
-            </h2>
-
-            {therapist.serviceAreas.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {therapist.serviceAreas.map((area) => (
-                  <div
-                    key={area.id}
-                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-800"
-                  >
-                    <span>
-                      {area.cityName}, {area.state} &mdash; {area.endZipCode && area.endZipCode !== area.zipCode ? `${area.zipCode}–${area.endZipCode}` : area.zipCode}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => triggerRemoveArea(area.id, area.cityName)}
-                      className="text-slate-400 hover:text-red-600 transition-colors cursor-pointer ml-1"
-                      title="Remove Area"
-                    >
-                      &times;
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-slate-500 italic py-4">No coverage areas added yet.</p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* TAB 5: AVAILABILITY */}
+      {/* TAB 4: AVAILABILITY */}
       {activeTab === 'availability' && (
         <div className="space-y-6 max-w-3xl">
+          {/* Bulk Availability Assignment Tool */}
           <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
             <h2 className="text-lg font-bold text-slate-900">
-              {editingAvailability ? 'Edit Working Hours Rule' : 'Add Working Hours Rule'}
+              Bulk Availability Assignment
             </h2>
+            <p className="text-xs text-slate-500">
+              Quickly configure or update weekly working hours across multiple days at once.
+            </p>
 
             {availabilityMsg && (
               <div
@@ -1829,6 +1570,179 @@ export function EditTherapistForm({
                 {availabilityMsg.text}
               </div>
             )}
+
+            <div className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Select Days
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (selectedBulkDays.length === 7) {
+                        setSelectedBulkDays([]);
+                      } else {
+                        setSelectedBulkDays([0, 1, 2, 3, 4, 5, 6]);
+                      }
+                    }}
+                    className="text-xs text-emerald-700 font-bold hover:underline cursor-pointer"
+                  >
+                    {selectedBulkDays.length === 7 ? 'Deselect All' : 'Select All Days'}
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {DAYS_OF_WEEK.map((day, idx) => {
+                    const isSelected = selectedBulkDays.includes(idx);
+                    return (
+                      <button
+                        type="button"
+                        key={idx}
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedBulkDays((prev) => prev.filter((d) => d !== idx));
+                          } else {
+                            setSelectedBulkDays((prev) => [...prev, idx]);
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'bg-emerald-50 border-emerald-500 text-emerald-800 font-bold'
+                            : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {day}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Start Time
+                  </label>
+                  <select
+                    value={bulkStartTime}
+                    onChange={(e) => setBulkStartTime(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                  >
+                    {timePresetOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} ({opt.value})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    End Time
+                  </label>
+                  <select
+                    value={bulkEndTime}
+                    onChange={(e) => setBulkEndTime(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                  >
+                    {timePresetOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} ({opt.value})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="button"
+                  disabled={bulkSaving || selectedBulkDays.length === 0}
+                  onClick={async () => {
+                    if (selectedBulkDays.length === 0) return;
+                    if (bulkStartTime >= bulkEndTime) {
+                      setAvailabilityMsg({ type: 'error', text: 'Start time must be before end time.' });
+                      return;
+                    }
+
+                    setBulkSaving(true);
+                    setAvailabilityMsg(null);
+
+                    try {
+                      const newAvailabilities: AvailabilityData[] = [];
+                      for (const dayIdx of selectedBulkDays) {
+                        const existing = therapist.availabilities.find((a) => a.dayOfWeek === dayIdx);
+                        if (existing) {
+                          const res = await updateTherapistAvailabilityAction(therapist.id, {
+                            availabilityId: existing.id,
+                            dayOfWeek: dayIdx,
+                            startTime: bulkStartTime,
+                            endTime: bulkEndTime,
+                            isUnavailable: false,
+                          });
+                          if (res.success && res.availability) {
+                            newAvailabilities.push({
+                              id: res.availability.id,
+                              dayOfWeek: res.availability.dayOfWeek,
+                              specificDate: res.availability.specificDate ? res.availability.specificDate.toISOString() : null,
+                              startTime: res.availability.startTime,
+                              endTime: res.availability.endTime,
+                              isUnavailable: res.availability.isUnavailable,
+                            });
+                          }
+                        } else {
+                          const res = await addTherapistAvailabilityAction(therapist.id, {
+                            dayOfWeek: dayIdx,
+                            startTime: bulkStartTime,
+                            endTime: bulkEndTime,
+                            isUnavailable: false,
+                          });
+                          if (res.success && res.availability) {
+                            newAvailabilities.push({
+                              id: res.availability.id,
+                              dayOfWeek: res.availability.dayOfWeek,
+                              specificDate: res.availability.specificDate ? res.availability.specificDate.toISOString() : null,
+                              startTime: res.availability.startTime,
+                              endTime: res.availability.endTime,
+                              isUnavailable: res.availability.isUnavailable,
+                            });
+                          }
+                        }
+                      }
+
+                      // Update state with newly added/updated availabilities
+                      setTherapist((prev) => {
+                        const updatedIds = new Set(newAvailabilities.map((a) => a.id));
+                        const filtered = prev.availabilities.filter((a) => !updatedIds.has(a.id));
+                        return {
+                          ...prev,
+                          availabilities: [...filtered, ...newAvailabilities],
+                        };
+                      });
+
+                      setAvailabilityMsg({ type: 'success', text: `Applied bulk availability to ${selectedBulkDays.length} day(s)!` });
+                      router.refresh();
+                    } catch (err) {
+                      console.error('Error applying bulk availability:', err);
+                      setAvailabilityMsg({ type: 'error', text: 'Failed to apply bulk availability.' });
+                    } finally {
+                      setBulkSaving(false);
+                    }
+                  }}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
+                >
+                  {bulkSaving ? 'Applying Schedule...' : 'Apply to Selected Days'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Single Day Addition / Edit Section */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
+            <h2 className="text-lg font-bold text-slate-900">
+              {editingAvailability ? 'Edit Specific Working Hours Rule' : 'Add Single Day Schedule Rule'}
+            </h2>
 
             {editingAvailability ? (
               <form onSubmit={handleSaveAvailabilityEdit} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
@@ -1858,9 +1772,7 @@ export function EditTherapistForm({
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                     Start Time
                   </label>
-                  <input
-                    type="time"
-                    required
+                  <select
                     value={editingAvailability.startTime}
                     onChange={(e) =>
                       setEditingAvailability({
@@ -1869,16 +1781,20 @@ export function EditTherapistForm({
                       })
                     }
                     className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                  />
+                  >
+                    {timePresetOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} ({opt.value})
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                     End Time
                   </label>
-                  <input
-                    type="time"
-                    required
+                  <select
                     value={editingAvailability.endTime}
                     onChange={(e) =>
                       setEditingAvailability({
@@ -1887,7 +1803,13 @@ export function EditTherapistForm({
                       })
                     }
                     className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                  />
+                  >
+                    {timePresetOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} ({opt.value})
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="sm:col-span-3 flex justify-end gap-2 pt-2">
@@ -1930,26 +1852,34 @@ export function EditTherapistForm({
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                     Start Time
                   </label>
-                  <input
-                    type="time"
-                    required
+                  <select
                     value={startTime}
                     onChange={(e) => setStartTime(e.target.value)}
                     className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                  />
+                  >
+                    {timePresetOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} ({opt.value})
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                     End Time
                   </label>
-                  <input
-                    type="time"
-                    required
+                  <select
                     value={endTime}
                     onChange={(e) => setEndTime(e.target.value)}
                     className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                  />
+                  >
+                    {timePresetOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} ({opt.value})
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="sm:col-span-3 flex justify-end pt-2">
@@ -2010,6 +1940,71 @@ export function EditTherapistForm({
               </div>
             ) : (
               <p className="text-sm text-slate-500 italic py-4">No schedule rules configured yet.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: READ-ONLY ZIP COVERAGE */}
+      {activeTab === 'zipCoverage' && (
+        <div className="space-y-6 max-w-3xl">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  Automatic Geographic ZIP Coverage (Read-Only)
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Coverage is automatically assigned via central platform ZIP distribution shuffle based on real USZipCode dataset records.
+                </p>
+              </div>
+              <span className="px-3 py-1 rounded-xl text-xs font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-200 shrink-0">
+                Total: {totalAssignedZips} ZIPs Assigned
+              </span>
+            </div>
+
+            {zipCoverageGroups && zipCoverageGroups.length > 0 ? (
+              <div className="space-y-6 pt-2">
+                {zipCoverageGroups.map((group: ZipCoverageGroup) => (
+                  <div key={group.state} className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
+                      <span className="font-extrabold text-slate-900 text-sm">
+                        {group.state} {group.stateName}
+                      </span>
+                      <span className="text-xs font-bold text-slate-600">
+                        {group.totalStateZips} ZIPs in {group.state}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {group.ranges.map((r: ZipCoverageRange, idx: number) => (
+                        <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 bg-white p-3 rounded-lg border border-slate-200 text-xs">
+                          <div>
+                            <span className="font-mono font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                              {r.startZip === r.endZip ? r.startZip : `${r.startZip} – ${r.endZip}`}
+                            </span>
+                            {r.sampleCities.length > 0 && (
+                              <span className="text-slate-500 ml-2">
+                                ({r.sampleCities.join(', ')})
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-slate-600 font-semibold shrink-0">
+                            {r.count} ZIPs
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 space-y-2">
+                <p className="text-slate-600 text-sm font-semibold">No geographic ZIP coverage assigned to this therapist.</p>
+                <p className="text-slate-500 text-xs max-w-md mx-auto">
+                  Run <strong className="text-slate-800">Shuffle & Distribute Therapists</strong> on the main Therapist Roster page to assign automatic ZIP eligibility.
+                </p>
+              </div>
             )}
           </div>
         </div>

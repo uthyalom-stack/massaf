@@ -57,6 +57,14 @@ enum GiftCardReviewStatus {
   REJECTED
 }
 
+// Verification state for therapists
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  SUSPENDED
+}
+
 // Moderation state for customer reviews
 enum ReviewStatus {
   PENDING
@@ -86,6 +94,7 @@ model Customer {
   name      String
   email     String    @unique
   phone     String
+  isTest    Boolean   @default(false)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -96,6 +105,7 @@ model Customer {
   rotationHistory CustomerRotationHistory[]
 
   @@index([email])
+  @@index([isTest])
 }
 
 /// Saved in-home appointment addresses for customers
@@ -141,15 +151,18 @@ model Therapist {
   phone              String?
   telegramChatId     String?
   hourlyRate         Float    @default(100.0)
-  rating             Float    @default(0.0)
-  reviewCount        Int      @default(0)
-  isActive           Boolean  @default(true)
-  isFeatured         Boolean  @default(false)
-  isHomepageSelected Boolean  @default(false)
-  offersStudio       Boolean  @default(true)
-  offersInHome       Boolean  @default(true)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  rating             Float              @default(5.0)
+  reviewCount        Int                @default(0)
+  isActive           Boolean            @default(true)
+  isFeatured         Boolean            @default(false)
+  isHomepageSelected Boolean            @default(false)
+  offersStudio       Boolean            @default(true)
+  offersInHome       Boolean            @default(true)
+  verificationStatus VerificationStatus @default(VERIFIED)
+  verificationNotes  String?
+  isTest             Boolean            @default(false)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   photos           TherapistPhoto[]
   services         TherapistService[]
@@ -165,6 +178,7 @@ model Therapist {
   @@index([isActive])
   @@index([isFeatured])
   @@index([isHomepageSelected])
+  @@index([isTest])
 }
 
 /// Scalable geographic distribution pool mapping therapists to state/ZIP ranges
@@ -340,6 +354,7 @@ model Booking {
   reminder24hSentAt DateTime?
   reminder3hSentAt  DateTime?
 
+  isTest    Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -356,28 +371,32 @@ model Booking {
   @@index([marketingLinkId])
   @@index([appointmentDateTime])
   @@index([status])
+  @@index([isTest])
 }
 
 /// Customer reviews for therapists
 model Review {
   id          String       @id @default(uuid())
-  customerId  String
+  customerId  String?
   therapistId String
   bookingId   String?      @unique
   rating      Int          // 1 to 5 stars
   comment     String?
+  authorName  String?
+  source      String       @default("CUSTOMER") // "CUSTOMER" or "ADMIN"
   status      ReviewStatus @default(APPROVED)
   isPublished Boolean      @default(true)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  customer  Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer  Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
   therapist Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
-  booking   Booking?  @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  booking   Booking?   @relation(fields: [bookingId], references: [id], onDelete: SetNull)
 
   @@index([therapistId])
   @@index([customerId])
   @@index([isPublished])
+  @@index([source])
 }
 
 /// Simple marketing tracking links
@@ -389,6 +408,7 @@ model MarketingLink {
   destinationUrl String   @default("/")
   clicks         Int      @default(0)
   isActive       Boolean  @default(true)
+  isTest         Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -398,6 +418,7 @@ model MarketingLink {
   @@index([code])
   @@index([isActive])
   @@index([userId])
+  @@index([isTest])
 }
 
 /// Persistent short-lived single-use authentication verification tokens
@@ -449,6 +470,7 @@ model Testimonial {
   comment        String
   isPublished    Boolean   @default(true)
   sortOrder      Int       @default(0)
+  isTest         Boolean   @default(false)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -456,6 +478,7 @@ model Testimonial {
 
   @@index([therapistId])
   @@index([isPublished])
+  @@index([isTest])
 }
 
 /// Customer gift card payment submissions awaiting administrative review
@@ -508,4 +531,39 @@ model USZipCode {
   @@index([city])
   @@index([state, zipCode])
   @@index([state, city])
+}
+
+/// Administrative audit log for tracking high-privilege operational changes
+model AdminAuditLog {
+  id           String   @id @default(uuid())
+  actorUserId  String?
+  actorEmail   String
+  actorRole    String   // e.g. "SUPER_ADMIN", "ADMIN"
+  action       String   // e.g. "THERAPIST_VERIFICATION_UPDATED", "GIFT_CARD_APPROVED"
+  entityType   String   // e.g. "Therapist", "Booking", "GiftCardSubmission"
+  entityId     String?
+  description  String
+  metadataJson String?  // Sanitized JSON string of non-sensitive parameters
+  createdAt    DateTime @default(now())
+
+  @@index([actorUserId])
+  @@index([action])
+  @@index([entityType])
+  @@index([createdAt])
+}
+
+/// Admin operational notifications
+model AdminNotification {
+  id        String   @id @default(uuid())
+  type      String   // e.g. "GIFT_CARD_SUBMITTED", "BOOKING_CREATED", "REVIEW_SUBMITTED"
+  title     String
+  message   String
+  link      String?  // Optional target admin route URL
+  isRead    Boolean  @default(false)
+  isTest    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([isRead])
+  @@index([createdAt])
+  @@index([isTest])
 }

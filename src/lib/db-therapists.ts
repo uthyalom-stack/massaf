@@ -170,12 +170,30 @@ export function isZipInRange(
 
 import { getZipInfo, getStateForZipSync } from '@/lib/us-locations';
 
+export async function getActiveDistributionTime(): Promise<Date | null> {
+  try {
+    const record = await db.siteContent.findUnique({
+      where: { key: 'active_distribution_timestamp' },
+      select: { content: true },
+    });
+    if (record?.content) {
+      const parsed = new Date(record.content);
+      if (!isNaN(parsed.getTime())) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.error('[getActiveDistributionTime] Error reading active distribution timestamp:', err);
+  }
+  return null;
+}
+
 export async function therapistCoversZipAsync(
   therapist: CustomerTherapist,
   requestedZip: string
 ): Promise<boolean> {
   if (!requestedZip || !requestedZip.trim()) return false;
-  const req = requestedZip.trim();
+  const req = requestedZip.trim().padStart(5, '0');
 
   // Query USZipCode database info authoritatively
   const zipInfo = await getZipInfo(req);
@@ -183,22 +201,19 @@ export async function therapistCoversZipAsync(
     return false; // Customer ZIP does not exist in real U.S. database
   }
 
-  if (therapist.rawServiceAreas && therapist.rawServiceAreas.length > 0) {
-    const rangeMatch = therapist.rawServiceAreas.some((sa) => {
-      if (sa.state && sa.state.trim().toUpperCase() !== zipInfo.state) {
-        return false;
-      }
-      return isZipInRange(req, sa.zipCode, sa.endZipCode);
-    });
-    if (rangeMatch) return true;
-  }
-
-  // Authoritative check against automatic TherapistZipEligibility table distribution pool across ALL assigned clusters
+  // Authoritative check strictly against active TherapistZipEligibility table distribution pool
   try {
+    const activeTime = await getActiveDistributionTime();
+    if (!activeTime) {
+      // FAIL CLOSED: If active distribution timestamp is missing, reject eligibility immediately
+      return false;
+    }
+
     const eligibilityRecords = await db.therapistZipEligibility.findMany({
       where: {
         therapistId: therapist.id,
         state: zipInfo.state,
+        createdAt: activeTime,
       },
     });
 
@@ -207,11 +222,11 @@ export async function therapistCoversZipAsync(
         return true;
       }
     }
-  } catch {
-    // Fallback if query fails
+  } catch (err) {
+    console.error('[therapistCoversZipAsync] Error checking TherapistZipEligibility:', err);
   }
 
-  return therapist.zipCodes.some((z) => z.trim() === req);
+  return false;
 }
 
 export function therapistCoversZip(therapist: CustomerTherapist, requestedZip: string): boolean {

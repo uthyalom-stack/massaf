@@ -77,6 +77,21 @@ export function formatMinutesToTimeString(totalMinutes: number): { value: string
 }
 
 /**
+ * Generates 30-minute time preset options (e.g. 06:00 to 22:00) for dropdown selectors.
+ */
+export function generateTimePresetOptions(startHour = 6, endHour = 22): { value: string; label: string }[] {
+  const options: { value: string; label: string }[] = [];
+  for (let hour = startHour; hour <= endHour; hour++) {
+    for (const min of [0, 30]) {
+      if (hour === endHour && min > 0) break;
+      const totalMinutes = hour * 60 + min;
+      options.push(formatMinutesToTimeString(totalMinutes));
+    }
+  }
+  return options;
+}
+
+/**
  * Converts a days description string like "Monday – Thursday" or "Sunday" into array of day-of-week indices (0=Sun..6=Sat).
  */
 export function parseScheduleDays(daysStr: string): number[] {

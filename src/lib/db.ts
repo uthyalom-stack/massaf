@@ -1,3 +1,14 @@
+if (typeof window !== 'undefined') {
+  throw new Error('SECURITY ERROR: src/lib/db.ts cannot be executed in a browser environment.');
+}
+
+try {
+  // Enforce server-only boundary in Next.js App Router bundler
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('server-only');
+} catch {
+  // Ignore in raw Node.js script execution environments
+}
 import { PrismaClient } from '@prisma/client';
 import { PrismaLibSQL } from '@prisma/adapter-libsql';
 

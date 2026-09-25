@@ -4,12 +4,14 @@ import React, { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { RatingDisplay } from '@/components/ui/RatingDisplay';
-import { updateReviewStatusAction } from '@/app/admin/actions';
+import { updateReviewStatusAction, createAdminReviewAction } from '@/app/admin/actions';
 
 export interface SerializedReview {
   id: string;
   rating: number;
   comment: string | null;
+  authorName?: string | null;
+  source?: string;
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   isPublished: boolean;
   createdAt: string;
@@ -22,7 +24,7 @@ export interface SerializedReview {
     id: string;
     name: string;
     email: string;
-  };
+  } | null;
   booking: {
     id: string;
     bookingNumber: string;
@@ -59,12 +61,68 @@ export function ReviewList({
   const [statusFilter, setStatusFilter] = useState(currentStatus);
   const [therapistFilter, setTherapistFilter] = useState(currentTherapistId);
 
-  // Moderation state
+  // Moderation & Creation Modal state
   const [actionError, setActionError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [confirmingReview, setConfirmingReview] = useState<{
     id: string;
     targetStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
   } | null>(null);
+
+  // Add Review Form state
+  const [formTherapistId, setFormTherapistId] = useState('');
+  const [formAuthorName, setFormAuthorName] = useState('');
+  const [formRating, setFormRating] = useState(5);
+  const [formComment, setFormComment] = useState('');
+  const [formDate, setFormDate] = useState('');
+  const [formError, setFormCommentError] = useState<string | null>(null);
+
+  const resetAddForm = () => {
+    setFormTherapistId('');
+    setFormAuthorName('');
+    setFormRating(5);
+    setFormComment('');
+    setFormDate('');
+    setFormCommentError(null);
+  };
+
+  const handleCreateReviewSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormCommentError(null);
+
+    if (!formTherapistId) {
+      setFormCommentError('Please select a therapist.');
+      return;
+    }
+    if (!formAuthorName.trim() || formAuthorName.trim().length < 2) {
+      setFormCommentError('Reviewer name must be at least 2 characters.');
+      return;
+    }
+    if (!formComment.trim() || formComment.trim().length < 3) {
+      setFormCommentError('Review comment must be at least 3 characters.');
+      return;
+    }
+
+    startTransition(async () => {
+      const res = await createAdminReviewAction({
+        therapistId: formTherapistId,
+        authorName: formAuthorName.trim(),
+        rating: formRating,
+        comment: formComment.trim(),
+        createdAt: formDate || undefined,
+      });
+
+      if (!res.success) {
+        setFormCommentError(res.error || 'Failed to create review.');
+      } else {
+        setSuccessMessage('Admin review created and published successfully!');
+        setIsAddModalOpen(false);
+        resetAddForm();
+        router.refresh();
+      }
+    });
+  };
 
   const handleFilterSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -111,6 +169,23 @@ export function ReviewList({
 
   return (
     <div className="space-y-6">
+      {/* Top Controls: Search, Filters & Add Review Button */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <button
+          type="button"
+          onClick={() => {
+            resetAddForm();
+            setIsAddModalOpen(true);
+          }}
+          className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          <span>+ Add Review</span>
+        </button>
+      </div>
+
       {/* Search and Filters Header */}
       <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs">
         <form onSubmit={handleFilterSubmit} className="grid grid-cols-1 sm:grid-cols-12 gap-4">
@@ -180,7 +255,19 @@ export function ReviewList({
         </form>
       </div>
 
-      {/* Global Error Banner */}
+      {/* Success / Error Banners */}
+      {successMessage && (
+        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm flex items-center justify-between">
+          <span>{successMessage}</span>
+          <button
+            onClick={() => setSuccessMessage(null)}
+            className="text-xs font-bold text-emerald-700 hover:text-emerald-900 underline ml-4 cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {actionError && (
         <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm flex items-center justify-between">
           <span>{actionError}</span>
@@ -253,8 +340,10 @@ export function ReviewList({
                       <span className="font-semibold text-slate-900">{review.therapist.name}</span>
                     </div>
                     <div>
-                      <span className="text-slate-400 block text-[10px] uppercase font-bold">Customer</span>
-                      <span className="font-semibold text-slate-900">{review.customer.name}</span>
+                      <span className="text-slate-400 block text-[10px] uppercase font-bold">Reviewer</span>
+                      <span className="font-semibold text-slate-900">
+                        {review.authorName || review.customer?.name || 'Anonymous'}
+                      </span>
                     </div>
                     <div>
                       <span className="text-slate-400 block text-[10px] uppercase font-bold">Booking Reference</span>
@@ -317,6 +406,141 @@ export function ReviewList({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Add Review Modal */}
+      {isAddModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-lg font-bold text-slate-900">
+                Add Manual Therapist Review
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddModalOpen(false);
+                  resetAddForm();
+                }}
+                className="text-slate-400 hover:text-slate-600 text-sm p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {formError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium">
+                {formError}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateReviewSubmit} className="space-y-4">
+              {/* Therapist Selection */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Therapist <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={formTherapistId}
+                  onChange={(e) => setFormTherapistId(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent bg-slate-50/50"
+                  required
+                >
+                  <option value="">Select a Therapist...</option>
+                  {therapists.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Reviewer Name */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Reviewer Name <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={formAuthorName}
+                  onChange={(e) => setFormAuthorName(e.target.value)}
+                  placeholder="e.g. Sarah M., John D."
+                  className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent bg-slate-50/50"
+                  required
+                />
+              </div>
+
+              {/* Rating & Date Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Rating <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={formRating}
+                    onChange={(e) => setFormRating(Number(e.target.value))}
+                    className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent bg-slate-50/50 font-medium text-amber-600"
+                    required
+                  >
+                    <option value={5}>5 Stars ★★★★★</option>
+                    <option value={4}>4 Stars ★★★★☆</option>
+                    <option value={3}>3 Stars ★★★☆☆</option>
+                    <option value={2}>2 Stars ★★☆☆☆</option>
+                    <option value={1}>1 Star ★☆☆☆☆</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Review Date <span className="text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={formDate}
+                    onChange={(e) => setFormDate(e.target.value)}
+                    className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent bg-slate-50/50"
+                  />
+                </div>
+              </div>
+
+              {/* Review Text */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Review Text <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={4}
+                  value={formComment}
+                  onChange={(e) => setFormComment(e.target.value)}
+                  placeholder="Enter detailed client feedback..."
+                  className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent bg-slate-50/50"
+                  required
+                />
+              </div>
+
+              {/* Form Buttons */}
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddModalOpen(false);
+                    resetAddForm();
+                  }}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="px-5 py-2 text-xs font-bold rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white shadow-xs disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  {isPending ? 'Saving...' : 'Save & Publish Review'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

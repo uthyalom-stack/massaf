@@ -72,7 +72,7 @@ export default async function TherapistProfilePage({ params }: PageProps) {
   });
 
   dbReviewsFormatted = dbReviews.map((rev) => {
-    const rawName = rev.customer?.name || 'Verified Client';
+    const rawName = rev.authorName || rev.customer?.name || 'Verified Client';
     const nameParts = rawName.trim().split(' ');
     const formattedName =
       nameParts.length > 1

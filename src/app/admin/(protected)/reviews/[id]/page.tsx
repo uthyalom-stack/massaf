@@ -1,6 +1,8 @@
 import React from 'react';
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
+import { getVerifiedAdminSession } from '@/lib/auth-session';
 import { ReviewDetailClient, SerializedReviewDetail } from '@/components/admin/ReviewDetailClient';
 
 export const metadata = {
@@ -15,6 +17,14 @@ interface PageProps {
 }
 
 export default async function AdminReviewDetailPage({ params }: PageProps) {
+  const session = await getVerifiedAdminSession();
+  if (!session) {
+    redirect('/admin/login');
+  }
+  if (session.role === 'STAFF') {
+    redirect('/admin/marketer');
+  }
+
   const { id } = await params;
 
   let serializedReview: SerializedReviewDetail | null = null;
@@ -61,6 +71,8 @@ export default async function AdminReviewDetailPage({ params }: PageProps) {
         id: rawReview.id,
         rating: rawReview.rating,
         comment: rawReview.comment,
+          authorName: rawReview.authorName,
+          source: rawReview.source,
         status: rawReview.status,
         isPublished: rawReview.isPublished,
         createdAt: rawReview.createdAt.toISOString(),
@@ -71,11 +83,13 @@ export default async function AdminReviewDetailPage({ params }: PageProps) {
           bio: rawReview.therapist.bio,
           profileImage: rawReview.therapist.profileImage,
         },
-        customer: {
-          id: rawReview.customer.id,
-          name: rawReview.customer.name,
-          email: rawReview.customer.email,
-        },
+          customer: rawReview.customer
+            ? {
+                id: rawReview.customer.id,
+                name: rawReview.customer.name,
+                email: rawReview.customer.email,
+              }
+            : null,
         booking: rawReview.booking
           ? {
               id: rawReview.booking.id,
