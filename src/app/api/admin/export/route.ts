@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getVerifiedAdminSession } from '@/lib/auth-session';
-import { BookingStatus, PaymentStatus } from '@prisma/client';
 
 function escapeCsvField(val: unknown): string {
   if (val === null || val === undefined) return '""';
@@ -47,7 +46,7 @@ export async function GET(req: NextRequest) {
     // 1. EXPORT BOOKINGS
     if (exportType === 'bookings') {
       const whereClause: {
-        status?: BookingStatus;
+        status?: any;
         OR?: Array<
           | { bookingNumber?: { contains: string } }
           | { customer?: { name?: { contains: string } } }
@@ -56,7 +55,7 @@ export async function GET(req: NextRequest) {
       } = {};
 
       if (statusParam !== 'ALL') {
-        whereClause.status = statusParam as BookingStatus;
+        whereClause.status = statusParam as any;
       }
 
       if (searchParam) {
@@ -235,7 +234,7 @@ export async function GET(req: NextRequest) {
     // 4. EXPORT PAYMENTS
     if (exportType === 'payments') {
       const whereClause: {
-        paymentStatus?: PaymentStatus;
+        paymentStatus?: any;
         OR?: Array<
           | { bookingNumber?: { contains: string } }
           | { customer?: { name?: { contains: string } } }
@@ -243,7 +242,7 @@ export async function GET(req: NextRequest) {
         >;
       } = {};
 
-      if (statusParam !== 'ALL') whereClause.paymentStatus = statusParam as PaymentStatus;
+      if (statusParam !== 'ALL') whereClause.paymentStatus = statusParam as any;
 
       if (searchParam) {
         whereClause.OR = [

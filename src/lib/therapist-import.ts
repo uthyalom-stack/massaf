@@ -103,6 +103,62 @@ function normalizeHeaderKey(header: string): string {
 }
 
 /**
+ * Parses multi-rule availability schedule strings like "Mon-Fri 09:00-17:00; Sat 10:00-16:00"
+ */
+export function parseAvailabilityScheduleString(availabilityRaw: string): {
+  rules: Array<{ dayOfWeek: number; startTime: string; endTime: string }>;
+  warnings: string[];
+} {
+  const rules: Array<{ dayOfWeek: number; startTime: string; endTime: string }> = [];
+  const warnings: string[] = [];
+
+  if (!availabilityRaw || !availabilityRaw.trim()) {
+    return { rules, warnings };
+  }
+
+  // Split multi-rule schedules by semicolon or newline
+  const blocks = availabilityRaw.split(/[;\n]/).map((b) => b.trim()).filter(Boolean);
+
+  for (const block of blocks) {
+    const parts = block.split(/\s+/);
+    let daysStr = parts[0] || 'Mon-Fri';
+    let hoursStr = parts[1] || '09:00-17:00';
+
+    if (parts.length === 1 && parts[0].includes(':')) {
+      daysStr = 'Mon-Fri';
+      hoursStr = parts[0];
+    }
+
+    const days = parseScheduleDays(daysStr);
+    const hours = parseScheduleHours(hoursStr);
+
+    if (days.length > 0 && hours) {
+      if (hours.startMinutes >= hours.endMinutes) {
+        warnings.push(`Invalid time range in schedule '${block}': start time must be strictly before end time.`);
+        continue;
+      }
+
+      const startHh = Math.floor(hours.startMinutes / 60).toString().padStart(2, '0');
+      const startMm = (hours.startMinutes % 60).toString().padStart(2, '0');
+      const endHh = Math.floor(hours.endMinutes / 60).toString().padStart(2, '0');
+      const endMm = (hours.endMinutes % 60).toString().padStart(2, '0');
+
+      for (const day of days) {
+        rules.push({
+          dayOfWeek: day,
+          startTime: `${startHh}:${startMm}`,
+          endTime: `${endHh}:${endMm}`,
+        });
+      }
+    } else {
+      warnings.push(`Could not parse schedule block '${block}'.`);
+    }
+  }
+
+  return { rules, warnings };
+}
+
+/**
  * Parses and validates CSV content against database state, classifying duplicates and unmatched services.
  */
 export async function parseAndPreviewTherapistCsv(csvContent: string): Promise<{
@@ -229,39 +285,8 @@ export async function parseAndPreviewTherapistCsv(csvContent: string): Promise<{
 
     // Availability Mapping
     const availabilityRaw = getColValue(row, 'availability').trim();
-    const parsedAvailabilities: Array<{ dayOfWeek: number; startTime: string; endTime: string }> = [];
-
-    if (availabilityRaw) {
-      // Parse strings like "Mon-Fri 09:00-17:00"
-      const parts = availabilityRaw.split(/\s+/);
-      let daysStr = parts[0] || 'Mon-Fri';
-      let hoursStr = parts[1] || '09:00-17:00';
-
-      if (parts.length === 1 && parts[0].includes(':')) {
-        daysStr = 'Mon-Fri';
-        hoursStr = parts[0];
-      }
-
-      const days = parseScheduleDays(daysStr);
-      const hours = parseScheduleHours(hoursStr);
-
-      if (days.length > 0 && hours) {
-        const startHh = Math.floor(hours.startMinutes / 60).toString().padStart(2, '0');
-        const startMm = (hours.startMinutes % 60).toString().padStart(2, '0');
-        const endHh = Math.floor(hours.endMinutes / 60).toString().padStart(2, '0');
-        const endMm = (hours.endMinutes % 60).toString().padStart(2, '0');
-
-        for (const day of days) {
-          parsedAvailabilities.push({
-            dayOfWeek: day,
-            startTime: `${startHh}:${startMm}`,
-            endTime: `${endHh}:${endMm}`,
-          });
-        }
-      } else {
-        warnings.push(`Could not parse availability schedule '${availabilityRaw}'. Defaulting to standard Mon-Fri hours.`);
-      }
-    }
+    const { rules: parsedAvailabilities, warnings: availWarnings } = parseAvailabilityScheduleString(availabilityRaw);
+    warnings.push(...availWarnings);
 
     // Gallery Photos Mapping
     const galleryPhotosRaw = getColValue(row, 'galleryPhotos').trim();

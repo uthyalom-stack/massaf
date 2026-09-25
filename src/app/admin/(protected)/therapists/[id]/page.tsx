@@ -32,7 +32,7 @@ export default async function AdminEditTherapistPage({ params }: PageProps) {
     durationMinutes: number;
     price: number;
   }> = [];
-  const zipCoverageGroups: ZipCoverageGroup[] = [];
+  let zipCoverageGroups: ZipCoverageGroup[] = [];
   let totalAssignedZips = 0;
 
   try {

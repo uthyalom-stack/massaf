@@ -11,18 +11,12 @@ import {
   requestRefundAction,
   processRefundAction,
   listAllPaymentsAction,
-  createAdminUserAction,
 } from '../src/app/admin/actions';
-import { parseAndPreviewTherapistCsv } from '../src/lib/therapist-import';
-import {
-  notifyBookingRescheduled,
-  notifyTherapistAssigned,
-  notifyPaymentReceived,
-  notifyPaymentIssue,
-} from '../src/lib/notifications';
+import { parseAndPreviewTherapistCsv, parseAvailabilityScheduleString } from '../src/lib/therapist-import';
+import { notifyBookingRescheduled } from '../src/lib/notifications';
 
 async function runOperationsImportTestSuite() {
-  console.log('=== STARTING PHASE 24 OPERATIONS & JOTFORM IMPORT TEST SUITE ===\n');
+  console.log('=== STARTING PHASE 24 OPERATIONS & CSV IMPORT TEST SUITE ===\n');
 
   // Setup test environment auth secret
   process.env.MASSAF_AUTH_SECRET = 'test-secret-123456789012345678901234567890';
@@ -45,9 +39,9 @@ async function runOperationsImportTestSuite() {
   const token = createSessionToken(admin.id, admin.email, 'ADMIN', 24, admin.role);
   (globalThis as any).__TEST_ADMIN_SESSION_TOKEN__ = token;
 
-  // 2. Setup Test Customer, Service, and Therapist
-  const service = await db.service.findFirst({ where: { isActive: true } }) ||
-    await db.service.create({
+  // 2. Setup Test Customer, Service, and Therapists
+  const service = (await db.service.findFirst({ where: { isActive: true } })) ||
+    (await db.service.create({
       data: {
         name: 'Swedish Test Massage',
         description: 'Test swedish massage',
@@ -55,7 +49,7 @@ async function runOperationsImportTestSuite() {
         price: 100.0,
         isActive: true,
       },
-    });
+    }));
 
   const customer = await db.customer.create({
     data: {
@@ -67,10 +61,11 @@ async function runOperationsImportTestSuite() {
     },
   });
 
-  const therapist = await db.therapist.create({
+  // Therapist 1: Pending Verification
+  const pendingTherapist = await db.therapist.create({
     data: {
-      name: 'Ops Test Therapist',
-      email: `ops_therapist_${Date.now()}@test.com`,
+      name: 'Pending Test Therapist',
+      email: `pending_therapist_${Date.now()}@test.com`,
       phone: '+15552223333',
       hourlyRate: 110.0,
       isActive: true,
@@ -81,39 +76,51 @@ async function runOperationsImportTestSuite() {
     },
   });
 
-  // Assign service to therapist
-  await db.therapistService.create({
+  // Therapist 2: Verified
+  const verifiedTherapist = await db.therapist.create({
     data: {
-      therapistId: therapist.id,
-      serviceId: service.id,
+      name: 'Verified Test Therapist',
+      email: `verified_therapist_${Date.now()}@test.com`,
+      phone: '+15554445555',
+      hourlyRate: 115.0,
       isActive: true,
+      offersStudio: true,
+      offersInHome: true,
+      verificationStatus: 'VERIFIED',
+      isTest: true,
     },
   });
 
-  // Add working availability for therapist (Mon-Fri 08:00-20:00)
+  // Assign service to both therapists
+  await db.therapistService.createMany({
+    data: [
+      { therapistId: pendingTherapist.id, serviceId: service.id, isActive: true },
+      { therapistId: verifiedTherapist.id, serviceId: service.id, isActive: true },
+    ],
+  });
+
+  // Add working availability (Mon-Fri 08:00-20:00)
   for (let d = 1; d <= 5; d++) {
-    await db.therapistAvailability.create({
-      data: {
-        therapistId: therapist.id,
-        dayOfWeek: d,
-        startTime: '08:00',
-        endTime: '20:00',
-      },
+    await db.therapistAvailability.createMany({
+      data: [
+        { therapistId: pendingTherapist.id, dayOfWeek: d, startTime: '08:00', endTime: '20:00' },
+        { therapistId: verifiedTherapist.id, dayOfWeek: d, startTime: '08:00', endTime: '20:00' },
+      ],
     });
   }
 
-  // Create test booking on next Monday at 10:00 AM UTC
+  // Create test booking on next Monday at 10:00 AM UTC assigned to verifiedTherapist
   const bookingDate = new Date(Date.UTC(2026, 9, 5, 10, 0, 0)); // Mon Oct 5 2026
   const booking = await db.booking.create({
     data: {
       bookingNumber: `OPS-${Date.now()}`,
       customerId: customer.id,
-      therapistId: therapist.id,
+      therapistId: verifiedTherapist.id,
       serviceId: service.id,
       appointmentDateTime: bookingDate,
       durationMinutes: 60,
       locationType: 'STUDIO',
-      amount: 110.0,
+      amount: 115.0,
       status: 'CONFIRMED',
       paymentStatus: 'PAID',
       paymentMethod: 'CARD',
@@ -122,7 +129,25 @@ async function runOperationsImportTestSuite() {
     },
   });
 
-  console.log('1. Testing Internal Admin Notes (Phase 5)...');
+  console.log('1. Testing Compatibility Matcher Verification Strictness (Phase 3 & 7)...');
+  const candidateRes = await findCompatibleTherapistsAction(booking.id);
+  if (!candidateRes.success || !candidateRes.candidates) {
+    throw new Error(`Candidate evaluation failed: ${candidateRes.error}`);
+  }
+
+  const pendingEval = candidateRes.candidates.find((c) => c.therapistId === pendingTherapist.id);
+  if (!pendingEval || pendingEval.isCompatible) {
+    throw new Error('VERIFICATION VIOLATION: PENDING therapist must be rejected by candidate matcher.');
+  }
+  console.log('[PASS] PENDING verification therapist correctly rejected by compatibility matcher');
+
+  const verifiedEval = candidateRes.candidates.find((c) => c.therapistId === verifiedTherapist.id);
+  if (!verifiedEval || !verifiedEval.isCompatible) {
+    throw new Error('VERIFIED therapist should have been marked eligible.');
+  }
+  console.log('[PASS] VERIFIED therapist correctly marked eligible\n');
+
+  console.log('2. Testing Internal Admin Notes (Phase 5)...');
   const noteRes = await createAdminNoteAction({
     entityType: 'BOOKING',
     entityId: booking.id,
@@ -137,7 +162,7 @@ async function runOperationsImportTestSuite() {
   }
   console.log('[PASS] Internal notes list retrieved successfully\n');
 
-  console.log('2. Testing Admin Reschedule Booking (Phase 2)...');
+  console.log('3. Testing Admin Reschedule Booking (Phase 2)...');
   // Valid reschedule to Oct 5 at 14:00 UTC
   const rescheduleRes = await rescheduleBookingAdminAction({
     bookingId: booking.id,
@@ -156,21 +181,14 @@ async function runOperationsImportTestSuite() {
   if (invalidReschedule.success) throw new Error('Reschedule outside working hours should have failed.');
   console.log('[PASS] Out-of-hours reschedule safely rejected\n');
 
-  console.log('3. Testing Find Compatible Therapists (Phase 3)...');
-  const candidateRes = await findCompatibleTherapistsAction(booking.id);
-  if (!candidateRes.success || !candidateRes.candidates) {
-    throw new Error(`Candidate evaluation failed: ${candidateRes.error}`);
-  }
-  console.log(`[PASS] Evaluated ${candidateRes.candidates.length} candidate therapists with eligibility checklists\n`);
-
-  console.log('4. Testing Therapist Verification Queue (Phase 7)...');
+  console.log('4. Testing Therapist Verification Workflow (Phase 7)...');
   const verifRes = await updateTherapistVerificationAction(
-    therapist.id,
+    pendingTherapist.id,
     'VERIFIED',
     'Verified active license in state registry.'
   );
   if (!verifRes.success) throw new Error(`Verification update failed: ${verifRes.error}`);
-  console.log('[PASS] Therapist verification updated to VERIFIED\n');
+  console.log('[PASS] Pending therapist updated to VERIFIED\n');
 
   console.log('5. Testing Customer Operational Actions (Phase 8)...');
   const disableCustRes = await toggleCustomerActiveAction(customer.id, false);
@@ -190,7 +208,7 @@ async function runOperationsImportTestSuite() {
 
   const refundReqRes = await requestRefundAction({
     bookingId: booking.id,
-    amount: 110.0,
+    amount: 115.0,
     reason: 'Test refund request',
   });
   if (!refundReqRes.success || !refundReqRes.refund) {
@@ -205,14 +223,22 @@ async function runOperationsImportTestSuite() {
   if (!refundProcRes.success) throw new Error(`Refund processing failed: ${refundProcRes.error}`);
   console.log('[PASS] Refund marked PROCESSED and booking status set to REFUNDED\n');
 
-  console.log('7. Testing Jotform CSV Importer (Phase 15)...');
+  console.log('7. Testing Multi-Rule Schedule String Parser (Phase 15)...');
+  const scheduleStr = 'Mon 09:00-17:00; Wed 10:00-18:00; Sat 12:00-16:00';
+  const { rules: parsedRules } = parseAvailabilityScheduleString(scheduleStr);
+  if (parsedRules.length !== 3) {
+    throw new Error(`Expected 3 schedule rules, got ${parsedRules.length}`);
+  }
+  console.log('[PASS] Multi-rule availability schedule string parsed into 3 distinct day rules\n');
+
+  console.log('8. Testing CSV Importer Duplicate Detection & ZIP Eligibility Exclusion (Phase 15)...');
   const sampleCsv = `Full Name,Bio,Profile Photo,Email,Phone,Telegram Chat ID,Hourly Rate,Offers Studio,Offers In-Home,Services,Availability,Gallery Photos
-Imported Therapist A,"Experienced therapist.",https://example.com/photo.jpg,imported.a@test.com,+15559990001,123456,120.00,Yes,Yes,Swedish Massage Test,Mon-Fri 09:00-17:00,https://example.com/gal1.jpg
-${therapist.name},"Updated bio.",,${therapist.email},${therapist.phone},,130.00,Yes,Yes,Swedish Massage Test,Tue-Sat 10:00-18:00,`;
+Imported Therapist A,"Experienced therapist.",https://example.com/photo.jpg,imported.a@test.com,+15559990001,123456,120.00,Yes,Yes,Swedish Test Massage,Mon-Fri 09:00-17:00,https://example.com/gal1.jpg
+${verifiedTherapist.name},"Updated bio.",,${verifiedTherapist.email},${verifiedTherapist.phone},,130.00,Yes,Yes,Swedish Test Massage,Tue-Sat 10:00-18:00,`;
 
   const previewRes = await parseAndPreviewTherapistCsv(sampleCsv);
   if (previewRes.rows.length !== 2) throw new Error('Expected 2 rows in CSV preview.');
-  console.log(`[PASS] CSV parsed: ${previewRes.summary.newCount} NEW, ${previewRes.summary.existingCount} EXISTING`);
+  console.log(`[PASS] CSV preview: ${previewRes.summary.newCount} NEW, ${previewRes.summary.existingCount} EXISTING`);
 
   const importRows = previewRes.rows.map((r) => ({
     ...r,
@@ -232,7 +258,7 @@ ${therapist.name},"Updated bio.",,${therapist.email},${therapist.phone},,130.00,
   if (zipCount > 0) throw new Error('CRITICAL ZIP VIOLATION: Importer must not create ZIP eligibility rows.');
   console.log('[PASS] CRITICAL ZIP RULE VERIFIED: CSV Importer created 0 ZIP eligibility rows\n');
 
-  console.log('8. Testing Communication Event Notifications (Phase 14)...');
+  console.log('9. Testing Communication Event Notifications (Phase 14)...');
   const notifRes = await notifyBookingRescheduled(booking.id, '2026-10-05 10:00 UTC');
   if (!notifRes) throw new Error('Reschedule notification dispatch failed.');
   console.log('[PASS] Reschedule event notification abstraction executed cleanly\n');
@@ -241,9 +267,9 @@ ${therapist.name},"Updated bio.",,${therapist.email},${therapist.phone},,130.00,
   await db.adminNote.deleteMany({ where: { entityId: booking.id } });
   await db.refundRecord.deleteMany({ where: { bookingId: booking.id } });
   await db.booking.delete({ where: { id: booking.id } });
-  await db.therapistService.deleteMany({ where: { therapistId: therapist.id } });
-  await db.therapistAvailability.deleteMany({ where: { therapistId: therapist.id } });
-  await db.therapist.delete({ where: { id: therapist.id } });
+  await db.therapistService.deleteMany({ where: { therapistId: { in: [pendingTherapist.id, verifiedTherapist.id] } } });
+  await db.therapistAvailability.deleteMany({ where: { therapistId: { in: [pendingTherapist.id, verifiedTherapist.id] } } });
+  await db.therapist.deleteMany({ where: { id: { in: [pendingTherapist.id, verifiedTherapist.id] } } });
   await db.customer.delete({ where: { id: customer.id } });
 
   const importedTherapist = await db.therapist.findFirst({ where: { email: 'imported.a@test.com' } });
@@ -255,7 +281,7 @@ ${therapist.name},"Updated bio.",,${therapist.email},${therapist.phone},,130.00,
   }
 
   console.log('====================================================');
-  console.log('  ALL OPERATIONS & JOTFORM IMPORT TESTS PASSED!');
+  console.log('  ALL OPERATIONS & CSV IMPORT TESTS PASSED!');
   console.log('====================================================');
 }
 

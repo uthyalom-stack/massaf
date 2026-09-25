@@ -18,7 +18,7 @@ import {
 } from '@/lib/validations/admin-booking';
 import { updateReviewStatusSchema, createAdminReviewSchema } from '@/lib/validations/admin-review';
 import { createMarketingLinkSchema, updateMarketingLinkSchema } from '@/lib/validations/admin-marketing';
-import { BookingStatus, PaymentStatus, ReviewStatus, VerificationStatus } from '@prisma/client';
+import { BookingStatus, ReviewStatus, VerificationStatus } from '@prisma/client';
 import { revalidatePath } from 'next/cache';
 import { logAdminAction } from '@/lib/admin-audit';
 import { createAdminNotification } from '@/lib/admin-notifications';
@@ -30,7 +30,6 @@ import {
 } from '@/lib/notifications';
 import { therapistCoversZipAsync } from '@/lib/db-therapists';
 import { getDbScheduleWindowForDate, parseTimeStringToMinutes } from '@/lib/availability';
-import { CustomerTherapist } from '@/types/customer';
 import { deleteFromR2 } from '@/lib/r2';
 import { getVerifiedAdminSession } from '@/lib/auth-session';
 import { hashPassword } from '@/lib/auth-password';
@@ -66,7 +65,7 @@ function safeRevalidatePath(path: string) {
 
 // --- Therapist Management ---
 
-// --- Jotform CSV Therapist Import Actions ---
+// --- CSV Therapist Import Actions ---
 
 export async function previewTherapistCsvAction(csvContent: string) {
   try {
@@ -122,23 +121,38 @@ export async function executeTherapistCsvImportAction(input: {
     let failedCount = 0;
     const errors: Array<{ rowNumber: number; name: string; error: string }> = [];
 
+    // SERVER-SIDE REVALIDATION: Re-query live DB state at execution time
+    const activeServices = await db.service.findMany({ where: { isActive: true }, select: { id: true } });
+    const activeServiceIdSet = new Set(activeServices.map((s) => s.id));
+
     for (const row of input.rows) {
-      if (row.actionChoice === 'SKIP' || row.classification === 'INVALID') {
+      if (row.actionChoice === 'SKIP' || row.classification === 'INVALID' || !row.name || !row.name.trim()) {
         skippedCount++;
         continue;
       }
 
+      // Re-validate matched service IDs against active DB services
+      const validServiceIds = (row.matchedServiceIds || []).filter((id) => activeServiceIdSet.has(id));
+
       try {
         if (row.actionChoice === 'UPDATE' && row.existingTherapistId) {
+          // Re-verify target therapist exists in DB
+          const targetTherapist = await db.therapist.findUnique({ where: { id: row.existingTherapistId } });
+          if (!targetTherapist) {
+            failedCount++;
+            errors.push({ rowNumber: row.rowNumber, name: row.name, error: `Target therapist ID '${row.existingTherapistId}' no longer exists in database.` });
+            continue;
+          }
+
           // UPDATE Existing Therapist
           await db.$transaction(async (tx) => {
             await tx.therapist.update({
               where: { id: row.existingTherapistId! },
               data: {
-                name: row.name,
+                name: row.name.trim(),
                 ...(row.bio !== undefined && { bio: row.bio || null }),
                 ...(row.profileImage !== undefined && { profileImage: row.profileImage || null }),
-                ...(row.email !== undefined && { email: row.email || null }),
+                ...(row.email !== undefined && { email: row.email ? row.email.toLowerCase().trim() : null }),
                 ...(row.phone !== undefined && { phone: row.phone || null }),
                 ...(row.telegramChatId !== undefined && { telegramChatId: row.telegramChatId || null }),
                 hourlyRate: row.hourlyRate || 100.0,
@@ -147,8 +161,8 @@ export async function executeTherapistCsvImportAction(input: {
               },
             });
 
-            // Service assignments
-            for (const serviceId of row.matchedServiceIds) {
+            // Upsert valid services
+            for (const serviceId of validServiceIds) {
               await tx.therapistService.upsert({
                 where: {
                   therapistId_serviceId: {
@@ -212,22 +226,22 @@ export async function executeTherapistCsvImportAction(input: {
           await db.$transaction(async (tx) => {
             const newTherapist = await tx.therapist.create({
               data: {
-                name: row.name,
+                name: row.name.trim(),
                 bio: row.bio || null,
                 profileImage: row.profileImage || null,
-                email: row.email || null,
+                email: row.email ? row.email.toLowerCase().trim() : null,
                 phone: row.phone || null,
                 telegramChatId: row.telegramChatId || null,
                 hourlyRate: row.hourlyRate || 100.0,
                 offersStudio: row.offersStudio,
                 offersInHome: row.offersInHome,
                 isActive: true,
-                verificationStatus: 'VERIFIED', // Business bulk imported existing known therapists
+                verificationStatus: 'VERIFIED',
               },
             });
 
             // Services
-            for (const serviceId of row.matchedServiceIds) {
+            for (const serviceId of validServiceIds) {
               await tx.therapistService.create({
                 data: {
                   therapistId: newTherapist.id,
@@ -376,7 +390,7 @@ export async function listAllPaymentsAction(
     } = {};
 
     if (['PAID', 'PENDING', 'UNPAID', 'FAILED', 'REFUNDED'].includes(paymentStatusFilter)) {
-      whereClause.paymentStatus = paymentStatusFilter as PaymentStatus;
+      whereClause.paymentStatus = paymentStatusFilter as any;
     }
 
     if (search.trim()) {
@@ -3227,12 +3241,15 @@ export async function evaluateTherapistCompatibilityForBooking(
   const reasons: string[] = [];
 
   // 1. Active & Verification
-  const activeAndVerified =
-    therapist.isActive &&
-    therapist.verificationStatus !== 'REJECTED' &&
-    therapist.verificationStatus !== 'SUSPENDED';
+  const activeAndVerified = therapist.isActive && therapist.verificationStatus === 'VERIFIED';
   if (!activeAndVerified) {
-    reasons.push(`Therapist status is ${therapist.verificationStatus} (active: ${therapist.isActive})`);
+    if (!therapist.isActive) {
+      reasons.push('Therapist account is inactive');
+    } else if (therapist.verificationStatus === 'PENDING') {
+      reasons.push('Therapist is pending verification approval');
+    } else {
+      reasons.push(`Therapist verification status is ${therapist.verificationStatus}`);
+    }
   }
 
   // 2. Location Type Supported
@@ -3255,7 +3272,7 @@ export async function evaluateTherapistCompatibilityForBooking(
   // 4. ZIP Covered
   let zipCovered = true;
   if (bookingParams.locationType === 'IN_HOME' && bookingParams.zipCode) {
-    zipCovered = await therapistCoversZipAsync({ id: therapist.id } as unknown as CustomerTherapist, bookingParams.zipCode);
+    zipCovered = await therapistCoversZipAsync({ id: therapist.id } as any, bookingParams.zipCode);
   }
   if (!zipCovered) {
     reasons.push(`Therapist does not cover ZIP ${bookingParams.zipCode} for in-home sessions`);
@@ -3326,7 +3343,13 @@ export async function evaluateTherapistCompatibilityForBooking(
     checklist: {
       activeAndVerified: {
         pass: activeAndVerified,
-        label: activeAndVerified ? '✓ Active & verified' : '✕ Inactive or unverified',
+        label: activeAndVerified
+          ? '✓ Active & verified'
+          : !therapist.isActive
+          ? '✕ Inactive account'
+          : therapist.verificationStatus === 'PENDING'
+          ? '✕ Pending verification'
+          : `✕ Verification ${therapist.verificationStatus}`,
       },
       locationSupported: {
         pass: locationSupported,
