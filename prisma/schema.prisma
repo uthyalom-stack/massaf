@@ -111,6 +111,7 @@ model Customer {
   addresses       CustomerAddress[]
   favorites       CustomerFavorite[]
   rotationHistory CustomerRotationHistory[]
+  supportRequests SupportRequest[]
 
   @@index([email])
   @@index([isActive])
@@ -610,4 +611,25 @@ model RefundRecord {
 
   @@index([bookingId])
   @@index([status])
+}
+
+/// Customer support request submissions
+model SupportRequest {
+  id               String   @id @default(uuid())
+  customerId       String?
+  name             String
+  email            String
+  category         String
+  subject          String
+  message          String
+  bookingReference String?
+  status           String   @default("PENDING")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([status])
+  @@index([createdAt])
 }

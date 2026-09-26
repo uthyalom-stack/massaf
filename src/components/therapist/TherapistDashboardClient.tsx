@@ -394,6 +394,14 @@ export function TherapistDashboardClient() {
     );
   }
 
+  const todayStr = new Date().toISOString().split('T')[0];
+  const todayAppointments = data.appointments.filter(
+    (a) => a.appointmentDateTime.startsWith(todayStr)
+  );
+  const upcomingAppointments = data.appointments.filter(
+    (a) => a.status === 'PENDING' || a.status === 'CONFIRMED' || a.status === 'ASSIGNED' || a.status === 'IN_PROGRESS'
+  );
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
       {/* Header */}
@@ -433,17 +441,21 @@ export function TherapistDashboardClient() {
       )}
 
       {/* Stats Summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Total Appointments</span>
-          <span className="text-3xl font-black text-slate-900 dark:text-white mt-1 block">{data.appointments.length}</span>
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Today's Appointments</span>
+          <span className="text-3xl font-black text-slate-900 dark:text-white mt-1 block">{todayAppointments.length}</span>
+        </div>
+        <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Active Upcoming</span>
+          <span className="text-3xl font-black text-slate-900 dark:text-white mt-1 block">{upcomingAppointments.length}</span>
         </div>
         <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800">
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Completed Sessions</span>
           <span className="text-3xl font-black text-slate-900 dark:text-white mt-1 block">{data.earningsSummary.completedAppointmentsCount}</span>
         </div>
         <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Gross Completed Earnings</span>
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Gross Earnings</span>
           <span className="text-3xl font-black text-emerald-600 dark:text-emerald-400 mt-1 block">${data.earningsSummary.totalEarned.toFixed(2)}</span>
         </div>
       </div>
@@ -502,8 +514,35 @@ export function TherapistDashboardClient() {
 
       {/* TAB 1: APPOINTMENTS */}
       {activeTab === 'appointments' && (
-        <div className="space-y-4">
-          <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">Scheduled Appointments</h2>
+        <div className="space-y-6">
+          {/* Today's Appointments Section */}
+          {todayAppointments.length > 0 && (
+            <div className="p-6 bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-3xl space-y-3">
+              <h2 className="text-base font-extrabold text-emerald-900 dark:text-emerald-200 uppercase tracking-wide">
+                Today's Appointments ({todayAppointments.length})
+              </h2>
+              <div className="space-y-3">
+                {todayAppointments.map((a) => (
+                  <div key={a.id} className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-emerald-100 dark:border-emerald-900/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div>
+                      <span className="font-mono text-xs font-bold text-slate-400">{a.bookingNumber}</span>
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white">{a.serviceName} with {a.customerName}</h3>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        ⏰ {new Date(a.appointmentDateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ({a.durationMinutes} mins) • {a.locationType === 'STUDIO' ? 'Studio' : `In-Home (${a.city}, ${a.state})`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-1 text-[10px] font-extrabold uppercase rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                        {a.status}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">All Assigned Appointments</h2>
           {data.appointments.length === 0 ? (
             <div className="p-8 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
               No appointments scheduled yet.
@@ -533,6 +572,25 @@ export function TherapistDashboardClient() {
                     <div className="flex items-center gap-2 pt-2 sm:pt-0">
                       {a.status !== 'COMPLETED' && a.status !== 'CANCELLED' && a.status !== 'REFUNDED' && (
                         <>
+                          {(a.status === 'ASSIGNED' || a.status === 'PENDING') && (
+                            <button
+                              onClick={async () => {
+                                const res = await fetch('/api/therapist/appointments', {
+                                  method: 'PUT',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ bookingId: a.id, status: 'CONFIRMED' }),
+                                });
+                                if (res.ok) loadPortalData();
+                                else {
+                                  const err = await res.json();
+                                  alert(err.error || 'Failed to confirm booking');
+                                }
+                              }}
+                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                            >
+                              Confirm
+                            </button>
+                          )}
                           {a.status !== 'IN_PROGRESS' && (
                             <button
                               onClick={async () => {

@@ -1,16 +1,18 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getVerifiedCustomerSession } from '@/lib/auth-session';
-import { formatDbTherapistToPublic } from '@/lib/db-therapists';
+import { formatDbTherapistToPublic, therapistCoversZipAsync } from '@/lib/db-therapists';
 import { isAppointmentTimeAvailable } from '@/lib/availability';
 import { parseAppointmentDateTime } from '@/lib/timezone';
+import { createAdminNotification } from '@/lib/admin-notifications';
 
 export async function POST(request: Request) {
   try {
-    const session = await getVerifiedCustomerSession();
+    const cookieHeader = request.headers.get('cookie') || undefined;
+    const session = await getVerifiedCustomerSession(cookieHeader);
     if (!session) {
       return NextResponse.json(
-        { error: 'Unauthorized: Please verify your account to reschedule bookings' },
+        { error: 'Unauthorized: Please verify your customer account to reschedule bookings' },
         { status: 401 }
       );
     }
@@ -54,7 +56,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (booking.status === 'CANCELLED' || booking.status === 'COMPLETED' || booking.status === 'REFUNDED') {
+    if (booking.status === 'CANCELLED' || booking.status === 'COMPLETED' || booking.status === 'REFUNDED' || booking.status === 'NO_SHOW') {
       return NextResponse.json(
         { error: `Bookings with status ${booking.status} cannot be rescheduled` },
         { status: 400 }
@@ -75,7 +77,19 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2. Parse new appointment date/time deterministically
+    // 2. If IN_HOME session, revalidate ZIP eligibility authoritatively
+    if (booking.locationType === 'IN_HOME' && booking.zipCode) {
+      const publicTherapist = formatDbTherapistToPublic(booking.therapist);
+      const isZipCovered = await therapistCoversZipAsync(publicTherapist, booking.zipCode);
+      if (!isZipCovered) {
+        return NextResponse.json(
+          { error: `Therapist no longer covers ZIP code ${booking.zipCode} for in-home sessions` },
+          { status: 400 }
+        );
+      }
+    }
+
+    // 3. Parse new appointment date/time deterministically
     let newAppointmentDateTime: Date;
     try {
       newAppointmentDateTime = parseAppointmentDateTime(date, time);
@@ -93,7 +107,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Authoritative server-side working hours availability check
+    // 4. Authoritative server-side working hours availability check
     const publicTherapist = formatDbTherapistToPublic(booking.therapist);
     const availabilityCheck = isAppointmentTimeAvailable(
       publicTherapist,
@@ -109,7 +123,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 4. Atomic transaction overlap check excluding current booking ID
+    // 5. Atomic transaction overlap check excluding current booking ID
     const requestedStart = newAppointmentDateTime.getTime();
     const requestedEnd = requestedStart + booking.durationMinutes * 60 * 1000;
 
@@ -156,6 +170,51 @@ export async function POST(request: Request) {
         { error: 'The requested appointment slot is already booked. Please select another time.' },
         { status: 400 }
       );
+    }
+
+    const oldFormatted = booking.appointmentDateTime.toISOString();
+    const newFormatted = rescheduleResult.booking.appointmentDateTime.toISOString();
+
+    // Create Audit Log entry
+    try {
+      await db.adminAuditLog.create({
+        data: {
+          actorUserId: session.entityId,
+          actorEmail: session.email,
+          actorRole: 'CUSTOMER',
+          action: 'BOOKING_RESCHEDULED_BY_CUSTOMER',
+          entityType: 'Booking',
+          entityId: booking.id,
+          description: `Customer ${session.email} rescheduled booking ${booking.bookingNumber} from ${oldFormatted} to ${newFormatted}`,
+          metadataJson: JSON.stringify({
+            bookingNumber: booking.bookingNumber,
+            oldDateTime: oldFormatted,
+            newDateTime: newFormatted,
+          }),
+        },
+      });
+    } catch (auditErr) {
+      console.warn('[AuditLog] Error logging customer reschedule:', auditErr);
+    }
+
+    // Create Admin Notification
+    try {
+      await createAdminNotification({
+        type: 'BOOKING_RESCHEDULED',
+        title: `Booking Rescheduled (${booking.bookingNumber})`,
+        message: `Appointment ${booking.bookingNumber} rescheduled to ${newAppointmentDateTime.toLocaleString()}`,
+        link: `/admin/bookings/${booking.id}`,
+      });
+    } catch (adminNotifErr) {
+      console.warn('[AdminNotif] Error creating admin reschedule notification:', adminNotifErr);
+    }
+
+    // Dispatch notifications to customer & therapist with failure isolation
+    try {
+      const { notifyBookingRescheduled } = await import('@/lib/notifications');
+      await notifyBookingRescheduled(booking.id, oldFormatted);
+    } catch (notifErr) {
+      console.warn('notifyBookingRescheduled dispatch warning:', notifErr);
     }
 
     return NextResponse.json({

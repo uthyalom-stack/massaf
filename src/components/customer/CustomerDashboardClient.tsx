@@ -104,6 +104,11 @@ export function CustomerDashboardClient() {
   const [addZip, setAddZip] = useState('');
   const [savingAddress, setSavingAddress] = useState(false);
 
+  // Cancellation Modal State
+  const [cancelBookingItem, setCancelBookingItem] = useState<BookingItem | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+
   // Reschedule Modal State
   const [rescheduleBooking, setRescheduleBooking] = useState<BookingItem | null>(null);
   const [rescheduleDate, setRescheduleDate] = useState('');
@@ -282,23 +287,33 @@ export function CustomerDashboardClient() {
     }
   };
 
-  const handleCancelBooking = async (bookingId: string) => {
-    if (!confirm('Are you sure you want to cancel this booking?')) return;
+  const handleCancelBookingSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cancelBookingItem) return;
+
+    setCancelling(true);
     try {
       const res = await fetch('/api/account/bookings/cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingId }),
+        body: JSON.stringify({ bookingId: cancelBookingItem.id, reason: cancelReason }),
       });
+
       const data = await res.json();
       if (!res.ok) {
         alert(data.error || 'Failed to cancel booking');
+        setCancelling(false);
         return;
       }
+
       alert('Booking cancelled successfully.');
+      setCancelBookingItem(null);
+      setCancelReason('');
       loadProfile();
     } catch {
       alert('An error occurred while cancelling the booking.');
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -562,6 +577,12 @@ export function CustomerDashboardClient() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Link
+                    href={`/account/bookings/${upcomingBookings[0].id}`}
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
+                  >
+                    View Details →
+                  </Link>
                   <button
                     onClick={() => {
                       setRescheduleBooking(upcomingBookings[0]);
@@ -572,7 +593,7 @@ export function CustomerDashboardClient() {
                     Reschedule
                   </button>
                   <button
-                    onClick={() => handleCancelBooking(upcomingBookings[0].id)}
+                    onClick={() => setCancelBookingItem(upcomingBookings[0])}
                     className="px-3.5 py-2 rounded-xl text-xs font-bold bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 hover:bg-rose-100 transition-colors"
                   >
                     Cancel
@@ -616,6 +637,12 @@ export function CustomerDashboardClient() {
                       <p className="text-xs text-slate-500 mt-0.5">Date: {new Date(b.appointmentDateTime).toLocaleString()}</p>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Link
+                        href={`/account/bookings/${b.id}`}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white"
+                      >
+                        View Details →
+                      </Link>
                       <button
                         onClick={() => {
                           setRescheduleBooking(b);
@@ -626,7 +653,7 @@ export function CustomerDashboardClient() {
                         Reschedule
                       </button>
                       <button
-                        onClick={() => handleCancelBooking(b.id)}
+                        onClick={() => setCancelBookingItem(b)}
                         className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-950/50 dark:text-rose-300"
                       >
                         Cancel
@@ -659,6 +686,12 @@ export function CustomerDashboardClient() {
                       <p className="text-xs text-slate-500">Therapist: {b.therapistName} | Date: {new Date(b.appointmentDateTime).toLocaleDateString()}</p>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Link
+                        href={`/account/bookings/${b.id}`}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200"
+                      >
+                        View Details →
+                      </Link>
                       <button
                         onClick={() => handleBookAgain(b.id)}
                         className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white"
@@ -957,6 +990,48 @@ export function CustomerDashboardClient() {
               {savingProfile ? 'Saving Changes...' : 'Update Profile'}
             </button>
           </form>
+        </div>
+      )}
+
+      {/* Cancellation Modal */}
+      {cancelBookingItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-xl max-w-md w-full p-6 border border-slate-200 dark:border-slate-800 space-y-4">
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white">Cancel Appointment</h3>
+            <p className="text-xs text-slate-500">Ref: {cancelBookingItem.bookingNumber} • {cancelBookingItem.serviceName}</p>
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 text-amber-800 dark:text-amber-300 text-xs rounded-2xl space-y-1">
+              <p className="font-bold">Cancellation Policy:</p>
+              <p>Appointments cancelled release the time slot immediately. Payment state is preserved truthfully according to processing terms.</p>
+            </div>
+            <form onSubmit={handleCancelBookingSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold mb-1">Cancellation Reason (Optional)</label>
+                <textarea
+                  rows={3}
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  placeholder="Tell us why you are cancelling..."
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCancelBookingItem(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Keep Booking
+                </button>
+                <button
+                  type="submit"
+                  disabled={cancelling}
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-rose-600 text-white hover:bg-rose-500"
+                >
+                  {cancelling ? 'Cancelling...' : 'Confirm Cancellation'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
