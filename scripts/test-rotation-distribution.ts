@@ -21,10 +21,16 @@ function assert(condition: boolean, msg: string) {
 async function runRotationAndDistributionTests() {
   console.log('=== STARTING THERAPIST ROTATION & AUTOMATIC ZIP DISTRIBUTION TEST SUITE ===\n');
 
-  // SAFETY GUARD: Fail closed if running against a production environment URL
-  const tursoUrl = (process.env.TURSO_DATABASE_URL || '').toLowerCase();
-  if (process.env.NODE_ENV === 'production' && !tursoUrl.includes('file:')) {
-    console.error('❌ SAFETY GUARD TRIGGERED: Cannot run test-rotation-distribution.ts against a production database.');
+  // SAFETY GUARD: Fail closed if running against a remote or production database
+  const tursoUrl = (process.env.TURSO_DATABASE_URL || '').toLowerCase().trim();
+  const isRemoteUrl =
+    tursoUrl.startsWith('libsql://') ||
+    tursoUrl.startsWith('https://') ||
+    tursoUrl.startsWith('http://') ||
+    (tursoUrl.length > 0 && !tursoUrl.startsWith('file:'));
+
+  if (isRemoteUrl || process.env.NODE_ENV === 'production') {
+    console.error('❌ SAFETY GUARD TRIGGERED: test-rotation-distribution.ts can only run against a local SQLite file database (file:...). Aborting to prevent touching remote/shared databases.');
     process.exit(1);
   }
 

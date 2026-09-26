@@ -161,6 +161,13 @@ async function deployTursoMigrations() {
         isSchemaAlreadyPresent = await checkTableExists(client, 'AdminAuditLog');
       } else if (mig.dirName.includes('add_is_test_data_markers')) {
         isSchemaAlreadyPresent = await checkColumnExists(client, 'Customer', 'isTest');
+      } else if (mig.dirName.includes('add_customer_is_active')) {
+        isSchemaAlreadyPresent = await checkColumnExists(client, 'Customer', 'isActive');
+      } else if (mig.dirName.includes('add_admin_notes_refunds_support')) {
+        const hasAdminNote = await checkTableExists(client, 'AdminNote');
+        const hasRefundRecord = await checkTableExists(client, 'RefundRecord');
+        const hasSupportRequest = await checkTableExists(client, 'SupportRequest');
+        isSchemaAlreadyPresent = hasAdminNote && hasRefundRecord && hasSupportRequest;
       }
 
       const migrationId = crypto.randomUUID();
