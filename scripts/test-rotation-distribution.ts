@@ -64,6 +64,9 @@ async function runRotationAndDistributionTests() {
     createdDbTherapists.push(t);
   }
 
+  // Reshuffle so the newly created therapists are included in TherapistZipEligibility
+  await shuffleAndDistributeTherapistsAction();
+
   const testPool: CustomerTherapist[] = createdDbTherapists.map((t, idx) => ({
     id: t.id,
     name: t.name,
