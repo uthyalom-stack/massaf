@@ -132,17 +132,6 @@ export async function executeTherapistCsvImportAction(input: {
         continue;
       }
 
-      // 1. Unmatched Services Guard: Do NOT silently discard unmatched services
-      if (row.unmatchedServices && row.unmatchedServices.length > 0) {
-        failedCount++;
-        errors.push({
-          rowNumber: row.rowNumber,
-          name: row.name,
-          error: `Cannot import therapist with unmatched service(s): ${row.unmatchedServices.join(', ')}. Create service in MASSAF before importing.`,
-        });
-        continue;
-      }
-
       // Re-validate matched service IDs against active DB services
       const validServiceIds = (row.matchedServiceIds || []).filter((id) => activeServiceIdSet.has(id));
 
@@ -234,37 +223,6 @@ export async function executeTherapistCsvImportAction(input: {
 
           updatedCount++;
         } else {
-          // Re-verify duplicate email/phone state in live DB before creation
-          if (row.email) {
-            const emailConflict = await db.therapist.findUnique({
-              where: { email: row.email.toLowerCase().trim() },
-            });
-            if (emailConflict) {
-              failedCount++;
-              errors.push({
-                rowNumber: row.rowNumber,
-                name: row.name,
-                error: `Email address '${row.email}' is registered to existing therapist '${emailConflict.name}'.`,
-              });
-              continue;
-            }
-          }
-
-          if (row.phone) {
-            const phoneConflict = await db.therapist.findFirst({
-              where: { phone: row.phone.trim() },
-            });
-            if (phoneConflict) {
-              failedCount++;
-              errors.push({
-                rowNumber: row.rowNumber,
-                name: row.name,
-                error: `Phone number '${row.phone}' is registered to existing therapist '${phoneConflict.name}'.`,
-              });
-              continue;
-            }
-          }
-
           // CREATE New Therapist
           await db.$transaction(async (tx) => {
             const newTherapist = await tx.therapist.create({
@@ -381,7 +339,7 @@ export async function createTherapistAction(input: unknown) {
     const validated = therapistBaseSchema.parse(input);
 
     if (validated.email) {
-      const existing = await db.therapist.findUnique({
+      const existing = await db.therapist.findFirst({
         where: { email: validated.email },
       });
       if (existing) {
@@ -3807,7 +3765,7 @@ export async function updateTherapistAction(id: string, input: unknown) {
     }
 
     if (validated.email && validated.email !== therapist.email) {
-      const existing = await db.therapist.findUnique({
+    const existing = await db.therapist.findFirst({
         where: { email: validated.email },
       });
       if (existing) {

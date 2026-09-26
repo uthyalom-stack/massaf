@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     const validated = therapistBaseSchema.parse(body);
 
     if (validated.email) {
-      const existing = await db.therapist.findUnique({
+      const existing = await db.therapist.findFirst({
         where: { email: validated.email },
       });
       if (existing) {

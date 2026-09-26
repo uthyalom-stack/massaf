@@ -156,8 +156,8 @@ model Therapist {
   name               String
   bio                String?
   profileImage       String?
-  email              String?  @unique
-  phone              String?  @unique
+  email              String?
+  phone              String?
   telegramChatId     String?
   hourlyRate         Float    @default(100.0)
   rating             Float              @default(5.0)

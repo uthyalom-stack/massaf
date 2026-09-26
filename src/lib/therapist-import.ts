@@ -303,19 +303,19 @@ export async function parseAndPreviewTherapistCsv(csvContent: string): Promise<{
       classification = 'INVALID';
     } else if (email && emailMap.has(email)) {
       const match = emailMap.get(email)!;
-      classification = 'EXISTING';
+      classification = 'NEW';
       existingTherapistId = match.id;
       existingTherapistName = match.name;
       warnings.push(`Email '${email}' belongs to existing therapist '${match.name}'`);
     } else if (phone && phoneMap.has(phone.replace(/[^0-9]/g, ''))) {
       const match = phoneMap.get(phone.replace(/[^0-9]/g, ''))!;
-      classification = 'POSSIBLE_DUPLICATE';
+      classification = 'NEW';
       existingTherapistId = match.id;
       existingTherapistName = match.name;
       warnings.push(`Phone '${phone}' matches existing therapist '${match.name}'`);
     } else if (name && nameMap.has(name.toLowerCase())) {
       const match = nameMap.get(name.toLowerCase())!;
-      classification = 'POSSIBLE_DUPLICATE';
+      classification = 'NEW';
       existingTherapistId = match.id;
       existingTherapistName = match.name;
       warnings.push(`Name '${name}' matches existing therapist profile`);

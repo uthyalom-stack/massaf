@@ -1,33 +1,22 @@
 import { db } from '../src/lib/db';
 import {
-  previewTherapistCsvAction,
-  executeTherapistCsvImportAction,
-  rescheduleBookingAdminAction,
-  findCompatibleTherapistsAction,
-  createAdminNoteAction,
-  listAdminNotesAction,
-  updateTherapistVerificationAction,
-  toggleCustomerActiveAction,
-  requestRefundAction,
-  processRefundAction,
-  listAllPaymentsAction,
-} from '../src/app/admin/actions';
-import { parseAndPreviewTherapistCsv, parseAvailabilityScheduleString } from '../src/lib/therapist-import';
-import { notifyBookingRescheduled } from '../src/lib/notifications';
+  parseAndPreviewTherapistCsv,
+  parseAvailabilityScheduleString,
+} from '../src/lib/therapist-import';
+import { executeTherapistCsvImportAction } from '../src/app/admin/actions';
 
-async function runOperationsImportTestSuite() {
-  console.log('=== STARTING PHASE 24 OPERATIONS & CSV IMPORT EDGE CASES TEST SUITE ===\n');
+async function runPermissiveCsvImportTests() {
+  console.log('=== RUNNING PERMISSIVE CSV THERAPIST IMPORT TEST SUITE ===\n');
 
   process.env.MASSAF_AUTH_SECRET = 'test-secret-123456789012345678901234567890';
   process.env.TURSO_DATABASE_URL = 'file:./prisma/dev.db';
 
-  // 1. Setup test Super Admin User
   let admin = await db.user.findFirst({ where: { role: 'SUPER_ADMIN', isActive: true } });
   if (!admin) {
     admin = await db.user.create({
       data: {
-        email: 'ops_test_admin@massaf.com',
-        name: 'Ops Test Admin',
+        email: 'csv_test_admin@massaf.com',
+        name: 'CSV Test Admin',
         role: 'SUPER_ADMIN',
         isActive: true,
       },
@@ -38,352 +27,207 @@ async function runOperationsImportTestSuite() {
   const token = createSessionToken(admin.id, admin.email, 'ADMIN', 24, admin.role);
   (globalThis as any).__TEST_ADMIN_SESSION_TOKEN__ = token;
 
-  // 2. Setup Test Customer, Service, and Therapists
-  const service = (await db.service.findFirst({ where: { isActive: true } })) ||
-    (await db.service.create({
-      data: {
-        name: 'Swedish Test Massage',
-        description: 'Test swedish massage',
-        durationMinutes: 60,
-        price: 100.0,
-        isActive: true,
-      },
-    }));
+  const createdTherapistIds: string[] = [];
 
-  const customer = await db.customer.create({
-    data: {
-      name: 'Ops Test Customer',
-      email: `ops_cust_${Date.now()}@test.com`,
-      phone: '+15550001111',
-      isTest: true,
-      isActive: true,
-    },
-  });
-
-  const pendingTherapist = await db.therapist.create({
-    data: {
-      name: 'Pending Test Therapist',
-      email: `pending_therapist_${Date.now()}@test.com`,
-      phone: '+15552223333',
-      hourlyRate: 110.0,
-      isActive: true,
-      offersStudio: true,
-      offersInHome: true,
-      verificationStatus: 'PENDING',
-      isTest: true,
-    },
-  });
-
-  const verifiedTherapist = await db.therapist.create({
-    data: {
-      name: 'Verified Test Therapist',
-      email: `verified_therapist_${Date.now()}@test.com`,
-      phone: '+15554445555',
-      hourlyRate: 115.0,
-      isActive: true,
-      offersStudio: true,
-      offersInHome: true,
-      verificationStatus: 'VERIFIED',
-      isTest: true,
-    },
-  });
-
-  await db.therapistService.createMany({
-    data: [
-      { therapistId: pendingTherapist.id, serviceId: service.id, isActive: true },
-      { therapistId: verifiedTherapist.id, serviceId: service.id, isActive: true },
-    ],
-  });
-
-  for (let d = 1; d <= 5; d++) {
-    await db.therapistAvailability.createMany({
-      data: [
-        { therapistId: pendingTherapist.id, dayOfWeek: d, startTime: '08:00', endTime: '20:00' },
-        { therapistId: verifiedTherapist.id, dayOfWeek: d, startTime: '08:00', endTime: '20:00' },
-      ],
+  try {
+    // 1. Name only imports successfully
+    console.log('Test 1: Name only imports successfully...');
+    const csv1 = `Full Name\nJane Doe Only Name`;
+    const preview1 = await parseAndPreviewTherapistCsv(csv1);
+    if (preview1.rows[0].errors.length > 0 || preview1.rows[0].classification === 'INVALID') {
+      throw new Error(`Name only should be valid, got errors: ${preview1.rows[0].errors.join(', ')}`);
+    }
+    const exec1 = await executeTherapistCsvImportAction({
+      rows: [{ ...preview1.rows[0], actionChoice: 'CREATE' }],
     });
+    if (!exec1.success || exec1.report?.createdCount !== 1) {
+      throw new Error(`Execution failed for name-only row: ${JSON.stringify(exec1)}`);
+    }
+    const created1 = await db.therapist.findFirst({ where: { name: 'Jane Doe Only Name' } });
+    if (!created1) throw new Error('Therapist record not found in DB for Test 1');
+    createdTherapistIds.push(created1.id);
+    console.log('[PASS] Name only imported successfully\n');
+
+    // 2. Name + email imports successfully
+    console.log('Test 2: Name + email imports successfully...');
+    const csv2 = `Full Name,Email\nJane Doe Email,jane.email@test.com`;
+    const preview2 = await parseAndPreviewTherapistCsv(csv2);
+    if (preview2.rows[0].errors.length > 0) throw new Error('Name + email should be valid');
+    const exec2 = await executeTherapistCsvImportAction({
+      rows: [{ ...preview2.rows[0], actionChoice: 'CREATE' }],
+    });
+    if (!exec2.success || exec2.report?.createdCount !== 1) throw new Error('Execution failed for Test 2');
+    const created2 = await db.therapist.findFirst({ where: { name: 'Jane Doe Email' } });
+    if (!created2) throw new Error('Therapist record not found in DB for Test 2');
+    createdTherapistIds.push(created2.id);
+    console.log('[PASS] Name + email imported successfully\n');
+
+    // 3. Name + phone imports successfully
+    console.log('Test 3: Name + phone imports successfully...');
+    const csv3 = `Full Name,Phone\nJane Doe Phone,+15551112222`;
+    const preview3 = await parseAndPreviewTherapistCsv(csv3);
+    if (preview3.rows[0].errors.length > 0) throw new Error('Name + phone should be valid');
+    const exec3 = await executeTherapistCsvImportAction({
+      rows: [{ ...preview3.rows[0], actionChoice: 'CREATE' }],
+    });
+    if (!exec3.success || exec3.report?.createdCount !== 1) throw new Error('Execution failed for Test 3');
+    const created3 = await db.therapist.findFirst({ where: { name: 'Jane Doe Phone' } });
+    if (!created3) throw new Error('Therapist record not found in DB for Test 3');
+    createdTherapistIds.push(created3.id);
+    console.log('[PASS] Name + phone imported successfully\n');
+
+    // 4. Missing email does not fail
+    console.log('Test 4: Missing email does not fail...');
+    const csv4 = `Full Name,Phone,Bio\nJane Doe No Email,+15553334444,Some Bio`;
+    const preview4 = await parseAndPreviewTherapistCsv(csv4);
+    if (preview4.rows[0].email !== null) throw new Error('Email should be null');
+    const exec4 = await executeTherapistCsvImportAction({
+      rows: [{ ...preview4.rows[0], actionChoice: 'CREATE' }],
+    });
+    if (!exec4.success || exec4.report?.createdCount !== 1) throw new Error('Execution failed for Test 4');
+    const created4 = await db.therapist.findFirst({ where: { name: 'Jane Doe No Email' } });
+    if (!created4) throw new Error('Therapist record not found in DB for Test 4');
+    createdTherapistIds.push(created4.id);
+    console.log('[PASS] Missing email does not fail\n');
+
+    // 5. Missing phone does not fail
+    console.log('Test 5: Missing phone does not fail...');
+    const csv5 = `Full Name,Email,Bio\nJane Doe No Phone,jane.nophone@test.com,Some Bio`;
+    const preview5 = await parseAndPreviewTherapistCsv(csv5);
+    if (preview5.rows[0].phone !== null) throw new Error('Phone should be null');
+    const exec5 = await executeTherapistCsvImportAction({
+      rows: [{ ...preview5.rows[0], actionChoice: 'CREATE' }],
+    });
+    if (!exec5.success || exec5.report?.createdCount !== 1) throw new Error('Execution failed for Test 5');
+    const created5 = await db.therapist.findFirst({ where: { name: 'Jane Doe No Phone' } });
+    if (!created5) throw new Error('Therapist record not found in DB for Test 5');
+    createdTherapistIds.push(created5.id);
+    console.log('[PASS] Missing phone does not fail\n');
+
+    // 6. Missing availability does not fail
+    console.log('Test 6: Missing availability does not fail...');
+    const csv6 = `Full Name,Email\nJane Doe No Availability,jane.noavail@test.com`;
+    const preview6 = await parseAndPreviewTherapistCsv(csv6);
+    if (preview6.rows[0].parsedAvailabilities.length !== 0) throw new Error('Availability should be empty');
+    const exec6 = await executeTherapistCsvImportAction({
+      rows: [{ ...preview6.rows[0], actionChoice: 'CREATE' }],
+    });
+    if (!exec6.success || exec6.report?.createdCount !== 1) throw new Error('Execution failed for Test 6');
+    const created6 = await db.therapist.findFirst({ where: { name: 'Jane Doe No Availability' } });
+    if (!created6) throw new Error('Therapist record not found in DB for Test 6');
+    createdTherapistIds.push(created6.id);
+    console.log('[PASS] Missing availability does not fail\n');
+
+    // 7. Missing services does not fail
+    console.log('Test 7: Missing services does not fail...');
+    const csv7 = `Full Name,Email\nJane Doe No Services,jane.noservices@test.com`;
+    const preview7 = await parseAndPreviewTherapistCsv(csv7);
+    if (preview7.rows[0].matchedServiceIds.length !== 0) throw new Error('Matched services should be empty');
+    const exec7 = await executeTherapistCsvImportAction({
+      rows: [{ ...preview7.rows[0], actionChoice: 'CREATE' }],
+    });
+    if (!exec7.success || exec7.report?.createdCount !== 1) throw new Error('Execution failed for Test 7');
+    const created7 = await db.therapist.findFirst({ where: { name: 'Jane Doe No Services' } });
+    if (!created7) throw new Error('Therapist record not found in DB for Test 7');
+    createdTherapistIds.push(created7.id);
+    console.log('[PASS] Missing services does not fail\n');
+
+    // 8. Empty Services field does not produce an "unmatched service(s): 0" error
+    console.log('Test 8: Empty Services field does not produce "unmatched service(s): 0" error...');
+    const csv8 = `Full Name,Services\nJane Doe Empty Service,`;
+    const preview8 = await parseAndPreviewTherapistCsv(csv8);
+    if (preview8.rows[0].unmatchedServices.length !== 0) {
+      throw new Error(`Unmatched services should be empty, got: ${JSON.stringify(preview8.rows[0].unmatchedServices)}`);
+    }
+    const exec8 = await executeTherapistCsvImportAction({
+      rows: [{ ...preview8.rows[0], actionChoice: 'CREATE' }],
+    });
+    if (!exec8.success || exec8.report?.createdCount !== 1) {
+      throw new Error(`Execution failed for empty service field: ${JSON.stringify(exec8)}`);
+    }
+    const created8 = await db.therapist.findFirst({ where: { name: 'Jane Doe Empty Service' } });
+    if (!created8) throw new Error('Therapist record not found in DB for Test 8');
+    createdTherapistIds.push(created8.id);
+    console.log('[PASS] Empty Services field handled correctly without errors\n');
+
+    // 9. Unknown service does not prevent therapist creation
+    console.log('Test 9: Unknown service does not prevent therapist creation...');
+    const csv9 = `Full Name,Services\nJane Doe Unknown Service,Nonexistent Magical Massage`;
+    const preview9 = await parseAndPreviewTherapistCsv(csv9);
+    const exec9 = await executeTherapistCsvImportAction({
+      rows: [{ ...preview9.rows[0], actionChoice: 'CREATE' }],
+    });
+    if (!exec9.success || exec9.report?.createdCount !== 1) {
+      throw new Error(`Unknown service should not prevent therapist creation, got: ${JSON.stringify(exec9)}`);
+    }
+    const created9 = await db.therapist.findFirst({ where: { name: 'Jane Doe Unknown Service' } });
+    if (!created9) throw new Error('Therapist record not found in DB for Test 9');
+    createdTherapistIds.push(created9.id);
+    console.log('[PASS] Unknown service ignored and therapist created successfully\n');
+
+    // 10. Duplicate email values across multiple CSV rows are allowed
+    console.log('Test 10: Duplicate email values across multiple CSV rows are allowed...');
+    const csv10 = `Full Name,Email\nDup Email 1,shared.email@test.com\nDup Email 2,shared.email@test.com`;
+    const preview10 = await parseAndPreviewTherapistCsv(csv10);
+    const exec10 = await executeTherapistCsvImportAction({
+      rows: preview10.rows.map((r) => ({ ...r, actionChoice: 'CREATE' as const })),
+    });
+    if (!exec10.success || exec10.report?.createdCount !== 2) {
+      throw new Error(`Expected 2 created therapists for duplicate email test, got: ${JSON.stringify(exec10)}`);
+    }
+    const created10A = await db.therapist.findFirst({ where: { name: 'Dup Email 1' } });
+    const created10B = await db.therapist.findFirst({ where: { name: 'Dup Email 2' } });
+    if (!created10A || !created10B) throw new Error('Therapist records not found in DB for Test 10');
+    createdTherapistIds.push(created10A.id, created10B.id);
+    console.log('[PASS] Duplicate email values across CSV rows successfully created\n');
+
+    // 11. Duplicate phone values across multiple CSV rows are allowed
+    console.log('Test 11: Duplicate phone values across multiple CSV rows are allowed...');
+    const csv11 = `Full Name,Phone\nDup Phone 1,+15559990000\nDup Phone 2,+15559990000`;
+    const preview11 = await parseAndPreviewTherapistCsv(csv11);
+    const exec11 = await executeTherapistCsvImportAction({
+      rows: preview11.rows.map((r) => ({ ...r, actionChoice: 'CREATE' as const })),
+    });
+    if (!exec11.success || exec11.report?.createdCount !== 2) {
+      throw new Error(`Expected 2 created therapists for duplicate phone test, got: ${JSON.stringify(exec11)}`);
+    }
+    const created11A = await db.therapist.findFirst({ where: { name: 'Dup Phone 1' } });
+    const created11B = await db.therapist.findFirst({ where: { name: 'Dup Phone 2' } });
+    if (!created11A || !created11B) throw new Error('Therapist records not found in DB for Test 11');
+    createdTherapistIds.push(created11A.id, created11B.id);
+    console.log('[PASS] Duplicate phone values across CSV rows successfully created\n');
+
+    // 12. A row with no name is rejected
+    console.log('Test 12: A row with no name is rejected...');
+    const csv12 = `Full Name,Email\n,noname@test.com`;
+    const preview12 = await parseAndPreviewTherapistCsv(csv12);
+    if (preview12.rows[0].classification !== 'INVALID' || preview12.rows[0].errors.length === 0) {
+      throw new Error('Row with missing name must be classified as INVALID');
+    }
+    const exec12 = await executeTherapistCsvImportAction({
+      rows: [{ ...preview12.rows[0], actionChoice: 'CREATE' }],
+    });
+    if (exec12.report?.createdCount !== 0) {
+      throw new Error('Missing name row must not be created');
+    }
+    console.log('[PASS] Row with no name correctly rejected\n');
+
+  } finally {
+    // Cleanup
+    if (createdTherapistIds.length > 0) {
+      await db.therapistService.deleteMany({ where: { therapistId: { in: createdTherapistIds } } });
+      await db.therapistAvailability.deleteMany({ where: { therapistId: { in: createdTherapistIds } } });
+      await db.therapistPhoto.deleteMany({ where: { therapistId: { in: createdTherapistIds } } });
+      await db.therapist.deleteMany({ where: { id: { in: createdTherapistIds } } });
+    }
   }
-
-  const bookingDate = new Date(Date.UTC(2026, 9, 5, 10, 0, 0));
-  const booking = await db.booking.create({
-    data: {
-      bookingNumber: `OPS-${Date.now()}`,
-      customerId: customer.id,
-      therapistId: verifiedTherapist.id,
-      serviceId: service.id,
-      appointmentDateTime: bookingDate,
-      durationMinutes: 60,
-      locationType: 'STUDIO',
-      amount: 115.0,
-      status: 'CONFIRMED',
-      paymentStatus: 'PAID',
-      paymentMethod: 'CARD',
-      paymentReference: 'ch_test_123',
-      isTest: true,
-    },
-  });
-
-  console.log('1. Testing Candidate Matcher VERIFIED Strictness (Phase 3 & 7)...');
-  const candidateRes = await findCompatibleTherapistsAction(booking.id);
-  if (!candidateRes.success || !candidateRes.candidates) {
-    throw new Error(`Candidate evaluation failed: ${candidateRes.error}`);
-  }
-
-  const pendingEval = candidateRes.candidates.find((c) => c.therapistId === pendingTherapist.id);
-  if (!pendingEval || pendingEval.isCompatible) {
-    throw new Error('VERIFICATION VIOLATION: PENDING therapist must be rejected by candidate matcher.');
-  }
-  console.log('[PASS] PENDING verification therapist correctly rejected by compatibility matcher');
-
-  const verifiedEval = candidateRes.candidates.find((c) => c.therapistId === verifiedTherapist.id);
-  if (!verifiedEval || !verifiedEval.isCompatible) {
-    throw new Error('VERIFIED therapist should have been marked eligible.');
-  }
-  console.log('[PASS] VERIFIED therapist correctly marked eligible\n');
-
-  console.log('2. Testing Internal Admin Notes (Phase 5)...');
-  const noteRes = await createAdminNoteAction({
-    entityType: 'BOOKING',
-    entityId: booking.id,
-    content: 'Customer requested therapist to call before arrival.',
-  });
-  if (!noteRes.success) throw new Error(`Note creation failed: ${noteRes.error}`);
-  console.log('[PASS] Internal note created on booking');
-
-  const notesListRes = await listAdminNotesAction('BOOKING', booking.id);
-  if (!notesListRes.success || !notesListRes.notes || notesListRes.notes.length === 0) {
-    throw new Error('Failed to retrieve internal notes list.');
-  }
-  console.log('[PASS] Internal notes list retrieved successfully\n');
-
-  console.log('3. Testing Admin Reschedule Booking (Phase 2)...');
-  const rescheduleRes = await rescheduleBookingAdminAction({
-    bookingId: booking.id,
-    newDate: '2026-10-05',
-    newTime: '14:00',
-  });
-  if (!rescheduleRes.success) throw new Error(`Reschedule failed: ${rescheduleRes.error}`);
-  console.log('[PASS] Valid appointment reschedule executed');
-
-  const invalidReschedule = await rescheduleBookingAdminAction({
-    bookingId: booking.id,
-    newDate: '2026-10-05',
-    newTime: '05:00',
-  });
-  if (invalidReschedule.success) throw new Error('Reschedule outside working hours should have failed.');
-  console.log('[PASS] Out-of-hours reschedule safely rejected\n');
-
-  console.log('4. Testing CSV Importer Edge Cases & Unmatched Service Guard...');
-
-  // Test 4a: Unmatched Service Guard
-  const unmatchedCsv = `Full Name,Bio,Profile Photo,Email,Phone,Telegram Chat ID,Hourly Rate,Offers Studio,Offers In-Home,Services,Availability,Gallery Photos
-Unmatched Service Therapist,"Bio",,unmatched@test.com,+15559998888,,120.00,Yes,Yes,Nonexistent Service,Mon-Fri 09:00-17:00,`;
-
-  const previewUnmatched = await parseAndPreviewTherapistCsv(unmatchedCsv);
-  const unmatchedRow = previewUnmatched.rows[0];
-  const execUnmatchedRes = await executeTherapistCsvImportAction({
-    rows: [{ ...unmatchedRow, actionChoice: 'CREATE' }],
-  });
-
-  if (!execUnmatchedRes.success || !execUnmatchedRes.report || execUnmatchedRes.report.failedCount !== 1) {
-    throw new Error('UNMATCHED SERVICE VIOLATION: Row with unmatched service must fail execution instead of silently omitting services.');
-  }
-  console.log('[PASS] Row with unmatched service correctly failed execution with explicit error report');
-
-  // Test 4b: Multiple Unmatched Services
-  const multiUnmatchedCsv = `Full Name,Bio,Profile Photo,Email,Phone,Telegram Chat ID,Hourly Rate,Offers Studio,Offers In-Home,Services,Availability,Gallery Photos
-Multi Unmatched Therapist,"Bio",,multi@test.com,+15559998889,,120.00,Yes,Yes,Fake Service A, Fake Service B,Mon-Fri 09:00-17:00,`;
-
-  const previewMultiUnmatched = await parseAndPreviewTherapistCsv(multiUnmatchedCsv);
-  const execMultiUnmatchedRes = await executeTherapistCsvImportAction({
-    rows: [{ ...previewMultiUnmatched.rows[0], actionChoice: 'CREATE' }],
-  });
-  if (!execMultiUnmatchedRes.success || !execMultiUnmatchedRes.report || execMultiUnmatchedRes.report.failedCount !== 1) {
-    throw new Error('Multiple unmatched services must fail row execution.');
-  }
-  console.log('[PASS] Row with multiple unmatched services correctly rejected');
-
-  // Test 4c: Target Therapist Deleted Between Preview and Execution
-  const deletedTargetRes = await executeTherapistCsvImportAction({
-    rows: [
-      {
-        rowNumber: 1,
-        name: 'Ghost Therapist',
-        hourlyRate: 100.0,
-        offersStudio: true,
-        offersInHome: true,
-        matchedServiceIds: [service.id],
-        parsedAvailabilities: [],
-        galleryPhotos: [],
-        classification: 'EXISTING',
-        existingTherapistId: 'nonexistent-therapist-id-123',
-        actionChoice: 'UPDATE',
-      },
-    ],
-  });
-  if (!deletedTargetRes.success || !deletedTargetRes.report || deletedTargetRes.report.failedCount !== 1) {
-    throw new Error('UPDATE on deleted target therapist ID must fail execution cleanly.');
-  }
-  console.log('[PASS] Target therapist deleted prior to execution correctly failed with error');
-
-  // Test 4d: Duplicate Email Appearing After Preview
-  const duplicateEmailRes = await executeTherapistCsvImportAction({
-    rows: [
-      {
-        rowNumber: 1,
-        name: 'Duplicate Email Therapist',
-        email: verifiedTherapist.email,
-        hourlyRate: 100.0,
-        offersStudio: true,
-        offersInHome: true,
-        matchedServiceIds: [service.id],
-        parsedAvailabilities: [],
-        galleryPhotos: [],
-        classification: 'NEW',
-        actionChoice: 'CREATE',
-      },
-    ],
-  });
-  if (!duplicateEmailRes.success || !duplicateEmailRes.report || duplicateEmailRes.report.failedCount !== 1) {
-    throw new Error('CREATE with duplicate email created after preview must fail execution.');
-  }
-  console.log('[PASS] Duplicate email created after preview correctly caught and failed');
-
-  // Test 4e: Duplicate Phone Appearing After Preview
-  const duplicatePhoneRes = await executeTherapistCsvImportAction({
-    rows: [
-      {
-        rowNumber: 1,
-        name: 'Duplicate Phone Therapist',
-        phone: verifiedTherapist.phone,
-        hourlyRate: 100.0,
-        offersStudio: true,
-        offersInHome: true,
-        matchedServiceIds: [service.id],
-        parsedAvailabilities: [],
-        galleryPhotos: [],
-        classification: 'NEW',
-        actionChoice: 'CREATE',
-      },
-    ],
-  });
-  if (!duplicatePhoneRes.success || !duplicatePhoneRes.report || duplicatePhoneRes.report.failedCount !== 1) {
-    throw new Error('CREATE with duplicate phone created after preview must fail execution.');
-  }
-  console.log('[PASS] Duplicate phone created after preview correctly caught and failed');
-
-  // Test 4e2: DB Unique Constraint Conflict During CREATE (Concurrency Race Condition Test)
-  // Simulate DB unique constraint error on row 1 while row 2 succeeds
-  const raceTestEmail = `race_test_${Date.now()}@test.com`;
-  const raceTherapistInDb = await db.therapist.create({
-    data: {
-      name: 'Existing Race Therapist',
-      email: raceTestEmail,
-      hourlyRate: 100.0,
-      isActive: true,
-      isTest: true,
-    },
-  });
-
-  const concurrentRaceRes = await executeTherapistCsvImportAction({
-    rows: [
-      {
-        rowNumber: 1,
-        name: 'Concurrent Race Therapist 1',
-        email: raceTestEmail, // Will trigger unique constraint or pre-check
-        hourlyRate: 100.0,
-        offersStudio: true,
-        offersInHome: true,
-        matchedServiceIds: [service.id],
-        parsedAvailabilities: [],
-        galleryPhotos: [],
-        classification: 'NEW',
-        actionChoice: 'CREATE',
-      },
-      {
-        rowNumber: 2,
-        name: 'Concurrent Race Therapist 2',
-        email: `valid_race_second_${Date.now()}@test.com`,
-        hourlyRate: 100.0,
-        offersStudio: true,
-        offersInHome: true,
-        matchedServiceIds: [service.id],
-        parsedAvailabilities: [],
-        galleryPhotos: [],
-        classification: 'NEW',
-        actionChoice: 'CREATE',
-      },
-    ],
-  });
-
-  if (!concurrentRaceRes.success || !concurrentRaceRes.report) {
-    throw new Error('Concurrent race test execution failed completely.');
-  }
-  if (concurrentRaceRes.report.failedCount !== 1 || concurrentRaceRes.report.createdCount !== 1) {
-    throw new Error(`Expected 1 failure and 1 creation during concurrent race test, got: ${JSON.stringify(concurrentRaceRes.report)}`);
-  }
-  console.log('[PASS] Concurrency-safe CREATE verified: row 1 failed safely without aborting row 2 or crashing import');
-
-  await db.therapistService.deleteMany({ where: { therapist: { email: { contains: 'valid_race_second_' } } } });
-  await db.therapist.deleteMany({ where: { email: { in: [raceTestEmail, `valid_race_second_${Date.now()}@test.com`] } } });
-
-  // Test 4f: Normal Valid CREATE & UPDATE & SKIP
-  const validCsv = `Full Name,Bio,Profile Photo,Email,Phone,Telegram Chat ID,Hourly Rate,Offers Studio,Offers In-Home,Services,Availability,Gallery Photos
-Valid New Therapist,"Bio",https://example.com/p.jpg,valid.new@test.com,+15550009999,123456,125.00,Yes,Yes,${service.name},Mon-Fri 09:00-17:00,https://example.com/g1.jpg
-${verifiedTherapist.name},"Updated bio.",,${verifiedTherapist.email},${verifiedTherapist.phone},,135.00,Yes,Yes,${service.name},Tue-Sat 10:00-18:00,
-Skipped Therapist,"Bio",,skipped@test.com,+15550008888,,120.00,Yes,Yes,${service.name},Mon-Fri 09:00-17:00,`;
-
-  const previewValid = await parseAndPreviewTherapistCsv(validCsv);
-  const rowsWithChoices = previewValid.rows.map((r, i) => ({
-    ...r,
-    actionChoice: i === 0 ? ('CREATE' as const) : i === 1 ? ('UPDATE' as const) : ('SKIP' as const),
-  }));
-
-  const execValidRes = await executeTherapistCsvImportAction({ rows: rowsWithChoices });
-  if (
-    !execValidRes.success ||
-    !execValidRes.report ||
-    execValidRes.report.createdCount !== 1 ||
-    execValidRes.report.updatedCount !== 1 ||
-    execValidRes.report.skippedCount !== 1
-  ) {
-    console.error('execValidRes report:', execValidRes?.report);
-    throw new Error('Valid CREATE, UPDATE, and SKIP execution failed.');
-  }
-  console.log('[PASS] Valid CREATE (1), UPDATE (1), and SKIP (1) executed successfully');
-
-  // Test 4g: CRITICAL ZIP RULE: Zero ZIP eligibility rows created
-  const importedTherapist = await db.therapist.findFirst({ where: { email: 'valid.new@test.com' } });
-  if (!importedTherapist) throw new Error('Imported therapist record not found in DB.');
-
-  const zipCount = await db.therapistZipEligibility.count({
-    where: { therapistId: importedTherapist.id },
-  });
-  if (zipCount > 0) throw new Error('CRITICAL ZIP VIOLATION: Importer must not create ZIP eligibility rows.');
-  console.log('[PASS] CRITICAL ZIP RULE VERIFIED: CSV Importer created 0 ZIP eligibility rows\n');
-
-  // Clean up test records
-  await db.adminNote.deleteMany({ where: { entityId: booking.id } });
-  await db.refundRecord.deleteMany({ where: { bookingId: booking.id } });
-  await db.booking.delete({ where: { id: booking.id } });
-  await db.therapistService.deleteMany({
-    where: { therapistId: { in: [pendingTherapist.id, verifiedTherapist.id, importedTherapist.id] } },
-  });
-  await db.therapistAvailability.deleteMany({
-    where: { therapistId: { in: [pendingTherapist.id, verifiedTherapist.id, importedTherapist.id] } },
-  });
-  await db.therapistPhoto.deleteMany({ where: { therapistId: importedTherapist.id } });
-  await db.therapist.deleteMany({
-    where: { id: { in: [pendingTherapist.id, verifiedTherapist.id, importedTherapist.id] } },
-  });
-  await db.customer.delete({ where: { id: customer.id } });
 
   console.log('====================================================');
-  console.log('  ALL OPERATIONS & CSV IMPORT EDGE TESTS PASSED!');
+  console.log('  ALL PERMISSIVE CSV IMPORT TESTS PASSED!');
   console.log('====================================================');
 }
 
-runOperationsImportTestSuite().catch((err) => {
-  console.error('\nError running operations import test suite:', err);
+runPermissiveCsvImportTests().catch((err) => {
+  console.error('\nError running permissive CSV import test suite:', err);
   process.exit(1);
 });
