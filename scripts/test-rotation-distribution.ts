@@ -33,7 +33,24 @@ async function runRotationAndDistributionTests() {
   const testVisitor = `test-visitor-session-${randomUUID()}`;
   const testZip = '90210';
 
+  let initialTimestampRecord: { id: string; content: string } | null = null;
+  let timestampWasCreatedByTest = false;
+
   try {
+    // Record initial state of active_distribution_timestamp in SiteContent
+    const existingTimestampRecord = await db.siteContent.findUnique({
+      where: { key: 'active_distribution_timestamp' },
+    });
+
+    if (existingTimestampRecord) {
+      initialTimestampRecord = {
+        id: existingTimestampRecord.id,
+        content: existingTimestampRecord.content,
+      };
+    } else {
+      timestampWasCreatedByTest = true;
+    }
+
     // 1. Create 12 isolated test therapists with isTest: true
     console.log('1. Creating isolated test therapists with isTest: true...');
     const createdDbTherapists = [];
@@ -55,11 +72,8 @@ async function runRotationAndDistributionTests() {
 
     // 2. Create isolated test TherapistZipEligibility rules for these test therapists WITHOUT modifying real distribution timestamp
     console.log('\n2. Injecting isolated TherapistZipEligibility rules for test therapists...');
-    const activeTimestampRecord = await db.siteContent.findUnique({
-      where: { key: 'active_distribution_timestamp' },
-    });
 
-    let activeTimestamp = activeTimestampRecord ? new Date(activeTimestampRecord.content) : null;
+    let activeTimestamp = initialTimestampRecord ? new Date(initialTimestampRecord.content) : null;
     if (!activeTimestamp || isNaN(activeTimestamp.getTime())) {
       activeTimestamp = new Date();
       await db.siteContent.upsert({
@@ -146,6 +160,17 @@ async function runRotationAndDistributionTests() {
   } finally {
     // GUARANTEED CLEANUP: Clean up all records created during test run even on assertion failure
     console.log('\n--- Executing Guaranteed Test Cleanup ---');
+
+    // 1. Clean up rotation history created by test visitor session
+    try {
+      await db.customerRotationHistory.deleteMany({
+        where: { visitorSessionId: testVisitor },
+      });
+    } catch (err) {
+      console.error('Error cleaning up test rotation history:', err);
+    }
+
+    // 2. Clean up test therapists and dependent records
     if (createdTherapistIds.length > 0) {
       try {
         await db.customerRotationHistory.deleteMany({
@@ -171,8 +196,26 @@ async function runRotationAndDistributionTests() {
         });
         console.log(`  ✓ Cleaned up ${deletedTherapists.count} test therapist records and all dependent records.`);
       } catch (cleanupErr) {
-        console.error('Error during test cleanup:', cleanupErr);
+        console.error('Error during therapist test cleanup:', cleanupErr);
       }
+    }
+
+    // 3. Clean up active_distribution_timestamp in SiteContent
+    try {
+      if (timestampWasCreatedByTest) {
+        await db.siteContent.deleteMany({
+          where: { key: 'active_distribution_timestamp' },
+        });
+        console.log('  ✓ Removed active_distribution_timestamp in SiteContent (created by test).');
+      } else if (initialTimestampRecord) {
+        await db.siteContent.update({
+          where: { id: initialTimestampRecord.id },
+          data: { content: initialTimestampRecord.content },
+        });
+        console.log('  ✓ Restored pre-existing active_distribution_timestamp in SiteContent.');
+      }
+    } catch (siteContentErr) {
+      console.error('Error cleaning up active_distribution_timestamp in SiteContent:', siteContentErr);
     }
   }
 }

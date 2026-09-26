@@ -36,6 +36,9 @@ export function TherapistDiscoveryClient({
   const [debouncedLocationQuery, setDebouncedLocationQuery] = useState(initialLocationQuery);
   const [isSearching, setIsSearching] = useState(false);
 
+  // Track total ZIP matching count separately from displayed 5 rotated therapists
+  const [totalZipMatches, setTotalZipMatches] = useState<number | null>(null);
+
   // Sync state if URL searchParams change externally (e.g., Browser Back / Forward)
   useEffect(() => {
     setLocationQuery(initialLocationQuery);
@@ -150,6 +153,7 @@ export function TherapistDiscoveryClient({
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     setLocationQuery('');
     setDebouncedLocationQuery('');
+    setTotalZipMatches(null);
     setIsSearching(false);
     router.replace(pathname, { scroll: false });
   };
@@ -282,13 +286,19 @@ export function TherapistDiscoveryClient({
               (m: { therapist: CustomerTherapist }) => m.therapist
             );
             setFilteredTherapists(matchedTherapists.slice(0, 5));
+            setTotalZipMatches(typeof data.totalMatches === 'number' ? data.totalMatches : matchedTherapists.length);
           } else {
             setFilteredTherapists([]);
+            setTotalZipMatches(0);
           }
         })
-        .catch(() => setFilteredTherapists([]));
+        .catch(() => {
+          setFilteredTherapists([]);
+          setTotalZipMatches(0);
+        });
     } else {
       setFilteredTherapists(baseFilteredTherapists);
+      setTotalZipMatches(null);
     }
   }, [debouncedLocationQuery, serviceIdFilter, serviceTypeFilter, baseFilteredTherapists]);
 
@@ -297,6 +307,10 @@ export function TherapistDiscoveryClient({
     Boolean(locationQuery.trim()) ||
     serviceTypeFilter !== 'all' ||
     specialtyFilter !== 'all';
+
+  const cleanZipQuery = debouncedLocationQuery.trim();
+  const isZipQuery = cleanZipQuery && /^\d{5}$/.test(cleanZipQuery);
+  const totalMatchedCount = isZipQuery && totalZipMatches !== null ? totalZipMatches : baseFilteredTherapists.length;
 
   return (
     <div className="space-y-8">
@@ -312,7 +326,7 @@ export function TherapistDiscoveryClient({
         onReset={handleReset}
         availableServices={availableServices}
         availableSpecialties={availableSpecialties}
-        matchedCount={filteredTherapists.length}
+        matchedCount={totalMatchedCount}
         isSearching={isSearching}
       />
 
