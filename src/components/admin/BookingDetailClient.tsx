@@ -11,6 +11,11 @@ import {
   approveGiftCardPaymentAction,
   rejectGiftCardPaymentAction,
 } from '@/app/admin/actions';
+import { BookingRescheduleSection } from '@/components/admin/BookingRescheduleSection';
+import { FindCompatibleTherapistsSection } from '@/components/admin/FindCompatibleTherapistsSection';
+import { BookingTimelineSection, TimelineAuditLog, TimelineRefund } from '@/components/admin/BookingTimelineSection';
+import { AdminNotesSection, SerializedAdminNote } from '@/components/admin/AdminNotesSection';
+import { RefundWorkflowSection, RefundRecordData } from '@/components/admin/RefundWorkflowSection';
 
 export interface GiftCardSubmissionData {
   id: string;
@@ -59,6 +64,8 @@ export interface BookingDetailData {
   state: string | null;
   zipCode: string | null;
   notes: string | null;
+  reminder24hSentAt?: string | null;
+  reminder3hSentAt?: string | null;
   customer: BookingDetailCustomer;
   therapistId: string | null;
   therapistName: string;
@@ -67,6 +74,9 @@ export interface BookingDetailData {
   serviceDescription: string | null;
   servicePrice: number;
   giftCardSubmission?: GiftCardSubmissionData | null;
+  auditLogs?: TimelineAuditLog[];
+  internalNotes?: SerializedAdminNote[];
+  refunds?: RefundRecordData[];
 }
 
 interface BookingDetailClientProps {
@@ -123,9 +133,7 @@ export default function BookingDetailClient({
     e.preventDefault();
     clearMessages();
 
-    if (selectedStatus === booking.status) {
-      return;
-    }
+    if (selectedStatus === booking.status) return;
 
     startTransition(async () => {
       const res = await updateBookingStatusAction({
@@ -229,10 +237,11 @@ export default function BookingDetailClient({
   };
 
   const isCancellable = !['CANCELLED', 'COMPLETED', 'REFUNDED'].includes(booking.status);
+  const isUnassigned = !booking.therapistId;
 
   return (
     <div className="space-y-6">
-      {/* Top Bar with Back Link */}
+      {/* Top Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <Link
@@ -252,14 +261,13 @@ export default function BookingDetailClient({
           </p>
         </div>
 
-        {/* Quick Cancellation Trigger */}
         {isCancellable && (
           <div>
             <button
               type="button"
               onClick={() => setIsCancelModalOpen(true)}
               disabled={isPending}
-              className="px-4 py-2 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200/80 font-bold text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-rose-500"
+              className="px-4 py-2 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200/80 font-bold text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-rose-500 cursor-pointer"
             >
               Cancel Booking
             </button>
@@ -267,7 +275,7 @@ export default function BookingDetailClient({
         )}
       </div>
 
-      {/* Action Messages */}
+      {/* Messages */}
       {errorMsg && (
         <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center justify-between">
           <span>{errorMsg}</span>
@@ -286,11 +294,27 @@ export default function BookingDetailClient({
         </div>
       )}
 
-      {/* Main Grid Section */}
+      {/* PHASE 2: RESCHEDULE SECTION */}
+      <BookingRescheduleSection
+        bookingId={booking.id}
+        currentDateTimeISO={booking.appointmentDateTime}
+        therapistId={booking.therapistId}
+        availableTherapists={availableTherapists}
+        isCancellable={isCancellable}
+      />
+
+      {/* PHASE 3: FIND COMPATIBLE THERAPISTS (UNASSIGNED MATCHING) */}
+      <FindCompatibleTherapistsSection
+        bookingId={booking.id}
+        isUnassigned={isUnassigned}
+        isCancellable={isCancellable}
+      />
+
+      {/* Main Details Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left 2 Columns: Main Details */}
+        {/* Left 2 Columns */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Appointment Information Card */}
+          {/* Appointment Info Card */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-3">
               Appointment Details
@@ -335,7 +359,7 @@ export default function BookingDetailClient({
             </div>
           </div>
 
-          {/* Location & Address Card */}
+          {/* Location & Address */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-3">
               Fulfillment Location
@@ -358,7 +382,7 @@ export default function BookingDetailClient({
             )}
           </div>
 
-          {/* Customer Information Card */}
+          {/* Customer Info */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-3">
               Customer Information
@@ -367,7 +391,9 @@ export default function BookingDetailClient({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
               <div>
                 <span className="text-slate-500 block font-semibold">Name</span>
-                <span className="text-slate-900 font-bold block mt-0.5">{booking.customer.name}</span>
+                <Link href={`/admin/customers/${booking.customer.id}`} className="text-slate-900 font-bold block mt-0.5 hover:underline">
+                  {booking.customer.name}
+                </Link>
               </div>
 
               <div>
@@ -382,144 +408,33 @@ export default function BookingDetailClient({
             </div>
           </div>
 
-          {/* Gift Card Review Section (if submitted) */}
-          {booking.giftCardSubmission && (
-            <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-                  Gift Card Payment Review
-                </h2>
-                <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${
-                  booking.giftCardSubmission.status === 'APPROVED'
-                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                    : booking.giftCardSubmission.status === 'REJECTED'
-                    ? 'bg-rose-100 text-rose-900 border-rose-300'
-                    : 'bg-amber-100 text-amber-900 border-amber-300'
-                }`}>
-                  Gift Card: {booking.giftCardSubmission.status}
-                </span>
-              </div>
+          {/* PHASE 10: REFUND WORKFLOW */}
+          <RefundWorkflowSection
+            bookingId={booking.id}
+            bookingAmount={booking.amount}
+            paymentStatus={booking.paymentStatus}
+            refunds={booking.refunds || []}
+          />
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <div>
-                  <span className="text-slate-500 block font-semibold">Gift Card Brand / Type</span>
-                  <span className="text-slate-900 font-bold block mt-0.5">{booking.giftCardSubmission.cardType}</span>
-                </div>
+          {/* PHASE 4: BOOKING TIMELINE */}
+          <BookingTimelineSection
+            bookingCreatedAt={booking.createdAt}
+            customerEmail={booking.customer.email}
+            reminder24hSentAt={booking.reminder24hSentAt || null}
+            reminder3hSentAt={booking.reminder3hSentAt || null}
+            auditLogs={booking.auditLogs || []}
+            refunds={(booking.refunds || []) as TimelineRefund[]}
+          />
 
-                <div>
-                  <span className="text-slate-500 block font-semibold">Declared Value</span>
-                  <span className="text-emerald-800 font-extrabold text-sm block mt-0.5">
-                    ${booking.giftCardSubmission.declaredValue.toFixed(2)} USD
-                  </span>
-                </div>
-
-                <div className="sm:col-span-2">
-                  <span className="text-slate-500 block font-semibold">Gift Card Number / PIN</span>
-                  <span className="font-mono bg-white px-2.5 py-1.5 rounded-lg border border-slate-300 text-slate-900 font-bold text-sm inline-block mt-1">
-                    {booking.giftCardSubmission.cardCode}
-                  </span>
-                </div>
-
-                {booking.giftCardSubmission.notes && (
-                  <div className="sm:col-span-2">
-                    <span className="text-slate-500 block font-semibold">Customer Submission Notes</span>
-                    <span className="text-slate-800 block mt-0.5">{booking.giftCardSubmission.notes}</span>
-                  </div>
-                )}
-
-                {booking.giftCardSubmission.imageIds && booking.giftCardSubmission.imageIds.length > 0 && (
-                  <div className="sm:col-span-2 space-y-2 pt-2 border-t border-slate-200">
-                    <span className="text-slate-700 block font-bold text-xs uppercase tracking-wider">
-                      Uploaded Gift Card Proof Photos ({booking.giftCardSubmission.imageIds.length})
-                    </span>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      {booking.giftCardSubmission.imageIds.map((imgId, idx) => (
-                        <a
-                          key={imgId}
-                          href={`/api/admin/gift-cards/image?imageId=${imgId}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="relative group rounded-xl overflow-hidden border border-slate-300 aspect-square bg-slate-900 block"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={`/api/admin/gift-cards/image?imageId=${imgId}`}
-                            alt={`Gift card proof ${idx + 1}`}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                          />
-                          <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold">
-                            View Full Photo ↗
-                          </div>
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {booking.giftCardSubmission.reviewedBy && (
-                  <div className="sm:col-span-2 text-[11px] text-slate-500 pt-2 border-t border-slate-200/60">
-                    Reviewed by <strong>{booking.giftCardSubmission.reviewedBy}</strong> on {booking.giftCardSubmission.reviewedAt}
-                  </div>
-                )}
-              </div>
-
-              {booking.giftCardSubmission.status === 'PENDING' && (
-                <div className="flex flex-wrap items-center gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (confirm('Approve gift card payment and mark booking as PAID & CONFIRMED?')) {
-                        const res = await approveGiftCardPaymentAction(booking.id);
-                        if (res.success) {
-                          alert('Gift card payment approved successfully!');
-                          window.location.reload();
-                        } else {
-                          alert(res.error || 'Failed to approve gift card');
-                        }
-                      }
-                    }}
-                    className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
-                  >
-                    Approve Gift Card Payment ✓
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const reason = prompt('Enter rejection reason (optional):');
-                      if (reason !== null) {
-                        const res = await rejectGiftCardPaymentAction(booking.id, reason);
-                        if (res.success) {
-                          alert('Gift card payment rejected.');
-                          window.location.reload();
-                        } else {
-                          alert(res.error || 'Failed to reject gift card');
-                        }
-                      }
-                    }}
-                    className="px-4 py-2 bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 font-bold text-xs rounded-xl transition-colors cursor-pointer"
-                  >
-                    Reject Gift Card ✕
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Customer Booking Notes */}
-          {booking.notes && (
-            <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-3">
-              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-3">
-                Customer Notes
-              </h2>
-              <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
-                {booking.notes}
-              </p>
-            </div>
-          )}
+          {/* PHASE 5: INTERNAL ADMIN NOTES */}
+          <AdminNotesSection
+            entityType="BOOKING"
+            entityId={booking.id}
+            notes={booking.internalNotes || []}
+          />
         </div>
 
-        {/* Right 1 Column: Admin Controls & Payment Status */}
+        {/* Right 1 Column */}
         <div className="space-y-6">
           {/* Status Control Card */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
@@ -550,7 +465,7 @@ export default function BookingDetailClient({
               <button
                 type="submit"
                 disabled={isPending || selectedStatus === booking.status || !isCancellable}
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 transition-colors disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 transition-colors disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer"
               >
                 {isPending ? 'Updating...' : 'Save Status Change'}
               </button>
@@ -593,14 +508,14 @@ export default function BookingDetailClient({
               <button
                 type="submit"
                 disabled={isPending || !selectedTherapistId || selectedTherapistId === booking.therapistId || !isCancellable}
-                className="w-full px-4 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                className="w-full px-4 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-700 cursor-pointer"
               >
                 {isPending ? 'Assigning...' : 'Assign Therapist'}
               </button>
             </form>
           </div>
 
-          {/* Payment Status Summary Card (Read Only) */}
+          {/* Payment Summary */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-3">
               Payment Summary
@@ -637,30 +552,19 @@ export default function BookingDetailClient({
         </div>
       </div>
 
-      {/* Cancellation Confirmation Modal */}
+      {/* Cancel Modal */}
       {isCancelModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 space-y-5 shadow-xl animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center gap-3 text-rose-600">
-              <div className="p-2 bg-rose-100 rounded-xl">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-extrabold text-slate-900">Cancel Booking Confirmation</h3>
-            </div>
-
+          <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 space-y-5 shadow-xl">
+            <h3 className="text-lg font-extrabold text-slate-900">Cancel Booking Confirmation</h3>
             <p className="text-xs text-slate-600 leading-relaxed">
               Are you sure you want to cancel booking <strong className="font-mono text-slate-900">{booking.bookingNumber}</strong>?
-              This will update the status to <strong className="text-rose-700">CANCELLED</strong>. The booking record will be preserved in the database for historical reporting.
             </p>
-
             <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 type="button"
                 onClick={() => setIsCancelModalOpen(false)}
-                disabled={isPending}
-                className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs hover:bg-slate-200 transition-colors"
+                className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs"
               >
                 Keep Active
               </button>
@@ -668,9 +572,9 @@ export default function BookingDetailClient({
                 type="button"
                 onClick={handleCancelBooking}
                 disabled={isPending}
-                className="px-4 py-2.5 rounded-xl bg-rose-600 text-white font-bold text-xs hover:bg-rose-700 transition-colors"
+                className="px-4 py-2 rounded-xl bg-rose-600 text-white font-bold text-xs hover:bg-rose-700"
               >
-                {isPending ? 'Cancelling...' : 'Confirm Cancellation'}
+                Confirm Cancellation
               </button>
             </div>
           </div>

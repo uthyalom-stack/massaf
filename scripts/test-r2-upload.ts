@@ -265,7 +265,7 @@ async function runR2UploadTests() {
       assert.strictEqual(badUploadRes.status, 400);
 
       // Verify therapist record remains preserved with profileImage = null
-      const checkTherapist = await db.therapist.findUnique({ where: { id: createdId } });
+      const checkTherapist = await db.therapist.findFirst({ where: { id: createdId } });
       assert.ok(checkTherapist, 'Therapist record must be preserved');
       assert.strictEqual(checkTherapist?.profileImage, null, 'profileImage must remain null');
 
@@ -335,7 +335,7 @@ async function runR2UploadTests() {
       assert.strictEqual(getMockStorageItem(newKey), undefined, 'Newly uploaded R2 object must be cleaned up on DB failure');
 
       // Clean collision therapist
-      await db.therapist.delete({ where: { email: existingEmail } });
+      await db.therapist.deleteMany({ where: { email: existingEmail } });
       console.log('✓ Test 15 Passed: Profile replacement DB failure preserved old R2 image and cleaned up new R2 object');
     }
 

@@ -216,14 +216,22 @@ export default function BookingList({
             </select>
           </div>
 
-          {/* Search Button */}
-          <div className="flex items-end">
+          {/* Search & Export Buttons */}
+          <div className="flex items-end gap-2">
             <button
               type="submit"
-              className="w-full px-4 py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-slate-900"
+              className="flex-1 px-3 py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-slate-900"
             >
-              Apply Filters
+              Filter
             </button>
+            <a
+              href={`/api/admin/export?type=bookings&status=${status}&search=${encodeURIComponent(search)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors shrink-0"
+            >
+              📥 CSV
+            </a>
           </div>
         </form>
       </div>

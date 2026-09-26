@@ -63,7 +63,7 @@ export async function PUT(
     const validated = therapistBaseSchema.partial().parse(body);
 
     if (validated.email && validated.email !== therapist.email) {
-      const existing = await db.therapist.findUnique({
+      const existing = await db.therapist.findFirst({
         where: { email: validated.email },
       });
       if (existing) {

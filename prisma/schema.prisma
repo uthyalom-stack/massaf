@@ -88,12 +88,20 @@ model User {
   @@index([isActive])
 }
 
+enum RefundStatus {
+  REQUESTED
+  APPROVED
+  PROCESSED
+  FAILED
+}
+
 /// Customers who book massage appointments
 model Customer {
   id        String    @id @default(uuid())
   name      String
   email     String    @unique
   phone     String
+  isActive  Boolean   @default(true)
   isTest    Boolean   @default(false)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -105,6 +113,7 @@ model Customer {
   rotationHistory CustomerRotationHistory[]
 
   @@index([email])
+  @@index([isActive])
   @@index([isTest])
 }
 
@@ -147,7 +156,7 @@ model Therapist {
   name               String
   bio                String?
   profileImage       String?
-  email              String?  @unique
+  email              String?
   phone              String?
   telegramChatId     String?
   hourlyRate         Float    @default(100.0)
@@ -364,6 +373,7 @@ model Booking {
   marketingLink MarketingLink? @relation(fields: [marketingLinkId], references: [id], onDelete: SetNull)
   review        Review?
   giftCardSubmission GiftCardSubmission?
+  refunds            RefundRecord[]
 
   @@index([customerId])
   @@index([therapistId])
@@ -566,4 +576,38 @@ model AdminNotification {
   @@index([isRead])
   @@index([createdAt])
   @@index([isTest])
+}
+
+/// Internal administrative notes attached to bookings, customers, or therapists
+model AdminNote {
+  id          String   @id @default(uuid())
+  entityType  String   // e.g. "BOOKING", "CUSTOMER", "THERAPIST"
+  entityId    String
+  authorId    String?
+  authorEmail String
+  content     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+/// Refund request and execution record tracking truthful refund status lifecycle
+model RefundRecord {
+  id            String       @id @default(uuid())
+  bookingId     String
+  amount        Float
+  reason        String?
+  status        RefundStatus @default(REQUESTED)
+  requestedBy   String       // Admin email
+  processedBy   String?      // Admin email
+  failureReason String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  booking       Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([status])
 }

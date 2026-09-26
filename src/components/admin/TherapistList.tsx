@@ -199,8 +199,9 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
           />
         </div>
 
-        {/* Status Pills */}
-        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl w-full sm:w-auto">
+        {/* Status Pills & Export */}
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl overflow-x-auto">
           <button
             type="button"
             onClick={() => setStatusFilter('all')}
@@ -234,6 +235,16 @@ export function TherapistList({ initialTherapists }: TherapistListProps) {
           >
             Inactive ({therapists.filter((t) => !t.isActive).length})
           </button>
+          </div>
+
+          <a
+            href={`/api/admin/export?type=therapists&status=${statusFilter}&search=${encodeURIComponent(search)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-2 rounded-xl bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 transition-colors shrink-0"
+          >
+            📥 CSV
+          </a>
         </div>
       </div>
 

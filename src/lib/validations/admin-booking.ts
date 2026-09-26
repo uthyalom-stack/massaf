@@ -18,6 +18,13 @@ export const cancelBookingSchema = z.object({
   reason: z.string().trim().optional(),
 });
 
+export const rescheduleBookingAdminSchema = z.object({
+  bookingId: z.string().min(1, 'Booking ID is required'),
+  newDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD'),
+  newTime: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:mm (24-hour format)'),
+  newTherapistId: z.string().optional(),
+});
+
 export const bookingFilterSchema = z.object({
   search: z.string().optional(),
   status: z.union([z.literal('ALL'), bookingStatusEnum]).optional().default('ALL'),
@@ -27,4 +34,5 @@ export const bookingFilterSchema = z.object({
 export type UpdateBookingStatusInput = z.infer<typeof updateBookingStatusSchema>;
 export type AssignBookingTherapistInput = z.infer<typeof assignBookingTherapistSchema>;
 export type CancelBookingInput = z.infer<typeof cancelBookingSchema>;
+export type RescheduleBookingAdminInput = z.infer<typeof rescheduleBookingAdminSchema>;
 export type BookingFilterInput = z.infer<typeof bookingFilterSchema>;
