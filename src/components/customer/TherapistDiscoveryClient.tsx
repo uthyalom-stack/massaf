@@ -166,8 +166,8 @@ export function TherapistDiscoveryClient({
     if (cleanZip && /^\d{5}$/.test(cleanZip)) {
       // Execute rotation match via server API or dynamic import
       const payload = {
-        serviceId: serviceIdFilter !== 'all' ? serviceIdFilter : (availableServices[0]?.id || ''),
-        locationType: serviceTypeFilter === 'studio' ? 'STUDIO' : 'IN_HOME',
+        serviceId: serviceIdFilter !== 'all' ? serviceIdFilter : '',
+        locationType: serviceTypeFilter === 'studio' ? 'STUDIO' : serviceTypeFilter === 'in_home' ? 'IN_HOME' : undefined,
         zipCode: cleanZip,
       };
 
@@ -182,10 +182,10 @@ export function TherapistDiscoveryClient({
             const matchedTherapists = data.matches.map((m: { therapist: CustomerTherapist }) => m.therapist);
             setFilteredTherapists(matchedTherapists.slice(0, 5));
           } else {
-            setFilteredTherapists(baseFilteredTherapists.slice(0, 5));
+            setFilteredTherapists([]);
           }
         })
-        .catch(() => setFilteredTherapists(baseFilteredTherapists.slice(0, 5)));
+        .catch(() => setFilteredTherapists([]));
     } else {
       setFilteredTherapists(baseFilteredTherapists);
     }

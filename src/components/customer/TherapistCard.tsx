@@ -1,46 +1,17 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { CustomerTherapist } from '@/types/customer';
 import { RatingDisplay } from '@/components/ui/RatingDisplay';
+import { FavoriteButton } from '@/components/customer/FavoriteButton';
 
 interface TherapistCardProps {
   therapist: CustomerTherapist;
 }
 
 export function TherapistCard({ therapist }: TherapistCardProps) {
-  const [isFavorite, setIsFavorite] = useState(false);
-  const [loadingFav, setLoadingFav] = useState(false);
-
-  const handleToggleFavorite = async (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setLoadingFav(true);
-
-    try {
-      const res = await fetch('/api/account/favorites', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ therapistId: therapist.id }),
-      });
-
-      if (res.status === 401) {
-        alert('Please sign in or verify your customer account to save favorite therapists.');
-        return;
-      }
-
-      const data = await res.json();
-      if (res.ok) {
-        setIsFavorite(data.isFavorite);
-      }
-    } catch {
-      // ignore favorite error
-    } finally {
-      setLoadingFav(false);
-    }
-  };
   const profileHref = `/therapists/${therapist.id}`;
 
   return (
@@ -62,14 +33,7 @@ export function TherapistCard({ therapist }: TherapistCardProps) {
             {therapist.availability}
           </span>
 
-          <button
-            onClick={handleToggleFavorite}
-            disabled={loadingFav}
-            aria-label={isFavorite ? 'Remove from favorites' : 'Save as favorite'}
-            className="w-8 h-8 rounded-full bg-white/90 backdrop-blur-xs flex items-center justify-center text-rose-500 shadow-xs hover:bg-white transition-transform active:scale-90"
-          >
-            {isFavorite ? '♥' : '♡'}
-          </button>
+          <FavoriteButton therapistId={therapist.id} size="sm" />
         </div>
 
         {/* Location Type Badges */}

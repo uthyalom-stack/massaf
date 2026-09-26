@@ -6,6 +6,7 @@ import { getActiveTherapistById } from '@/lib/db-therapists';
 import { RatingDisplay } from '@/components/ui/RatingDisplay';
 import { ReviewCard } from '@/components/customer/ReviewCard';
 import { TherapistGallery } from '@/components/customer/TherapistGallery';
+import { FavoriteButton } from '@/components/customer/FavoriteButton';
 import { db } from '@/lib/db';
 import { formatUtcDateString } from '@/lib/timezone';
 
@@ -70,6 +71,10 @@ export default async function TherapistProfilePage({ params }: PageProps) {
       createdAt: 'desc',
     },
   });
+
+  const availableDurations = Array.from(
+    new Set(therapist.services.map((s) => s.durationMinutes))
+  ).sort((a, b) => a - b);
 
   dbReviewsFormatted = dbReviews.map((rev) => {
     const rawName = rev.authorName || rev.customer?.name || 'Verified Client';
@@ -146,16 +151,19 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                   )}
                 </div>
 
-                {/* Name & Title */}
-                <div>
-                  <h1 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
-                    {therapist.name}
-                  </h1>
-                  {therapist.title && (
-                    <p className="text-base sm:text-lg font-medium text-slate-600 mt-1">
-                      {therapist.title}
-                    </p>
-                  )}
+                {/* Name & Title with Favorite Action */}
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h1 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+                      {therapist.name}
+                    </h1>
+                    {therapist.title && (
+                      <p className="text-base sm:text-lg font-medium text-slate-600 mt-1">
+                        {therapist.title}
+                      </p>
+                    )}
+                  </div>
+                  <FavoriteButton therapistId={therapist.id} size="lg" />
                 </div>
 
                 {/* Rating & Location */}
@@ -203,6 +211,11 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                       <span className="text-sm text-slate-500 font-medium">/ session</span>
                     )}
                   </div>
+                  {availableDurations.length > 0 && (
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Session Durations: {availableDurations.join(', ')} mins
+                    </p>
+                  )}
                 </div>
 
                 <Link

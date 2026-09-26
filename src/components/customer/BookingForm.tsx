@@ -96,6 +96,28 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
   const [zipCode, setZipCode] = useState('');
   const [notes, setNotes] = useState('');
 
+  // Saved Customer Addresses State
+  const [savedAddresses, setSavedAddresses] = useState<Array<{
+    id: string;
+    label: string;
+    addressLine1: string;
+    addressLine2?: string | null;
+    city: string;
+    state: string;
+    zipCode: string;
+  }>>([]);
+
+  React.useEffect(() => {
+    fetch('/api/account/addresses')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data.addresses)) {
+          setSavedAddresses(data.addresses);
+        }
+      })
+      .catch(() => null);
+  }, []);
+
   // Created booking state for payment method selection step
   const [createdBookingData, setCreatedBookingData] = useState<{
     id: string;
@@ -818,6 +840,34 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
             {locationType === 'IN_HOME' && (
               <div className="pt-4 mt-4 border-t border-slate-100 space-y-4">
                 <h3 className="text-sm font-bold text-slate-900">In-Home Service Address</h3>
+
+                {savedAddresses.length > 0 && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                    <label className="block text-xs font-semibold text-slate-700">
+                      Choose Saved Address
+                    </label>
+                    <select
+                      onChange={(e) => {
+                        const addr = savedAddresses.find((a) => a.id === e.target.value);
+                        if (addr) {
+                          setAddressLine1(addr.addressLine1);
+                          setAddressLine2(addr.addressLine2 || '');
+                          setCity(addr.city);
+                          setState(addr.state);
+                          setZipCode(addr.zipCode);
+                        }
+                      }}
+                      className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-emerald-600"
+                    >
+                      <option value="">-- Select a saved address --</option>
+                      {savedAddresses.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.label}: {a.addressLine1}, {a.city}, {a.state} {a.zipCode}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <div>
                   <label htmlFor="addressLine1" className="block text-xs font-semibold text-slate-700 mb-1">

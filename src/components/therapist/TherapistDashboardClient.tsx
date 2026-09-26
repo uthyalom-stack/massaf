@@ -528,6 +528,68 @@ export function TherapistDashboardClient() {
                         📅 {new Date(a.appointmentDateTime).toLocaleString()} • {a.locationType === 'STUDIO' ? 'Studio' : `In-Home (${a.addressLine1 || ''}, ${a.city || ''})`}
                       </p>
                     </div>
+
+                    {/* Appointment Progress Actions */}
+                    <div className="flex items-center gap-2 pt-2 sm:pt-0">
+                      {a.status !== 'COMPLETED' && a.status !== 'CANCELLED' && a.status !== 'REFUNDED' && (
+                        <>
+                          {a.status !== 'IN_PROGRESS' && (
+                            <button
+                              onClick={async () => {
+                                const res = await fetch('/api/therapist/appointments', {
+                                  method: 'PUT',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ bookingId: a.id, status: 'IN_PROGRESS' }),
+                                });
+                                if (res.ok) loadPortalData();
+                                else {
+                                  const err = await res.json();
+                                  alert(err.error || 'Failed to update status');
+                                }
+                              }}
+                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+                            >
+                              In Progress
+                            </button>
+                          )}
+                          <button
+                            onClick={async () => {
+                              const res = await fetch('/api/therapist/appointments', {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ bookingId: a.id, status: 'COMPLETED' }),
+                              });
+                              if (res.ok) loadPortalData();
+                              else {
+                                const err = await res.json();
+                                alert(err.error || 'Failed to update status');
+                              }
+                            }}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                          >
+                            Mark Completed
+                          </button>
+                          <button
+                            onClick={async () => {
+                              if (!confirm('Record customer no-show for this appointment?')) return;
+                              const res = await fetch('/api/therapist/appointments', {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ bookingId: a.id, status: 'NO_SHOW' }),
+                              });
+                              if (res.ok) loadPortalData();
+                              else {
+                                const err = await res.json();
+                                alert(err.error || 'Failed to update status');
+                              }
+                            }}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+                          >
+                            Record No-Show
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}

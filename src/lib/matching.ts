@@ -261,10 +261,10 @@ export async function rankTherapistsForMatch(
   for (const therapist of therapists) {
     if (!therapist) continue;
 
-    // 1. Service Compatibility (Mandatory)
-    const matchedService = therapist.services.find(
-      (s) => s.id === criteria.serviceId
-    );
+    // 1. Service Compatibility (Supports specific service filter or any available service)
+    const matchedService = criteria.serviceId
+      ? therapist.services.find((s) => s.id === criteria.serviceId)
+      : therapist.services[0];
 
     if (!matchedService) {
       // Disqualified: therapist does not offer this service
@@ -276,7 +276,11 @@ export async function rankTherapistsForMatch(
 
     // Base score for providing the service (35 pts max)
     points += 35;
-    reasons.push(`Offers your selected service: ${matchedService.name}`);
+    reasons.push(
+      criteria.serviceId
+        ? `Offers your selected service: ${matchedService.name}`
+        : `Offers massage therapy service: ${matchedService.name}`
+    );
 
     // 2. Location Compatibility (Mandatory capability + area scoring, Max 30 pts)
     let locationCompatible = false;
@@ -297,7 +301,6 @@ export async function rankTherapistsForMatch(
 
       if (zipClean) {
         // AUTHORITATIVE ZIP ELIGIBILITY: When customer supplies explicit ZIP, ZIP eligibility is mandatory.
-        // A city match alone cannot override an explicit ZIP mismatch.
         if (matchesZip) {
           points += 30;
           reasons.push(`Provides in-home service in ZIP ${zipClean}`);
@@ -305,7 +308,6 @@ export async function rankTherapistsForMatch(
           locationCompatible = false;
         }
       } else if (locQueryClean) {
-        // Fallback for location query without explicit ZIP
         if (matchesCity) {
           points += 30;
           reasons.push(`Provides in-home service in ${locQueryClean.toUpperCase()}`);
@@ -313,7 +315,6 @@ export async function rankTherapistsForMatch(
           locationCompatible = false;
         }
       } else {
-        // No location query or ZIP specified
         points += 20;
         reasons.push('Offers in-home appointments');
       }
@@ -330,20 +331,58 @@ export async function rankTherapistsForMatch(
         (therapist.location.toLowerCase().includes(locQueryClean) ||
           therapist.serviceAreas.some((sa) => sa.toLowerCase().includes(locQueryClean)));
 
-      const matchesZip =
-        zipClean && therapist.zipCodes.some((z) => z.toLowerCase().includes(zipClean));
+      const matchesZip = zipClean ? await therapistCoversZipAsync(therapist, zipClean) : false;
 
-      if (locQueryClean || zipClean) {
-        if (matchesCity || matchesZip) {
+      if (zipClean) {
+        // AUTHORITATIVE ZIP ELIGIBILITY: When customer supplies explicit ZIP for studio search, TherapistZipEligibility is mandatory.
+        if (matchesZip) {
           points += 30;
-          reasons.push(`Has local studio coverage near ${zipClean || locQueryClean.toUpperCase()}`);
+          reasons.push(`Has local studio coverage near ZIP ${zipClean}`);
         } else {
-          // Specified location outside therapist studio coverage
+          locationCompatible = false;
+        }
+      } else if (locQueryClean) {
+        if (matchesCity) {
+          points += 30;
+          reasons.push(`Has local studio coverage near ${locQueryClean.toUpperCase()}`);
+        } else {
           locationCompatible = false;
         }
       } else {
         points += 20;
         reasons.push('Offers local studio appointments');
+      }
+    } else {
+      // Unspecified location type (allows either studio or in-home)
+      if (!therapist.offersInHome && !therapist.offersStudio) {
+        continue;
+      }
+
+      locationCompatible = true;
+
+      const matchesZip = zipClean ? await therapistCoversZipAsync(therapist, zipClean) : false;
+      const matchesCity =
+        locQueryClean &&
+        (therapist.location.toLowerCase().includes(locQueryClean) ||
+          therapist.serviceAreas.some((sa) => sa.toLowerCase().includes(locQueryClean)));
+
+      if (zipClean) {
+        if (matchesZip) {
+          points += 30;
+          reasons.push(`Provides appointment coverage in ZIP ${zipClean}`);
+        } else {
+          locationCompatible = false;
+        }
+      } else if (locQueryClean) {
+        if (matchesCity) {
+          points += 30;
+          reasons.push(`Provides appointment coverage in ${locQueryClean.toUpperCase()}`);
+        } else {
+          locationCompatible = false;
+        }
+      } else {
+        points += 20;
+        reasons.push('Offers massage appointments');
       }
     }
 
@@ -365,7 +404,7 @@ export async function rankTherapistsForMatch(
       points += 10;
     }
 
-    // 4. Availability Compatibility (Max 10 pts)
+    // 4. Availability Compatibility (HARD QUALIFICATION when preferredDate is supplied)
     if (criteria.preferredDate) {
       if (criteria.preferredTime && criteria.preferredTime.trim()) {
         const timeVal = criteria.preferredTime.trim().toLowerCase();
@@ -383,6 +422,9 @@ export async function rankTherapistsForMatch(
           ) {
             points += 10;
             reasons.push('Available for your selected service during the morning (8am - 12pm)');
+          } else {
+            // HARD QUALIFICATION: Disqualify therapist if unavailable in requested morning window
+            continue;
           }
         } else if (timeVal === 'afternoon') {
           // Afternoon = 12:00 - 17:00 (720 - 1020 min)
@@ -397,6 +439,9 @@ export async function rankTherapistsForMatch(
           ) {
             points += 10;
             reasons.push('Available for your selected service during the afternoon (12pm - 5pm)');
+          } else {
+            // HARD QUALIFICATION: Disqualify therapist if unavailable in requested afternoon window
+            continue;
           }
         } else if (timeVal === 'evening') {
           // Evening = 17:00 - 21:00 (1020 - 1260 min)
@@ -411,6 +456,9 @@ export async function rankTherapistsForMatch(
           ) {
             points += 10;
             reasons.push('Available for your selected service during the evening (5pm - 9pm)');
+          } else {
+            // HARD QUALIFICATION: Disqualify therapist if unavailable in requested evening window
+            continue;
           }
         } else {
           // Exact time string e.g. "09:30" or "2:30 PM"
@@ -427,9 +475,13 @@ export async function rankTherapistsForMatch(
             if (timeCheck.isValid) {
               points += 10;
               reasons.push(`Available at your requested time (${formatted.label})`);
+            } else {
+              // HARD QUALIFICATION: Disqualify therapist if unavailable at requested exact time
+              continue;
             }
           } catch {
             // Malformed time string fails availability check safely
+            continue;
           }
         }
       } else {
@@ -443,6 +495,9 @@ export async function rankTherapistsForMatch(
         if (slots.length > 0) {
           points += 10;
           reasons.push('Available for your selected service on your requested date');
+        } else {
+          // HARD QUALIFICATION: Disqualify therapist if unavailable on requested date
+          continue;
         }
       }
     } else {
