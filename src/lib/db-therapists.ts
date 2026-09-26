@@ -201,11 +201,12 @@ export async function therapistCoversZipAsync(
     return false; // Customer ZIP does not exist in real U.S. database
   }
 
-  // Authoritative check strictly against active TherapistZipEligibility table distribution pool
+  // Authoritative check strictly against active TherapistZipEligibility table distribution pool.
+  // NO fallbacks to legacy service-area ranges, zipCodes arrays, or region inference.
   try {
     const activeTime = await getActiveDistributionTime();
     if (!activeTime) {
-      // FAIL CLOSED: If active distribution timestamp is missing, reject eligibility immediately
+      // FAIL CLOSED: If active distribution timestamp is missing, reject automatic matching immediately
       return false;
     }
 

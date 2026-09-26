@@ -100,6 +100,23 @@ async function handleScheduledJobs(request: Request) {
 
       if (updateResult.count > 0) {
         results.expiredCount++;
+
+        // Audit Log Entry
+        try {
+          await db.adminAuditLog.create({
+            data: {
+              actorEmail: 'system-cron@massaf.com',
+              actorRole: 'SYSTEM',
+              action: 'BOOKING_EXPIRED_UNPAID',
+              entityType: 'Booking',
+              entityId: candidate.id,
+              description: `System cron automatically expired unpaid PENDING booking ${candidate.bookingNumber} (created >= 30 minutes ago).`,
+            },
+          });
+        } catch (auditErr) {
+          console.warn('[Cron] Error creating audit log for expired booking:', auditErr);
+        }
+
         try {
           await notifyBookingExpired(candidate.id);
         } catch (err) {

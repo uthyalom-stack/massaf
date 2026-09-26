@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getVerifiedCustomerSession } from '@/lib/auth-session';
+import { createAdminNotification } from '@/lib/admin-notifications';
 
 export async function POST(request: Request) {
   try {
-    const session = await getVerifiedCustomerSession();
+    const cookieHeader = request.headers.get('cookie') || undefined;
+    const session = await getVerifiedCustomerSession(cookieHeader);
     if (!session) {
       return NextResponse.json(
-        { error: 'Unauthorized: Please verify your account to cancel bookings' },
+        { error: 'Unauthorized: Please verify your customer account to cancel bookings' },
         { status: 401 }
       );
     }
@@ -17,7 +19,7 @@ export async function POST(request: Request) {
 
     if (!bookingId || typeof bookingId !== 'string') {
       return NextResponse.json(
-        { error: 'Booking ID is required' },
+        { error: 'Booking ID parameter is required' },
         { status: 400 }
       );
     }
@@ -28,6 +30,10 @@ export async function POST(request: Request) {
         id: bookingId,
         customerId: session.entityId,
       },
+      include: {
+        therapist: true,
+        service: true,
+      },
     });
 
     if (!booking) {
@@ -37,11 +43,17 @@ export async function POST(request: Request) {
       );
     }
 
+    // Idempotency: If already cancelled, return success cleanly
     if (booking.status === 'CANCELLED') {
-      return NextResponse.json(
-        { error: 'Booking is already cancelled' },
-        { status: 400 }
-      );
+      return NextResponse.json({
+        message: 'Booking is already cancelled',
+        booking: {
+          id: booking.id,
+          bookingNumber: booking.bookingNumber,
+          status: booking.status,
+          paymentStatus: booking.paymentStatus,
+        },
+      });
     }
 
     if (booking.status === 'COMPLETED') {
@@ -58,8 +70,19 @@ export async function POST(request: Request) {
       );
     }
 
+    if (booking.status === 'NO_SHOW') {
+      return NextResponse.json(
+        { error: 'No-show appointments cannot be cancelled' },
+        { status: 400 }
+      );
+    }
+
+    const cancelReasonText = reason && typeof reason === 'string' && reason.trim().length > 0
+      ? reason.trim()
+      : 'Cancelled by customer via account portal';
+
     // Update booking status to CANCELLED.
-    // Preserve paymentStatus (do NOT mark REFUNDED as no automated PayLio refund integration exists)
+    // Preserve paymentStatus truthfully (do NOT mark REFUNDED unless an actual refund is processed)
     const updatedBooking = await db.booking.update({
       where: { id: booking.id },
       data: {
@@ -67,11 +90,43 @@ export async function POST(request: Request) {
       },
     });
 
-    // Dispatch cancellation notification with failure isolation
+    // Create persistent Audit Log entry for timeline tracking
+    try {
+      await db.adminAuditLog.create({
+        data: {
+          actorUserId: session.entityId,
+          actorEmail: session.email,
+          actorRole: 'CUSTOMER',
+          action: 'BOOKING_CANCELLED_BY_CUSTOMER',
+          entityType: 'Booking',
+          entityId: booking.id,
+          description: `Customer ${session.email} cancelled appointment ${booking.bookingNumber}. Reason: ${cancelReasonText}`,
+          metadataJson: JSON.stringify({
+            bookingNumber: booking.bookingNumber,
+            reason: cancelReasonText,
+          }),
+        },
+      });
+    } catch (auditErr) {
+      console.warn('[AuditLog] Error logging customer cancellation:', auditErr);
+    }
+
+    // Create Admin Notification
+    try {
+      await createAdminNotification({
+        type: 'BOOKING_CANCELLED',
+        title: `Booking Cancelled (${booking.bookingNumber})`,
+        message: `Customer cancelled appointment ${booking.bookingNumber}. Reason: ${cancelReasonText}`,
+        link: `/admin/bookings/${booking.id}`,
+      });
+    } catch (adminNotifErr) {
+      console.warn('[AdminNotif] Error creating admin cancellation notification:', adminNotifErr);
+    }
+
+    // Dispatch cancellation notification (email / telegram) with failure isolation
     try {
       const { notifyBookingCancelled } = await import('@/lib/notifications');
-      const cancelReason = reason ? String(reason).trim() : 'Cancelled by customer via account portal';
-      await notifyBookingCancelled(updatedBooking.id, cancelReason);
+      await notifyBookingCancelled(updatedBooking.id, cancelReasonText);
     } catch (notifErr) {
       console.warn('notifyBookingCancelled dispatch warning:', notifErr);
     }
