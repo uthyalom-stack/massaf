@@ -1,13 +1,11 @@
 'use client';
 
-import React from 'react';
-
+import React, { useState, useEffect } from 'react';
 import { TherapistService as PublicServiceOption } from '@/types/customer';
 
 export interface FilterState {
   serviceId: string;
-  city: string;
-  zip: string;
+  locationQuery: string;
   serviceType: string;
   specialty: string;
 }
@@ -18,6 +16,8 @@ export interface TherapistFiltersProps {
   onReset: () => void;
   availableServices: PublicServiceOption[];
   availableSpecialties: string[];
+  matchedCount?: number;
+  isSearching?: boolean;
 }
 
 export function TherapistFilters({
@@ -26,23 +26,42 @@ export function TherapistFilters({
   onReset,
   availableServices,
   availableSpecialties,
+  matchedCount,
+  isSearching = false,
 }: TherapistFiltersProps) {
+  // Local draft state for location query to ensure completely stable typing without keystroke drops
+  const [draftLocation, setDraftLocation] = useState(filters.locationQuery);
+
+  // Sync draft state if external filters change (e.g., Reset or URL change)
+  useEffect(() => {
+    setDraftLocation(filters.locationQuery);
+  }, [filters.locationQuery]);
+
   const hasActiveFilters =
     filters.serviceId !== 'all' ||
-    Boolean(filters.city.trim()) ||
-    Boolean(filters.zip.trim()) ||
+    Boolean(filters.locationQuery.trim()) ||
     filters.serviceType !== 'all' ||
     filters.specialty !== 'all';
+
+  const handleLocationInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setDraftLocation(val);
+    onFilterChange({ locationQuery: val });
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onFilterChange({
       serviceId: filters.serviceId,
-      city: filters.city,
-      zip: filters.zip,
+      locationQuery: draftLocation,
       serviceType: filters.serviceType,
       specialty: filters.specialty,
     });
+  };
+
+  const handleClear = () => {
+    setDraftLocation('');
+    onReset();
   };
 
   return (
@@ -89,14 +108,30 @@ export function TherapistFilters({
               </div>
             </div>
           </div>
-          {/* City / Location Input */}
-          <div className="space-y-1.5">
-            <label
-              htmlFor="filter-city"
-              className="block text-xs font-semibold text-slate-700 uppercase tracking-wider"
-            >
-              City / Region
-            </label>
+
+          {/* Unified Location Search (ZIP, City, State) */}
+          <div className="space-y-1.5 lg:col-span-2">
+            <div className="flex items-center justify-between">
+              <label
+                htmlFor="filter-location"
+                className="block text-xs font-semibold text-slate-700 uppercase tracking-wider"
+              >
+                Location (ZIP, City, or State)
+              </label>
+              {/* Live result count badge while typing/filtering */}
+              {matchedCount !== undefined && (
+                <span className="text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 flex items-center gap-1">
+                  {isSearching ? (
+                    <span className="animate-pulse">Searching...</span>
+                  ) : (
+                    <>
+                      <span className="font-semibold">{matchedCount}</span>
+                      <span>{matchedCount === 1 ? 'therapist' : 'therapists'} available</span>
+                    </>
+                  )}
+                </span>
+              )}
+            </div>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                 <svg
@@ -121,49 +156,28 @@ export function TherapistFilters({
               </div>
               <input
                 type="text"
-                id="filter-city"
-                name="city"
-                value={filters.city}
-                onChange={(e) => onFilterChange({ city: e.target.value })}
-                placeholder="e.g. Los Angeles, Austin"
-                className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all"
+                id="filter-location"
+                name="locationQuery"
+                value={draftLocation}
+                onChange={handleLocationInputChange}
+                placeholder="Search ZIP (e.g. 90210), City (Los Angeles), or State (CA, Texas)"
+                className="w-full pl-9 pr-8 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all"
               />
-            </div>
-          </div>
-
-          {/* ZIP Code Input */}
-          <div className="space-y-1.5">
-            <label
-              htmlFor="filter-zip"
-              className="block text-xs font-semibold text-slate-700 uppercase tracking-wider"
-            >
-              ZIP / Postal Code
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+              {draftLocation && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraftLocation('');
+                    onFilterChange({ locationQuery: '' });
+                  }}
+                  className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                  title="Clear location"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5m0 0v-5a2 2 0 012-2h2a2 2 0 012 2v5m-6 0h6"
-                  />
-                </svg>
-              </div>
-              <input
-                type="text"
-                id="filter-zip"
-                name="zip"
-                value={filters.zip}
-                onChange={(e) => onFilterChange({ zip: e.target.value })}
-                placeholder="e.g. 90210, 10001"
-                className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all"
-              />
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
             </div>
           </div>
 
@@ -245,40 +259,19 @@ export function TherapistFilters({
               </div>
             </div>
           </div>
-
-          {/* Search Button */}
-          <button
-            type="submit"
-            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-sm rounded-xl transition-colors shadow-xs focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 cursor-pointer"
-          >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-              />
-            </svg>
-            <span>Search Therapists</span>
-          </button>
         </div>
 
         {/* Clear & Active Indicator Bar */}
         <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100">
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            <span>Client-side filtered search against verified practitioners</span>
+            <span>Search by 5-digit ZIP, City, or State (e.g. CA, Texas)</span>
           </div>
 
           {hasActiveFilters && (
             <button
               type="button"
-              onClick={onReset}
+              onClick={handleClear}
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-700 hover:text-rose-800 transition-colors focus:outline-none focus:ring-2 focus:ring-rose-500 rounded-md px-2 py-1 cursor-pointer"
             >
               <svg
