@@ -329,7 +329,17 @@ export async function executeTherapistCsvImportAction(input: {
         }
       } catch (rowErr: unknown) {
         failedCount++;
-        const msg = rowErr instanceof Error ? rowErr.message : 'Unknown database error';
+        let msg = rowErr instanceof Error ? rowErr.message : 'Unknown database error';
+
+        // Detect Prisma unique constraint violation (e.g. Code P2002 or unique constraint message)
+        const isUniqueConstraint =
+          (typeof rowErr === 'object' && rowErr !== null && 'code' in rowErr && (rowErr as { code?: string }).code === 'P2002') ||
+          (msg && msg.toLowerCase().includes('unique constraint'));
+
+        if (isUniqueConstraint) {
+          msg = 'A therapist with this email or phone was created by another request.';
+        }
+
         errors.push({ rowNumber: row.rowNumber, name: row.name, error: msg });
         console.error(`Error importing row #${row.rowNumber} (${row.name}):`, rowErr);
       }
@@ -1240,202 +1250,370 @@ export async function markAllAdminNotificationsReadAction() {
   }
 }
 
-// --- Super Admin Controlled Test Data Cleanup ---
+// --- Super Admin Development Data Cleanup ---
 
-export async function getTestDataPreviewAction() {
+export async function getDevelopmentDataListAction() {
   try {
     await checkServerAdminAuth(['SUPER_ADMIN']);
 
-    // Find test customer and test therapist IDs
-    const [testCustomers, testTherapists] = await Promise.all([
-      db.customer.findMany({ where: { isTest: true }, select: { id: true } }),
-      db.therapist.findMany({ where: { isTest: true }, select: { id: true } }),
+    const [therapists, customers, bookings, reviews, testimonials, adminNotifications] = await Promise.all([
+      db.therapist.findMany({
+        select: { id: true, name: true, email: true, phone: true },
+        orderBy: { name: 'asc' },
+      }),
+      db.customer.findMany({
+        select: { id: true, name: true, email: true, phone: true },
+        orderBy: { name: 'asc' },
+      }),
+      db.booking.findMany({
+        select: {
+          id: true,
+          bookingNumber: true,
+          appointmentDateTime: true,
+          status: true,
+          customer: { select: { name: true } },
+          therapist: { select: { name: true } },
+        },
+        orderBy: { appointmentDateTime: 'desc' },
+      }),
+      db.review.findMany({
+        select: {
+          id: true,
+          rating: true,
+          comment: true,
+          authorName: true,
+          therapist: { select: { name: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      db.testimonial.findMany({
+        select: { id: true, authorName: true, comment: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      db.adminNotification.findMany({
+        select: { id: true, title: true, message: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+      }),
     ]);
 
-    const testCustomerIds = testCustomers.map((c) => c.id);
-    const testTherapistIds = testTherapists.map((t) => t.id);
+    return {
+      success: true,
+      data: {
+        therapists,
+        customers,
+        bookings: bookings.map((b) => ({
+          id: b.id,
+          bookingNumber: b.bookingNumber,
+          appointmentDateTime: b.appointmentDateTime.toISOString(),
+          status: b.status,
+          customerName: b.customer?.name || 'Guest',
+          therapistName: b.therapist?.name || 'Unassigned',
+        })),
+        reviews: reviews.map((r) => ({
+          id: r.id,
+          rating: r.rating,
+          comment: r.comment,
+          authorName: r.authorName || 'Anonymous',
+          therapistName: r.therapist?.name || 'General',
+        })),
+        testimonials,
+        adminNotifications: adminNotifications.map((n) => ({
+          id: n.id,
+          title: n.title,
+          message: n.message,
+          createdAt: n.createdAt.toISOString(),
+        })),
+      },
+    };
+  } catch (err: unknown) {
+    console.error('Error in getDevelopmentDataListAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to retrieve development data list.' };
+  }
+}
 
-    // Find test bookings where isTest is true OR customer/therapist is a test entity
-    const testBookings = await db.booking.findMany({
+export async function previewDevelopmentDataCleanupAction(input: {
+  therapistIds?: string[];
+  customerIds?: string[];
+  bookingIds?: string[];
+  reviewIds?: string[];
+  testimonialIds?: string[];
+  notificationIds?: string[];
+}) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN']);
+
+    const targetTherapistIds = input.therapistIds || [];
+    const targetCustomerIds = input.customerIds || [];
+    const targetBookingIds = input.bookingIds || [];
+    const targetReviewIds = input.reviewIds || [];
+    const targetTestimonialIds = input.testimonialIds || [];
+    const targetNotificationIds = input.notificationIds || [];
+
+    // Find all bookings directly selected OR indirectly affected by deleting target customers/therapists
+    const affectedBookings = await db.booking.findMany({
       where: {
         OR: [
-          { isTest: true },
-          ...(testCustomerIds.length > 0 ? [{ customerId: { in: testCustomerIds } }] : []),
-          ...(testTherapistIds.length > 0 ? [{ therapistId: { in: testTherapistIds } }] : []),
+          ...(targetBookingIds.length > 0 ? [{ id: { in: targetBookingIds } }] : []),
+          ...(targetCustomerIds.length > 0 ? [{ customerId: { in: targetCustomerIds } }] : []),
+          ...(targetTherapistIds.length > 0 ? [{ therapistId: { in: targetTherapistIds } }] : []),
         ],
       },
       select: { id: true },
     });
+    const allAffectedBookingIds = Array.from(new Set(affectedBookings.map((b) => b.id)));
 
-    const testBookingIds = testBookings.map((b) => b.id);
-
+    // Dependent counts
     const [
-      testGiftCardsCount,
-      testReviewsCount,
-      testNotificationsCount,
-      testMarketingLinksCount,
-      testTestimonialsCount,
+      giftCardsCount,
+      dependentReviewsCount,
+      rotationHistoryCount,
+      therapistPhotosCount,
+      therapistServicesCount,
+      therapistAvailabilitiesCount,
+      therapistZipEligibilitiesCount,
+      customerAddressesCount,
+      customerFavoritesCount,
+      adminNotesCount,
     ] = await Promise.all([
-      db.giftCardSubmission.count({
-        where: {
-          ...(testBookingIds.length > 0 ? { bookingId: { in: testBookingIds } } : { id: 'none' }),
-        },
-      }),
+      allAffectedBookingIds.length > 0
+        ? db.giftCardSubmission.count({ where: { bookingId: { in: allAffectedBookingIds } } })
+        : 0,
       db.review.count({
         where: {
           OR: [
-            { source: 'ADMIN', authorName: { contains: 'Test' } },
-            ...(testCustomerIds.length > 0 ? [{ customerId: { in: testCustomerIds } }] : []),
-            ...(testTherapistIds.length > 0 ? [{ therapistId: { in: testTherapistIds } }] : []),
-            ...(testBookingIds.length > 0 ? [{ bookingId: { in: testBookingIds } }] : []),
+            ...(targetReviewIds.length > 0 ? [{ id: { in: targetReviewIds } }] : []),
+            ...(targetCustomerIds.length > 0 ? [{ customerId: { in: targetCustomerIds } }] : []),
+            ...(targetTherapistIds.length > 0 ? [{ therapistId: { in: targetTherapistIds } }] : []),
+            ...(allAffectedBookingIds.length > 0 ? [{ bookingId: { in: allAffectedBookingIds } }] : []),
           ],
         },
       }),
-      db.adminNotification.count({ where: { isTest: true } }),
-      db.marketingLink.count({ where: { isTest: true } }),
-      db.testimonial.count({ where: { isTest: true } }),
+      db.customerRotationHistory.count({
+        where: {
+          OR: [
+            ...(targetCustomerIds.length > 0 ? [{ customerId: { in: targetCustomerIds } }] : []),
+            ...(targetTherapistIds.length > 0 ? [{ therapistId: { in: targetTherapistIds } }] : []),
+          ],
+        },
+      }),
+      targetTherapistIds.length > 0
+        ? db.therapistPhoto.count({ where: { therapistId: { in: targetTherapistIds } } })
+        : 0,
+      targetTherapistIds.length > 0
+        ? db.therapistService.count({ where: { therapistId: { in: targetTherapistIds } } })
+        : 0,
+      targetTherapistIds.length > 0
+        ? db.therapistAvailability.count({ where: { therapistId: { in: targetTherapistIds } } })
+        : 0,
+      targetTherapistIds.length > 0
+        ? db.therapistZipEligibility.count({ where: { therapistId: { in: targetTherapistIds } } })
+        : 0,
+      targetCustomerIds.length > 0
+        ? db.customerAddress.count({ where: { customerId: { in: targetCustomerIds } } })
+        : 0,
+      targetCustomerIds.length > 0
+        ? db.customerFavorite.count({ where: { customerId: { in: targetCustomerIds } } })
+        : 0,
+      db.adminNote.count({
+        where: {
+          OR: [
+            ...(targetCustomerIds.length > 0 ? [{ entityType: 'CUSTOMER', entityId: { in: targetCustomerIds } }] : []),
+            ...(targetTherapistIds.length > 0 ? [{ entityType: 'THERAPIST', entityId: { in: targetTherapistIds } }] : []),
+            ...(allAffectedBookingIds.length > 0 ? [{ entityType: 'BOOKING', entityId: { in: allAffectedBookingIds } }] : []),
+          ],
+        },
+      }),
     ]);
 
-    const totalTestRecords =
-      testCustomers.length +
-      testTherapists.length +
-      testBookings.length +
-      testGiftCardsCount +
-      testReviewsCount +
-      testNotificationsCount +
-      testMarketingLinksCount +
-      testTestimonialsCount;
+    const totalSelected =
+      targetTherapistIds.length +
+      targetCustomerIds.length +
+      targetBookingIds.length +
+      targetReviewIds.length +
+      targetTestimonialIds.length +
+      targetNotificationIds.length;
+
+    const totalDependents =
+      giftCardsCount +
+      dependentReviewsCount +
+      rotationHistoryCount +
+      therapistPhotosCount +
+      therapistServicesCount +
+      therapistAvailabilitiesCount +
+      therapistZipEligibilitiesCount +
+      customerAddressesCount +
+      customerFavoritesCount +
+      adminNotesCount;
 
     return {
       success: true,
       preview: {
-        customersCount: testCustomers.length,
-        therapistsCount: testTherapists.length,
-        bookingsCount: testBookings.length,
-        giftCardsCount: testGiftCardsCount,
-        reviewsCount: testReviewsCount,
-        notificationsCount: testNotificationsCount,
-        marketingLinksCount: testMarketingLinksCount,
-        testimonialsCount: testTestimonialsCount,
-        totalTestRecords,
+        selectedCounts: {
+          therapists: targetTherapistIds.length,
+          customers: targetCustomerIds.length,
+          bookings: targetBookingIds.length,
+          reviews: targetReviewIds.length,
+          testimonials: targetTestimonialIds.length,
+          notifications: targetNotificationIds.length,
+        },
+        dependentCounts: {
+          affectedBookings: allAffectedBookingIds.length,
+          giftCards: giftCardsCount,
+          reviews: dependentReviewsCount,
+          rotationHistory: rotationHistoryCount,
+          therapistPhotos: therapistPhotosCount,
+          therapistServices: therapistServicesCount,
+          therapistAvailabilities: therapistAvailabilitiesCount,
+          therapistZipEligibilities: therapistZipEligibilitiesCount,
+          customerAddresses: customerAddressesCount,
+          customerFavorites: customerFavoritesCount,
+          adminNotes: adminNotesCount,
+        },
+        totalSelectedRecords: totalSelected,
+        totalAffectedRecords: totalSelected + totalDependents,
       },
     };
   } catch (err: unknown) {
-    console.error('Error in getTestDataPreviewAction:', err);
-    return { success: false, error: err instanceof Error ? err.message : 'Failed to retrieve test data preview.' };
+    console.error('Error in previewDevelopmentDataCleanupAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to retrieve cleanup preview.' };
   }
 }
 
-export async function deleteTestDataAction(input: { confirmPhrase: string }) {
+export async function executeDevelopmentDataCleanupAction(input: {
+  therapistIds?: string[];
+  customerIds?: string[];
+  bookingIds?: string[];
+  reviewIds?: string[];
+  testimonialIds?: string[];
+  notificationIds?: string[];
+  confirmPhrase: string;
+}) {
   try {
     const adminSession = await checkServerAdminAuth(['SUPER_ADMIN']);
 
-    if (!input || input.confirmPhrase !== 'DELETE TEST DATA') {
+    if (!input || input.confirmPhrase !== 'DELETE DATA') {
       return {
         success: false,
-        error: 'Confirmation phrase mismatch. You must type "DELETE TEST DATA" verbatim to execute cleanup.',
+        error: 'Confirmation phrase mismatch. You must type "DELETE DATA" verbatim to execute cleanup.',
       };
     }
 
-    // 1. Identify test entities
-    const [testCustomers, testTherapists] = await Promise.all([
-      db.customer.findMany({ where: { isTest: true }, select: { id: true } }),
-      db.therapist.findMany({ where: { isTest: true }, select: { id: true } }),
-    ]);
+    const targetTherapistIds = input.therapistIds || [];
+    const targetCustomerIds = input.customerIds || [];
+    const targetBookingIds = input.bookingIds || [];
+    const targetReviewIds = input.reviewIds || [];
+    const targetTestimonialIds = input.testimonialIds || [];
+    const targetNotificationIds = input.notificationIds || [];
 
-    const testCustomerIds = testCustomers.map((c) => c.id);
-    const testTherapistIds = testTherapists.map((t) => t.id);
-
-    const testBookings = await db.booking.findMany({
+    // Find all affected bookings
+    const affectedBookings = await db.booking.findMany({
       where: {
         OR: [
-          { isTest: true },
-          ...(testCustomerIds.length > 0 ? [{ customerId: { in: testCustomerIds } }] : []),
-          ...(testTherapistIds.length > 0 ? [{ therapistId: { in: testTherapistIds } }] : []),
+          ...(targetBookingIds.length > 0 ? [{ id: { in: targetBookingIds } }] : []),
+          ...(targetCustomerIds.length > 0 ? [{ customerId: { in: targetCustomerIds } }] : []),
+          ...(targetTherapistIds.length > 0 ? [{ therapistId: { in: targetTherapistIds } }] : []),
         ],
       },
       select: { id: true },
     });
+    const allAffectedBookingIds = Array.from(new Set(affectedBookings.map((b) => b.id)));
 
-    const testBookingIds = testBookings.map((b) => b.id);
-
-    // Fetch storage keys for R2 image cleanup before database deletion
-    const testGiftCardImages = testBookingIds.length > 0
+    // Fetch gift card proof images to clean from Cloudflare R2
+    const giftCardImages = allAffectedBookingIds.length > 0
       ? await db.giftCardImage.findMany({
-          where: { giftCardSubmission: { bookingId: { in: testBookingIds } } },
+          where: { giftCardSubmission: { bookingId: { in: allAffectedBookingIds } } },
           select: { storageKey: true },
         })
       : [];
+    const storageKeysToDelete = giftCardImages.map((img) => img.storageKey);
 
-    const storageKeysToDelete = testGiftCardImages.map((img) => img.storageKey);
-
-    // 2. Perform cascading deletion inside atomic transaction
+    // Cascading deletion inside database transaction
     const deletionCounts = await db.$transaction(async (tx) => {
-      // Delete GiftCardSubmissions & GiftCardImages
+      // 1. Delete GiftCardSubmissions & GiftCardImages
       let giftCardsDel = 0;
-      if (testBookingIds.length > 0) {
+      if (allAffectedBookingIds.length > 0) {
         const gcResult = await tx.giftCardSubmission.deleteMany({
-          where: { bookingId: { in: testBookingIds } },
+          where: { bookingId: { in: allAffectedBookingIds } },
         });
         giftCardsDel = gcResult.count;
       }
 
-      // Delete Reviews attached to test bookings, customers, or therapists
+      // 2. Delete AdminNotes attached to affected bookings, customers, or therapists
+      await tx.adminNote.deleteMany({
+        where: {
+          OR: [
+            ...(targetCustomerIds.length > 0 ? [{ entityType: 'CUSTOMER', entityId: { in: targetCustomerIds } }] : []),
+            ...(targetTherapistIds.length > 0 ? [{ entityType: 'THERAPIST', entityId: { in: targetTherapistIds } }] : []),
+            ...(allAffectedBookingIds.length > 0 ? [{ entityType: 'BOOKING', entityId: { in: allAffectedBookingIds } }] : []),
+          ],
+        },
+      });
+
+      // 3. Delete Reviews
       const reviewsDel = await tx.review.deleteMany({
         where: {
           OR: [
-            { source: 'ADMIN', authorName: { contains: 'Test' } },
-            ...(testCustomerIds.length > 0 ? [{ customerId: { in: testCustomerIds } }] : []),
-            ...(testTherapistIds.length > 0 ? [{ therapistId: { in: testTherapistIds } }] : []),
-            ...(testBookingIds.length > 0 ? [{ bookingId: { in: testBookingIds } }] : []),
+            ...(targetReviewIds.length > 0 ? [{ id: { in: targetReviewIds } }] : []),
+            ...(targetCustomerIds.length > 0 ? [{ customerId: { in: targetCustomerIds } }] : []),
+            ...(targetTherapistIds.length > 0 ? [{ therapistId: { in: targetTherapistIds } }] : []),
+            ...(allAffectedBookingIds.length > 0 ? [{ bookingId: { in: allAffectedBookingIds } }] : []),
           ],
         },
       });
 
-      // Delete CustomerRotationHistory records for test customers or therapists
+      // 4. Delete CustomerRotationHistory
       await tx.customerRotationHistory.deleteMany({
         where: {
           OR: [
-            ...(testCustomerIds.length > 0 ? [{ customerId: { in: testCustomerIds } }] : []),
-            ...(testTherapistIds.length > 0 ? [{ therapistId: { in: testTherapistIds } }] : []),
+            ...(targetCustomerIds.length > 0 ? [{ customerId: { in: targetCustomerIds } }] : []),
+            ...(targetTherapistIds.length > 0 ? [{ therapistId: { in: targetTherapistIds } }] : []),
           ],
         },
       });
 
-      // Delete test Bookings
+      // 5. Delete Bookings
       let bookingsDel = 0;
-      if (testBookingIds.length > 0) {
+      if (allAffectedBookingIds.length > 0) {
         const bResult = await tx.booking.deleteMany({
-          where: { id: { in: testBookingIds } },
+          where: { id: { in: allAffectedBookingIds } },
         });
         bookingsDel = bResult.count;
       }
 
-      // Delete test Customers and their addresses/favorites
+      // 6. Delete Customers and dependents
       let customersDel = 0;
-      if (testCustomerIds.length > 0) {
-        await tx.customerAddress.deleteMany({ where: { customerId: { in: testCustomerIds } } });
-        await tx.customerFavorite.deleteMany({ where: { customerId: { in: testCustomerIds } } });
-        const cResult = await tx.customer.deleteMany({ where: { id: { in: testCustomerIds } } });
+      if (targetCustomerIds.length > 0) {
+        await tx.customerAddress.deleteMany({ where: { customerId: { in: targetCustomerIds } } });
+        await tx.customerFavorite.deleteMany({ where: { customerId: { in: targetCustomerIds } } });
+        const cResult = await tx.customer.deleteMany({ where: { id: { in: targetCustomerIds } } });
         customersDel = cResult.count;
       }
 
-      // Delete test Therapists and their dependent records
+      // 7. Delete Therapists and dependents (USZipCode records remain 100% untouched)
       let therapistsDel = 0;
-      if (testTherapistIds.length > 0) {
-        await tx.therapistPhoto.deleteMany({ where: { therapistId: { in: testTherapistIds } } });
-        await tx.therapistService.deleteMany({ where: { therapistId: { in: testTherapistIds } } });
-        await tx.serviceArea.deleteMany({ where: { therapistId: { in: testTherapistIds } } });
-        await tx.therapistAvailability.deleteMany({ where: { therapistId: { in: testTherapistIds } } });
-        await tx.therapistZipEligibility.deleteMany({ where: { therapistId: { in: testTherapistIds } } });
-        const tResult = await tx.therapist.deleteMany({ where: { id: { in: testTherapistIds } } });
+      if (targetTherapistIds.length > 0) {
+        await tx.therapistPhoto.deleteMany({ where: { therapistId: { in: targetTherapistIds } } });
+        await tx.therapistService.deleteMany({ where: { therapistId: { in: targetTherapistIds } } });
+        await tx.serviceArea.deleteMany({ where: { therapistId: { in: targetTherapistIds } } });
+        await tx.therapistAvailability.deleteMany({ where: { therapistId: { in: targetTherapistIds } } });
+        await tx.therapistZipEligibility.deleteMany({ where: { therapistId: { in: targetTherapistIds } } });
+        const tResult = await tx.therapist.deleteMany({ where: { id: { in: targetTherapistIds } } });
         therapistsDel = tResult.count;
       }
 
-      // Delete test Notifications, MarketingLinks, and Testimonials
-      const notificationsDel = await tx.adminNotification.deleteMany({ where: { isTest: true } });
-      const marketingLinksDel = await tx.marketingLink.deleteMany({ where: { isTest: true } });
-      const testimonialsDel = await tx.testimonial.deleteMany({ where: { isTest: true } });
+      // 8. Delete Testimonials
+      let testimonialsDel = 0;
+      if (targetTestimonialIds.length > 0) {
+        const testRes = await tx.testimonial.deleteMany({ where: { id: { in: targetTestimonialIds } } });
+        testimonialsDel = testRes.count;
+      }
+
+      // 9. Delete Admin Notifications
+      let notificationsDel = 0;
+      if (targetNotificationIds.length > 0) {
+        const notifRes = await tx.adminNotification.deleteMany({ where: { id: { in: targetNotificationIds } } });
+        notificationsDel = notifRes.count;
+      }
 
       return {
         customers: customersDel,
@@ -1443,13 +1621,12 @@ export async function deleteTestDataAction(input: { confirmPhrase: string }) {
         bookings: bookingsDel,
         giftCards: giftCardsDel,
         reviews: reviewsDel.count,
-        notifications: notificationsDel.count,
-        marketingLinks: marketingLinksDel.count,
-        testimonials: testimonialsDel.count,
+        testimonials: testimonialsDel,
+        notifications: notificationsDel,
       };
     });
 
-    // 3. Async Cloudflare R2 object cleanup for deleted gift card proof images
+    // Clean up R2 storage keys
     if (storageKeysToDelete.length > 0) {
       try {
         const { deleteFromR2 } = await import('@/lib/r2');
@@ -1457,16 +1634,16 @@ export async function deleteTestDataAction(input: { confirmPhrase: string }) {
           await deleteFromR2(key);
         }
       } catch (r2Err) {
-        console.error('Error cleaning up R2 objects for test gift card images:', r2Err);
+        console.error('Error cleaning up R2 objects during development data cleanup:', r2Err);
       }
     }
 
-    // 4. Record Audit Log entry
+    // Record Audit Log entry
     await logAdminAction({
       session: adminSession,
-      action: 'TEST_DATA_CLEANUP_EXECUTED',
+      action: 'DEVELOPMENT_DATA_CLEANUP_EXECUTED',
       entityType: 'System',
-      description: `Executed test data cleanup. Deleted ${deletionCounts.customers} customers, ${deletionCounts.therapists} therapists, ${deletionCounts.bookings} bookings, ${deletionCounts.giftCards} gift card submissions, ${deletionCounts.reviews} reviews.`,
+      description: `Executed development data cleanup. Deleted ${deletionCounts.customers} customers, ${deletionCounts.therapists} therapists, ${deletionCounts.bookings} bookings, ${deletionCounts.giftCards} gift card submissions, ${deletionCounts.reviews} reviews, ${deletionCounts.testimonials} testimonials, ${deletionCounts.notifications} notifications.`,
       metadata: deletionCounts,
     });
 
@@ -1480,12 +1657,12 @@ export async function deleteTestDataAction(input: { confirmPhrase: string }) {
 
     return {
       success: true,
-      message: `Test data cleanup executed successfully. Removed ${deletionCounts.customers} customers, ${deletionCounts.therapists} therapists, ${deletionCounts.bookings} bookings, ${deletionCounts.giftCards} gift card submissions, and ${deletionCounts.reviews} reviews.`,
+      message: `Development data cleanup executed successfully. Removed ${deletionCounts.customers} customers, ${deletionCounts.therapists} therapists, ${deletionCounts.bookings} bookings, ${deletionCounts.reviews} reviews.`,
       deletionCounts,
     };
   } catch (err: unknown) {
-    console.error('Error in deleteTestDataAction:', err);
-    return { success: false, error: err instanceof Error ? err.message : 'Failed to execute test data cleanup.' };
+    console.error('Error in executeDevelopmentDataCleanupAction:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to execute development data cleanup.' };
   }
 }
 

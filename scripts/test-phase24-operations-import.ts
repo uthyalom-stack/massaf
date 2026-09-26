@@ -272,6 +272,61 @@ Multi Unmatched Therapist,"Bio",,multi@test.com,+15559998889,,120.00,Yes,Yes,Fak
   }
   console.log('[PASS] Duplicate phone created after preview correctly caught and failed');
 
+  // Test 4e2: DB Unique Constraint Conflict During CREATE (Concurrency Race Condition Test)
+  // Simulate DB unique constraint error on row 1 while row 2 succeeds
+  const raceTestEmail = `race_test_${Date.now()}@test.com`;
+  const raceTherapistInDb = await db.therapist.create({
+    data: {
+      name: 'Existing Race Therapist',
+      email: raceTestEmail,
+      hourlyRate: 100.0,
+      isActive: true,
+      isTest: true,
+    },
+  });
+
+  const concurrentRaceRes = await executeTherapistCsvImportAction({
+    rows: [
+      {
+        rowNumber: 1,
+        name: 'Concurrent Race Therapist 1',
+        email: raceTestEmail, // Will trigger unique constraint or pre-check
+        hourlyRate: 100.0,
+        offersStudio: true,
+        offersInHome: true,
+        matchedServiceIds: [service.id],
+        parsedAvailabilities: [],
+        galleryPhotos: [],
+        classification: 'NEW',
+        actionChoice: 'CREATE',
+      },
+      {
+        rowNumber: 2,
+        name: 'Concurrent Race Therapist 2',
+        email: `valid_race_second_${Date.now()}@test.com`,
+        hourlyRate: 100.0,
+        offersStudio: true,
+        offersInHome: true,
+        matchedServiceIds: [service.id],
+        parsedAvailabilities: [],
+        galleryPhotos: [],
+        classification: 'NEW',
+        actionChoice: 'CREATE',
+      },
+    ],
+  });
+
+  if (!concurrentRaceRes.success || !concurrentRaceRes.report) {
+    throw new Error('Concurrent race test execution failed completely.');
+  }
+  if (concurrentRaceRes.report.failedCount !== 1 || concurrentRaceRes.report.createdCount !== 1) {
+    throw new Error(`Expected 1 failure and 1 creation during concurrent race test, got: ${JSON.stringify(concurrentRaceRes.report)}`);
+  }
+  console.log('[PASS] Concurrency-safe CREATE verified: row 1 failed safely without aborting row 2 or crashing import');
+
+  await db.therapistService.deleteMany({ where: { therapist: { email: { contains: 'valid_race_second_' } } } });
+  await db.therapist.deleteMany({ where: { email: { in: [raceTestEmail, `valid_race_second_${Date.now()}@test.com`] } } });
+
   // Test 4f: Normal Valid CREATE & UPDATE & SKIP
   const validCsv = `Full Name,Bio,Profile Photo,Email,Phone,Telegram Chat ID,Hourly Rate,Offers Studio,Offers In-Home,Services,Availability,Gallery Photos
 Valid New Therapist,"Bio",https://example.com/p.jpg,valid.new@test.com,+15550009999,123456,125.00,Yes,Yes,${service.name},Mon-Fri 09:00-17:00,https://example.com/g1.jpg
