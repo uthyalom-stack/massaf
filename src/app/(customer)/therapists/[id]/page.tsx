@@ -72,6 +72,10 @@ export default async function TherapistProfilePage({ params }: PageProps) {
     },
   });
 
+  const availableDurations = Array.from(
+    new Set(therapist.services.map((s) => s.durationMinutes))
+  ).sort((a, b) => a - b);
+
   dbReviewsFormatted = dbReviews.map((rev) => {
     const rawName = rev.authorName || rev.customer?.name || 'Verified Client';
     const nameParts = rawName.trim().split(' ');
@@ -207,9 +211,11 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                       <span className="text-sm text-slate-500 font-medium">/ session</span>
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    Session Durations: 30, 45, 60, 90, or 120 mins
-                  </p>
+                  {availableDurations.length > 0 && (
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Session Durations: {availableDurations.join(', ')} mins
+                    </p>
+                  )}
                 </div>
 
                 <Link
@@ -239,13 +245,6 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                     Biography
                   </h3>
                   <p>{therapist.bio || 'No biography details provided.'}</p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-1">
-                    Languages Spoken
-                  </h3>
-                  <p>English</p>
                 </div>
 
                 {therapist.experience && (

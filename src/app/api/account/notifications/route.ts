@@ -175,7 +175,11 @@ export async function POST(request: Request) {
       ]);
       readNotifIds = Array.from(new Set([...readNotifIds, ...allIds]));
     } else if (notificationId && typeof notificationId === 'string') {
-      if (!readNotifIds.includes(notificationId)) {
+      const bookingId = notificationId.replace(/^notif_(comp|conf|canc|fail|pend)_/, '');
+      const validBooking = await db.booking.findFirst({
+        where: { id: bookingId, customerId: session.entityId },
+      });
+      if (validBooking && !readNotifIds.includes(notificationId)) {
         readNotifIds.push(notificationId);
       }
     }
