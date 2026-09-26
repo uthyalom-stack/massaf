@@ -39,8 +39,7 @@ export default async function AdminCalendarPage() {
   const formattedBookings = bookings.map((b) => ({
     id: b.id,
     bookingNumber: b.bookingNumber,
-    appointmentDate: b.appointmentDateTime.toISOString(),
-    appointmentTime: b.appointmentTime,
+    appointmentDateTime: b.appointmentDateTime.toISOString(),
     durationMinutes: b.durationMinutes,
     status: b.status,
     locationType: b.locationType,

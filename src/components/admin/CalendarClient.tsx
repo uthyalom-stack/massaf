@@ -2,12 +2,12 @@
 
 import React, { useState, useMemo } from 'react';
 import Link from 'next/link';
+import { formatUtcTimeString } from '@/lib/timezone';
 
 export interface CalendarBooking {
   id: string;
   bookingNumber: string;
-  appointmentDate: string; // ISO string
-  appointmentTime: string; // e.g. "14:00"
+  appointmentDateTime: string; // ISO string
   durationMinutes: number;
   status: string;
   locationType: string;
@@ -102,6 +102,8 @@ export function CalendarClient({
   // Render Appointment Card
   const renderBookingCard = (booking: CalendarBooking, isCompact = false) => {
     const isUnassigned = !booking.therapistId;
+    const formattedTime = formatUtcTimeString(booking.appointmentDateTime);
+
     return (
       <Link
         key={booking.id}
@@ -113,7 +115,7 @@ export function CalendarClient({
         }`}
       >
         <div className="flex items-center justify-between gap-1 mb-1">
-          <span className="font-semibold text-white tracking-wide">{booking.appointmentTime}</span>
+          <span className="font-semibold text-white tracking-wide">{formattedTime}</span>
           <span className={`px-1.5 py-0.5 rounded text-[10px] border uppercase font-medium ${getStatusBadge(booking.status)}`}>
             {booking.status}
           </span>
@@ -331,7 +333,7 @@ export function CalendarClient({
               const dateStr = date.toISOString().split('T')[0];
               const isToday = new Date().toISOString().split('T')[0] === dateStr;
               const dayBookings = filteredBookings.filter(
-                (b) => b.appointmentDate.split('T')[0] === dateStr
+                (b) => b.appointmentDateTime.split('T')[0] === dateStr
               );
 
               return (
@@ -393,7 +395,7 @@ export function CalendarClient({
             {weekDays.map((d) => {
               const dateStr = d.toISOString().split('T')[0];
               const dayBookings = filteredBookings.filter(
-                (b) => b.appointmentDate.split('T')[0] === dateStr
+                (b) => b.appointmentDateTime.split('T')[0] === dateStr
               );
 
               return (
@@ -419,7 +421,7 @@ export function CalendarClient({
           {(() => {
             const dateStr = currentDate.toISOString().split('T')[0];
             const dayBookings = filteredBookings.filter(
-              (b) => b.appointmentDate.split('T')[0] === dateStr
+              (b) => b.appointmentDateTime.split('T')[0] === dateStr
             );
 
             if (dayBookings.length === 0) {
