@@ -44,9 +44,12 @@ export async function POST(request: Request) {
       const customerSession = await getVerifiedCustomerSession(reqCookieHeader);
       visitorSessionId = await getOrCreateVisitorSessionCookie(reqCookieHeader);
 
+      // Extract fully qualified therapists from matches (filtered by service, location type, and availability)
+      const qualifiedTherapists = matches.map((m) => m.therapist);
+
       const rotatingTherapists = await getRotatingTherapistsForZip(
         criteria.zipCode,
-        activeTherapists,
+        qualifiedTherapists,
         {
           customerId: customerSession?.entityId || null,
           visitorSessionId,

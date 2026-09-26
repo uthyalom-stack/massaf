@@ -87,8 +87,10 @@ export async function GET() {
         notifications.push({
           id: notifId,
           type: 'BOOKING_CANCELLED',
-          title: 'Booking Cancelled',
-          message: `Booking ${b.bookingNumber} for ${serviceName} was cancelled or expired due to non-payment.`,
+          title: b.status === 'REFUNDED' ? 'Booking Refunded' : 'Booking Cancelled',
+          message: b.status === 'REFUNDED'
+            ? `Booking ${b.bookingNumber} for ${serviceName} was refunded.`
+            : `Booking ${b.bookingNumber} for ${serviceName} was cancelled.`,
           createdAt: b.updatedAt.toISOString(),
           isRead: readNotifIds.includes(notifId),
           link,
@@ -112,7 +114,7 @@ export async function GET() {
           id: notifId,
           type: 'BOOKING_CREATED',
           title: 'Booking Received — Payment Pending',
-          message: `Booking ${b.bookingNumber} is reserved. Complete payment within 30 minutes to confirm your time slot.`,
+          message: `Booking ${b.bookingNumber} is reserved. Complete payment to confirm your appointment.`,
           createdAt: b.createdAt.toISOString(),
           isRead: readNotifIds.includes(notifId),
           link,
