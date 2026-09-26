@@ -261,10 +261,10 @@ export async function rankTherapistsForMatch(
   for (const therapist of therapists) {
     if (!therapist) continue;
 
-    // 1. Service Compatibility (Mandatory)
-    const matchedService = therapist.services.find(
-      (s) => s.id === criteria.serviceId
-    );
+    // 1. Service Compatibility (Supports specific service filter or any available service)
+    const matchedService = criteria.serviceId
+      ? therapist.services.find((s) => s.id === criteria.serviceId)
+      : therapist.services[0];
 
     if (!matchedService) {
       // Disqualified: therapist does not offer this service
@@ -276,7 +276,11 @@ export async function rankTherapistsForMatch(
 
     // Base score for providing the service (35 pts max)
     points += 35;
-    reasons.push(`Offers your selected service: ${matchedService.name}`);
+    reasons.push(
+      criteria.serviceId
+        ? `Offers your selected service: ${matchedService.name}`
+        : `Offers massage therapy service: ${matchedService.name}`
+    );
 
     // 2. Location Compatibility (Mandatory capability + area scoring, Max 30 pts)
     let locationCompatible = false;
@@ -297,7 +301,6 @@ export async function rankTherapistsForMatch(
 
       if (zipClean) {
         // AUTHORITATIVE ZIP ELIGIBILITY: When customer supplies explicit ZIP, ZIP eligibility is mandatory.
-        // A city match alone cannot override an explicit ZIP mismatch.
         if (matchesZip) {
           points += 30;
           reasons.push(`Provides in-home service in ZIP ${zipClean}`);
@@ -305,7 +308,6 @@ export async function rankTherapistsForMatch(
           locationCompatible = false;
         }
       } else if (locQueryClean) {
-        // Fallback for location query without explicit ZIP
         if (matchesCity) {
           points += 30;
           reasons.push(`Provides in-home service in ${locQueryClean.toUpperCase()}`);
@@ -313,7 +315,6 @@ export async function rankTherapistsForMatch(
           locationCompatible = false;
         }
       } else {
-        // No location query or ZIP specified
         points += 20;
         reasons.push('Offers in-home appointments');
       }
@@ -338,12 +339,43 @@ export async function rankTherapistsForMatch(
           points += 30;
           reasons.push(`Has local studio coverage near ${zipClean || locQueryClean.toUpperCase()}`);
         } else {
-          // Specified location outside therapist studio coverage
           locationCompatible = false;
         }
       } else {
         points += 20;
         reasons.push('Offers local studio appointments');
+      }
+    } else {
+      // Unspecified location type (allows either studio or in-home)
+      if (!therapist.offersInHome && !therapist.offersStudio) {
+        continue;
+      }
+
+      locationCompatible = true;
+
+      const matchesZip = zipClean ? await therapistCoversZipAsync(therapist, zipClean) : false;
+      const matchesCity =
+        locQueryClean &&
+        (therapist.location.toLowerCase().includes(locQueryClean) ||
+          therapist.serviceAreas.some((sa) => sa.toLowerCase().includes(locQueryClean)));
+
+      if (zipClean) {
+        if (matchesZip) {
+          points += 30;
+          reasons.push(`Provides appointment coverage in ZIP ${zipClean}`);
+        } else {
+          locationCompatible = false;
+        }
+      } else if (locQueryClean) {
+        if (matchesCity) {
+          points += 30;
+          reasons.push(`Provides appointment coverage in ${locQueryClean.toUpperCase()}`);
+        } else {
+          locationCompatible = false;
+        }
+      } else {
+        points += 20;
+        reasons.push('Offers massage appointments');
       }
     }
 

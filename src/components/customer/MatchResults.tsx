@@ -86,11 +86,12 @@ export function MatchResults({ results, criteria, onStartOver }: MatchResultsPro
           const profileHref = `/therapists/${therapist.id}`;
 
           // Build pre-filled booking URL
-          const bookingParams = new URLSearchParams({
-            therapistId: therapist.id,
-            serviceId: matchedService.id,
-            locationType: criteria.locationType,
-          });
+          const bookingParams = new URLSearchParams();
+          bookingParams.set('therapistId', therapist.id);
+          bookingParams.set('serviceId', matchedService.id);
+          if (criteria.locationType) {
+            bookingParams.set('locationType', criteria.locationType);
+          }
 
           if (criteria.preferredDate) {
             bookingParams.set('date', criteria.preferredDate);

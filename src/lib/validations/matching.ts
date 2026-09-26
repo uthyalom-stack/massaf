@@ -1,10 +1,8 @@
 import { z } from 'zod';
 
 export const matchCriteriaSchema = z.object({
-  serviceId: z.string().min(1, 'Please select a massage service.'),
-  locationType: z.enum(['STUDIO', 'IN_HOME'], {
-    message: 'Please select a location type (In-Home or Studio).',
-  }),
+  serviceId: z.string().optional().default(''),
+  locationType: z.enum(['STUDIO', 'IN_HOME']).optional(),
   locationQuery: z.string().optional().default(''),
   zipCode: z
     .string()
