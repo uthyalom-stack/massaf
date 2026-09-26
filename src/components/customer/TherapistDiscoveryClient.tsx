@@ -182,10 +182,10 @@ export function TherapistDiscoveryClient({
             const matchedTherapists = data.matches.map((m: { therapist: CustomerTherapist }) => m.therapist);
             setFilteredTherapists(matchedTherapists.slice(0, 5));
           } else {
-            setFilteredTherapists(baseFilteredTherapists.slice(0, 5));
+            setFilteredTherapists([]);
           }
         })
-        .catch(() => setFilteredTherapists(baseFilteredTherapists.slice(0, 5)));
+        .catch(() => setFilteredTherapists([]));
     } else {
       setFilteredTherapists(baseFilteredTherapists);
     }

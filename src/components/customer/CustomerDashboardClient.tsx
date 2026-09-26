@@ -74,7 +74,20 @@ export function CustomerDashboardClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'bookings' | 'addresses' | 'favorites' | 'profile'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'bookings' | 'addresses' | 'favorites' | 'notifications' | 'profile'>('overview');
+
+  // Customer Notifications State
+  const [notifications, setNotifications] = useState<Array<{
+    id: string;
+    type: string;
+    title: string;
+    message: string;
+    createdAt: string;
+    isRead: boolean;
+    link: string;
+    bookingNumber: string;
+  }>>([]);
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
 
   // Profile Edit State
   const [editName, setEditName] = useState('');
@@ -123,6 +136,17 @@ export function CustomerDashboardClient() {
         setProfile(data.customer);
         setEditName(data.customer.name || '');
         setEditPhone(data.customer.phone || '');
+
+        // Fetch customer notifications
+        fetch('/api/account/notifications')
+          .then((r) => (r.ok ? r.json() : null))
+          .then((nData) => {
+            if (nData && Array.isArray(nData.notifications)) {
+              setNotifications(nData.notifications);
+              setUnreadNotifCount(nData.unreadCount || 0);
+            }
+          })
+          .catch(() => null);
       } catch {
         if (active) setError('An error occurred while loading your profile');
       } finally {
@@ -149,6 +173,16 @@ export function CustomerDashboardClient() {
         setProfile(data.customer);
         setEditName(data.customer.name || '');
         setEditPhone(data.customer.phone || '');
+
+        fetch('/api/account/notifications')
+          .then((r) => (r.ok ? r.json() : null))
+          .then((nData) => {
+            if (nData && Array.isArray(nData.notifications)) {
+              setNotifications(nData.notifications);
+              setUnreadNotifCount(nData.unreadCount || 0);
+            }
+          })
+          .catch(() => null);
       }
     } catch {
       // ignore reload error
@@ -461,6 +495,21 @@ export function CustomerDashboardClient() {
           }`}
         >
           Saved Therapists ({profile.favorites.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('notifications')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors shrink-0 flex items-center gap-1.5 ${
+            activeTab === 'notifications'
+              ? 'bg-emerald-600 text-white'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <span>Notifications</span>
+          {unreadNotifCount > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-rose-500 text-white">
+              {unreadNotifCount}
+            </span>
+          )}
         </button>
         <button
           onClick={() => setActiveTab('profile')}
@@ -777,6 +826,86 @@ export function CustomerDashboardClient() {
                 </div>
               </div>
             ))
+          )}
+        </div>
+      )}
+
+      {/* TAB: NOTIFICATIONS */}
+      {activeTab === 'notifications' && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">Customer Notifications</h2>
+              <p className="text-xs text-slate-500 mt-0.5">Stay updated on your appointment status and payment updates.</p>
+            </div>
+            {notifications.length > 0 && unreadNotifCount > 0 && (
+              <button
+                onClick={async () => {
+                  await fetch('/api/account/notifications', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ markAllRead: true }),
+                  });
+                  loadProfile();
+                }}
+                className="px-3.5 py-1.5 text-xs font-bold text-emerald-600 hover:underline"
+              >
+                Mark All as Read
+              </button>
+            )}
+          </div>
+
+          {notifications.length === 0 ? (
+            <div className="p-8 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
+              No notifications yet.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {notifications.map((n) => (
+                <div
+                  key={n.id}
+                  className={`p-5 rounded-2xl border transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${
+                    n.isRead
+                      ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 opacity-80'
+                      : 'bg-emerald-50/60 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 ring-1 ring-emerald-500/20'
+                  }`}
+                >
+                  <div className="space-y-1 max-w-xl">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${n.isRead ? 'bg-slate-300' : 'bg-emerald-500 animate-pulse'}`} />
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white">{n.title}</h3>
+                      <span className="text-[10px] font-mono text-slate-400">Ref: {n.bookingNumber}</span>
+                    </div>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">{n.message}</p>
+                    <p className="text-[11px] text-slate-400">{new Date(n.createdAt).toLocaleString()}</p>
+                  </div>
+
+                  <div className="flex items-center gap-3 self-end sm:self-center">
+                    <Link
+                      href={n.link}
+                      className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-500 transition-colors"
+                    >
+                      View Booking
+                    </Link>
+                    {!n.isRead && (
+                      <button
+                        onClick={async () => {
+                          await fetch('/api/account/notifications', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ notificationId: n.id }),
+                          });
+                          loadProfile();
+                        }}
+                        className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+                      >
+                        Mark Read
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}

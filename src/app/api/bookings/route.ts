@@ -193,12 +193,26 @@ export async function POST(request: Request) {
         },
         select: {
           id: true,
+          status: true,
+          paymentStatus: true,
+          createdAt: true,
           appointmentDateTime: true,
           durationMinutes: true,
         },
       });
 
+      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+
       const hasConflict = existingBookings.some((existing) => {
+        // Unpaid PENDING booking created >= 30 minutes ago is expired and does not block time slot
+        if (
+          existing.status === 'PENDING' &&
+          existing.paymentStatus !== 'PAID' &&
+          existing.createdAt <= thirtyMinutesAgo
+        ) {
+          return false;
+        }
+
         const existingStart = existing.appointmentDateTime.getTime();
         const existingEnd = existingStart + existing.durationMinutes * 60 * 1000;
         return existingStart < requestedEnd && existingEnd > requestedStart;

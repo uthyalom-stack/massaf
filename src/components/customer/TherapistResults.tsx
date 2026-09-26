@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { CustomerTherapist } from '@/types/customer';
 import { TherapistCard } from '@/components/customer/TherapistCard';
 
@@ -90,17 +91,15 @@ export function TherapistResults({
               </button>
             )}
 
-            <button
-              type="button"
-              disabled
-              className="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 bg-slate-100 border border-slate-200 text-slate-500 font-semibold text-sm rounded-xl cursor-not-allowed opacity-90"
-              title="Automatic therapist matching will be available in a future release."
+            <Link
+              href="/match-me"
+              className="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm rounded-xl transition-colors shadow-xs"
             >
-              Match Me With A Therapist (Coming Soon)
-            </button>
+              Match Me With A Therapist
+            </Link>
           </div>
 
-          {/* Honest Informational Note */}
+          {/* Informational Note */}
           <div className="mt-6 p-4 rounded-2xl bg-slate-50 border border-slate-200 text-left space-y-1.5 text-xs sm:text-sm text-slate-700">
             <div className="flex items-center gap-2 font-semibold text-slate-900">
               <svg
@@ -116,10 +115,10 @@ export function TherapistResults({
                   d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                 />
               </svg>
-              Automated Concierge Matching Feature
+              Therapist Matching Assistant
             </div>
             <p className="text-slate-600 leading-relaxed text-xs">
-              Automated therapist assignment is planned for a future platform update. To see available therapists right now, click <strong>Reset Search Filters</strong> or adjust your city and ZIP code.
+              Need help finding the right therapist? Take our quick questionnaire or click <strong>Reset Search Filters</strong> to browse all active therapists in our network.
             </p>
           </div>
         </div>

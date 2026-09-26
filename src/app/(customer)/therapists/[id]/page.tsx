@@ -6,6 +6,7 @@ import { getActiveTherapistById } from '@/lib/db-therapists';
 import { RatingDisplay } from '@/components/ui/RatingDisplay';
 import { ReviewCard } from '@/components/customer/ReviewCard';
 import { TherapistGallery } from '@/components/customer/TherapistGallery';
+import { FavoriteButton } from '@/components/customer/FavoriteButton';
 import { db } from '@/lib/db';
 import { formatUtcDateString } from '@/lib/timezone';
 
@@ -146,16 +147,19 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                   )}
                 </div>
 
-                {/* Name & Title */}
-                <div>
-                  <h1 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
-                    {therapist.name}
-                  </h1>
-                  {therapist.title && (
-                    <p className="text-base sm:text-lg font-medium text-slate-600 mt-1">
-                      {therapist.title}
-                    </p>
-                  )}
+                {/* Name & Title with Favorite Action */}
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h1 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+                      {therapist.name}
+                    </h1>
+                    {therapist.title && (
+                      <p className="text-base sm:text-lg font-medium text-slate-600 mt-1">
+                        {therapist.title}
+                      </p>
+                    )}
+                  </div>
+                  <FavoriteButton therapistId={therapist.id} size="lg" />
                 </div>
 
                 {/* Rating & Location */}
@@ -203,6 +207,9 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                       <span className="text-sm text-slate-500 font-medium">/ session</span>
                     )}
                   </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Session Durations: 30, 45, 60, 90, or 120 mins
+                  </p>
                 </div>
 
                 <Link
@@ -232,6 +239,13 @@ export default async function TherapistProfilePage({ params }: PageProps) {
                     Biography
                   </h3>
                   <p>{therapist.bio || 'No biography details provided.'}</p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-1">
+                    Languages Spoken
+                  </h3>
+                  <p>English</p>
                 </div>
 
                 {therapist.experience && (
