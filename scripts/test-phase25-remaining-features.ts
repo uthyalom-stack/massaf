@@ -16,8 +16,24 @@ async function runRemainingFeaturesTestSuite() {
   console.log('  STARTING PHASE 25 REMAINING FEATURES TEST SUITE');
   console.log('====================================================\n');
 
+  const timestamp = Date.now();
+  const createdEntityIds: {
+    customerIds: string[];
+    therapistIds: string[];
+    serviceIds: string[];
+    bookingIds: string[];
+    userIds: string[];
+    supportRequestIds: string[];
+  } = {
+    customerIds: [],
+    therapistIds: [],
+    serviceIds: [],
+    bookingIds: [],
+    userIds: [],
+    supportRequestIds: [],
+  };
+
   try {
-    const timestamp = Date.now();
     const custEmailA = `phase25-custA-${timestamp}@massaf.com`;
     const custEmailB = `phase25-custB-${timestamp}@massaf.com`;
     const thEmail = `phase25-th-${timestamp}@massaf.com`;
@@ -26,10 +42,12 @@ async function runRemainingFeaturesTestSuite() {
     const customerA = await db.customer.create({
       data: { name: 'Customer Alpha', email: custEmailA, phone: '555-0101' },
     });
+    createdEntityIds.customerIds.push(customerA.id);
 
     const customerB = await db.customer.create({
       data: { name: 'Customer Beta', email: custEmailB, phone: '555-0102' },
     });
+    createdEntityIds.customerIds.push(customerB.id);
 
     const therapist = await db.therapist.create({
       data: {
@@ -41,6 +59,7 @@ async function runRemainingFeaturesTestSuite() {
         verificationStatus: 'VERIFIED',
       },
     });
+    createdEntityIds.therapistIds.push(therapist.id);
 
     const service = await db.service.create({
       data: {
@@ -50,6 +69,7 @@ async function runRemainingFeaturesTestSuite() {
         price: 120.0,
       },
     });
+    createdEntityIds.serviceIds.push(service.id);
 
     // Attach service to therapist
     await db.therapistService.create({
@@ -108,6 +128,7 @@ async function runRemainingFeaturesTestSuite() {
         paymentStatus: 'PAID',
       },
     });
+    createdEntityIds.bookingIds.push(bookingA.id);
 
     // --- TEST 1: Booking Details Security ---
     const { GET: getBookingDetails } = await import('../src/app/api/bookings/details/route');
@@ -142,9 +163,6 @@ async function runRemainingFeaturesTestSuite() {
       }),
     });
     const resReschedule = await rescheduleBooking(reqReschedule);
-    if (resReschedule.status !== 200) {
-      console.log('Reschedule failed response:', await resReschedule.json());
-    }
     await assert(resReschedule.status === 200, 'Customer owner can reschedule eligible appointment (200)');
 
     // Verify audit log created
@@ -199,6 +217,7 @@ async function runRemainingFeaturesTestSuite() {
         createdAt: staleDate,
       },
     });
+    createdEntityIds.bookingIds.push(staleUnpaidBooking.id);
 
     process.env.CRON_SECRET = 'test-cron-secret-123';
     const { GET: runCron } = await import('../src/app/api/cron/scheduled-jobs/route');
@@ -226,6 +245,7 @@ async function runRemainingFeaturesTestSuite() {
         paymentStatus: 'PAID',
       },
     });
+    createdEntityIds.bookingIds.push(therapistAppt.id);
 
     const { PUT: updateTherapistAppt } = await import('../src/app/api/therapist/appointments/route');
 
@@ -276,9 +296,24 @@ async function runRemainingFeaturesTestSuite() {
     const resDuplicateReview = await submitReview(reqDuplicateReview);
     await assert(resDuplicateReview.status === 409, 'Duplicate review for same booking rejected with 409 Conflict');
 
-    // --- TEST 7: Customer Support Requests ---
+    // --- TEST 7: Customer Support Requests & Booking Reference Security ---
     const { POST: createSupport, GET: listSupport, PUT: updateSupport } = await import('../src/app/api/support/route');
 
+    // Customer B attempts to attach Customer A's booking reference -> REJECTED (400)
+    const reqSupportSecurity = new Request('http://localhost:3000/api/support', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: custCookieB },
+      body: JSON.stringify({
+        category: 'Booking Help',
+        subject: 'Attempting cross-customer booking reference attachment',
+        message: 'Trying to access another customer booking reference',
+        bookingReference: therapistAppt.bookingNumber,
+      }),
+    });
+    const resSupportSecurity = await createSupport(reqSupportSecurity);
+    await assert(resSupportSecurity.status === 400, 'Attaching another customer booking reference in support request is REJECTED (400)');
+
+    // Customer A attaches own booking reference -> SUCCEEDS (201)
     const reqSupportPost = new Request('http://localhost:3000/api/support', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', cookie: custCookieA },
@@ -290,8 +325,11 @@ async function runRemainingFeaturesTestSuite() {
       }),
     });
     const resSupportPost = await createSupport(reqSupportPost);
-    await assert(resSupportPost.status === 201, 'Customer can submit support request ticket (201)');
+    await assert(resSupportPost.status === 201, 'Customer can submit support request with own booking reference (201)');
     const supportData = await resSupportPost.json();
+    if (supportData?.supportRequest?.id) {
+      createdEntityIds.supportRequestIds.push(supportData.supportRequest.id);
+    }
 
     // Admin lists support tickets
     const adminUser = await db.user.create({
@@ -302,6 +340,7 @@ async function runRemainingFeaturesTestSuite() {
         isActive: true,
       },
     });
+    createdEntityIds.userIds.push(adminUser.id);
 
     const adminCookie = `massaf_admin_session=${createSessionToken(
       adminUser.id,
@@ -335,6 +374,56 @@ async function runRemainingFeaturesTestSuite() {
   } catch (err) {
     console.error('Test suite failed:', err);
     process.exit(1);
+  } finally {
+    // Clean up created test entities to prevent test pollution
+    console.log('Cleaning up test data created during test execution...');
+    try {
+      if (createdEntityIds.supportRequestIds.length > 0) {
+        await db.supportRequest.deleteMany({
+          where: { id: { in: createdEntityIds.supportRequestIds } },
+        });
+      }
+      if (createdEntityIds.bookingIds.length > 0) {
+        await db.review.deleteMany({
+          where: { bookingId: { in: createdEntityIds.bookingIds } },
+        });
+        await db.adminAuditLog.deleteMany({
+          where: { entityType: 'Booking', entityId: { in: createdEntityIds.bookingIds } },
+        });
+        await db.booking.deleteMany({
+          where: { id: { in: createdEntityIds.bookingIds } },
+        });
+      }
+      if (createdEntityIds.customerIds.length > 0) {
+        await db.customer.deleteMany({
+          where: { id: { in: createdEntityIds.customerIds } },
+        });
+      }
+      if (createdEntityIds.therapistIds.length > 0) {
+        await db.therapistService.deleteMany({
+          where: { therapistId: { in: createdEntityIds.therapistIds } },
+        });
+        await db.therapistAvailability.deleteMany({
+          where: { therapistId: { in: createdEntityIds.therapistIds } },
+        });
+        await db.therapist.deleteMany({
+          where: { id: { in: createdEntityIds.therapistIds } },
+        });
+      }
+      if (createdEntityIds.serviceIds.length > 0) {
+        await db.service.deleteMany({
+          where: { id: { in: createdEntityIds.serviceIds } },
+        });
+      }
+      if (createdEntityIds.userIds.length > 0) {
+        await db.user.deleteMany({
+          where: { id: { in: createdEntityIds.userIds } },
+        });
+      }
+      console.log('Cleanup completed successfully!');
+    } catch (cleanupErr) {
+      console.warn('Cleanup warning:', cleanupErr);
+    }
   }
 }
 

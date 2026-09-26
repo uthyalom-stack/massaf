@@ -44,6 +44,42 @@ export async function POST(request: Request) {
       submitterName = 'Valued Customer';
     }
 
+    let verifiedBookingNumber: string | null = null;
+
+    // Strict Booking Reference Ownership Check
+    if (bookingReference && String(bookingReference).trim().length > 0) {
+      const trimmedRef = String(bookingReference).trim();
+      const booking = await db.booking.findFirst({
+        where: {
+          OR: [{ bookingNumber: trimmedRef }, { id: trimmedRef }],
+        },
+        include: { customer: true },
+      });
+
+      if (!booking) {
+        return NextResponse.json(
+          { error: 'Invalid booking reference provided' },
+          { status: 400 }
+        );
+      }
+
+      // Verify customer ownership server-side
+      const isOwnerCustomer = Boolean(customerSession && booking.customerId === customerSession.entityId);
+      const isOwnerGuest = Boolean(!customerSession && booking.customer?.email?.toLowerCase() === submitterEmail.toLowerCase());
+
+      if (!isOwnerCustomer && !isOwnerGuest) {
+        return NextResponse.json(
+          { error: 'Invalid booking reference provided' },
+          { status: 400 }
+        );
+      }
+
+      verifiedBookingNumber = booking.bookingNumber;
+      if (!customerId && booking.customerId) {
+        customerId = booking.customerId;
+      }
+    }
+
     const supportRequest = await db.supportRequest.create({
       data: {
         customerId,
@@ -52,7 +88,7 @@ export async function POST(request: Request) {
         category: String(category).trim(),
         subject: String(subject).trim(),
         message: String(message).trim(),
-        bookingReference: bookingReference ? String(bookingReference).trim() : null,
+        bookingReference: verifiedBookingNumber,
         status: 'PENDING',
       },
     });

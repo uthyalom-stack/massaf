@@ -201,33 +201,33 @@ export async function therapistCoversZipAsync(
     return false; // Customer ZIP does not exist in real U.S. database
   }
 
-  // Authoritative check strictly against active TherapistZipEligibility table distribution pool
+  // Authoritative check strictly against active TherapistZipEligibility table distribution pool.
+  // NO fallbacks to legacy service-area ranges, zipCodes arrays, or region inference.
   try {
     const activeTime = await getActiveDistributionTime();
-    if (activeTime) {
-      const eligibilityRecords = await db.therapistZipEligibility.findMany({
-        where: {
-          therapistId: therapist.id,
-          state: zipInfo.state,
-          createdAt: activeTime,
-        },
-      });
+    if (!activeTime) {
+      // FAIL CLOSED: If active distribution timestamp is missing, reject automatic matching immediately
+      return false;
+    }
 
-      if (eligibilityRecords.length > 0) {
-        for (const rec of eligibilityRecords) {
-          if (isZipInRange(req, rec.startZip, rec.endZip)) {
-            return true;
-          }
-        }
-        return false;
+    const eligibilityRecords = await db.therapistZipEligibility.findMany({
+      where: {
+        therapistId: therapist.id,
+        state: zipInfo.state,
+        createdAt: activeTime,
+      },
+    });
+
+    for (const rec of eligibilityRecords) {
+      if (isZipInRange(req, rec.startZip, rec.endZip)) {
+        return true;
       }
     }
   } catch (err) {
     console.error('[therapistCoversZipAsync] Error checking TherapistZipEligibility:', err);
   }
 
-  // Fallback to synchronous service area range matching for mock objects / un-distributed therapists
-  return therapistCoversZip(therapist, req);
+  return false;
 }
 
 export function therapistCoversZip(therapist: CustomerTherapist, requestedZip: string): boolean {
