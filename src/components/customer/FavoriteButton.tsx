@@ -89,6 +89,7 @@ export function FavoriteButton({
       type="button"
       onClick={handleToggle}
       disabled={loading}
+      aria-busy={loading}
       aria-label={isFavorite ? 'Remove from favorites' : 'Save as favorite'}
       className={`inline-flex items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-50 cursor-pointer ${
         size === 'lg'
@@ -98,11 +99,21 @@ export function FavoriteButton({
           : 'bg-white/90 backdrop-blur-xs text-rose-500 shadow-xs hover:bg-white'
       } ${buttonSizeClasses} ${className}`}
     >
-      <span className={isFavorite ? 'text-rose-500' : 'text-slate-400'}>
-        {isFavorite ? '♥' : '♡'}
-      </span>
+      {loading ? (
+        <span className="w-3.5 h-3.5 border-2 border-rose-500 border-t-transparent rounded-full animate-spin shrink-0" />
+      ) : (
+        <span className={isFavorite ? 'text-rose-500' : 'text-slate-400'}>
+          {isFavorite ? '♥' : '♡'}
+        </span>
+      )}
       {size === 'lg' && (
-        <span>{isFavorite ? 'Saved to Favorites' : 'Save as Favorite'}</span>
+        <span>
+          {loading
+            ? 'Updating...'
+            : isFavorite
+            ? 'Saved to Favorites'
+            : 'Save as Favorite'}
+        </span>
       )}
     </button>
   );

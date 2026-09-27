@@ -476,7 +476,7 @@ export function DevelopmentDataCleanupSection() {
       {/* Confirmation Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-slate-900 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-rose-900/60 text-white">
+          <div className="bg-slate-900 rounded-3xl max-w-md w-[calc(100%-2rem)] max-h-[90vh] overflow-y-auto p-6 shadow-2xl space-y-4 border border-rose-900/60 text-white">
             <h3 className="text-lg font-bold text-rose-400 border-b border-slate-800 pb-3">
               Confirm Development Data Deletion
             </h3>
@@ -512,10 +512,21 @@ export function DevelopmentDataCleanupSection() {
               <button
                 type="button"
                 disabled={isPending || confirmInput !== 'DELETE DATA'}
+                aria-busy={isPending}
                 onClick={handleExecuteCleanup}
-                className="px-5 py-2 font-bold text-xs rounded-xl bg-rose-600 text-white hover:bg-rose-500 disabled:opacity-40 cursor-pointer shadow-lg"
+                className="px-5 py-2 font-bold text-xs rounded-xl bg-rose-600 text-white hover:bg-rose-500 disabled:opacity-40 cursor-pointer shadow-lg flex items-center gap-1.5"
               >
-                {isPending ? 'Deleting...' : 'Execute Data Cleanup'}
+                {isPending ? (
+                  <>
+                    <svg className="animate-spin h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <span>Execute Data Cleanup</span>
+                )}
               </button>
             </div>
           </div>

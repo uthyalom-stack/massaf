@@ -169,7 +169,8 @@ export function ReviewForm({ bookingId, therapistName, onSuccess }: ReviewFormPr
       <button
         type="submit"
         disabled={isSubmitting || rating === 0}
-        className="w-full py-3 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold text-sm transition-colors flex items-center justify-center gap-2"
+        aria-busy={isSubmitting}
+        className="w-full py-3 px-4 min-h-[44px] rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
       >
         {isSubmitting ? (
           <>

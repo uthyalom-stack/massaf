@@ -15,7 +15,7 @@ export default function CustomerLayout({
         <MarketingTracker />
       </Suspense>
       <Header navLinks={NAV_LINKS} />
-      <main className="flex-1">{children}</main>
+      <main className="flex-1 pb-20 md:pb-0">{children}</main>
       <Footer navLinks={NAV_LINKS} />
     </div>
   );

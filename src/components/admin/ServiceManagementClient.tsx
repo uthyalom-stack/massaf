@@ -400,7 +400,7 @@ export function ServiceManagementClient({
       {/* CREATE SERVICE MODAL */}
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-xl border border-slate-200">
+          <div className="bg-white rounded-2xl max-w-lg w-[calc(100%-2rem)] max-h-[90vh] overflow-y-auto p-6 space-y-4 shadow-xl border border-slate-200">
             <div className="flex items-center justify-between border-b pb-3">
               <h3 className="text-lg font-bold text-slate-900">Create New Service</h3>
               <button
@@ -516,7 +516,8 @@ export function ServiceManagementClient({
                 <button
                   type="submit"
                   disabled={loading}
-                  className="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer"
+                  aria-busy={loading}
+                  className="px-5 py-2 min-h-[38px] bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer disabled:opacity-50"
                 >
                   {loading ? 'Saving...' : 'Create Service'}
                 </button>
@@ -529,7 +530,7 @@ export function ServiceManagementClient({
       {/* EDIT SERVICE MODAL */}
       {editingService && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-xl border border-slate-200">
+          <div className="bg-white rounded-2xl max-w-lg w-[calc(100%-2rem)] max-h-[90vh] overflow-y-auto p-6 space-y-4 shadow-xl border border-slate-200">
             <div className="flex items-center justify-between border-b pb-3">
               <h3 className="text-lg font-bold text-slate-900">Edit Service: {editingService.name}</h3>
               <button
@@ -643,7 +644,8 @@ export function ServiceManagementClient({
                 <button
                   type="submit"
                   disabled={loading}
-                  className="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer"
+                  aria-busy={loading}
+                  className="px-5 py-2 min-h-[38px] bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer disabled:opacity-50"
                 >
                   {loading ? 'Saving...' : 'Update Service'}
                 </button>

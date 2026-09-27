@@ -223,81 +223,137 @@ export function PaymentReviewClient({
         </div>
       )}
 
-      {/* Transactions Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <table className="w-full text-left border-collapse text-xs sm:text-sm">
-          <thead>
-            <tr className="bg-slate-50 border-b border-slate-200 font-bold text-slate-500 uppercase tracking-wider text-[11px]">
-              <th className="p-4">Booking #</th>
-              <th className="p-4">Customer</th>
-              <th className="p-4">Method & Ref</th>
-              <th className="p-4">Amount</th>
-              <th className="p-4">Payment Status</th>
-              <th className="p-4">Date</th>
-              <th className="p-4 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {initialPayments.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="p-8 text-center text-slate-400 italic">
-                  No payment records found.
-                </td>
-              </tr>
-            ) : (
-              initialPayments.map((p) => (
-                <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="p-4 font-mono font-bold text-emerald-700">
-                    <Link href={`/admin/bookings/${p.id}`} className="hover:underline">
+      {/* Transactions Table & Mobile Cards */}
+      {initialPayments.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400 italic">
+          No payment records found.
+        </div>
+      ) : (
+        <>
+          {/* Desktop Table View */}
+          <div className="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 font-bold text-slate-500 uppercase tracking-wider text-[11px]">
+                    <th className="p-4">Booking #</th>
+                    <th className="p-4">Customer</th>
+                    <th className="p-4">Method & Ref</th>
+                    <th className="p-4">Amount</th>
+                    <th className="p-4">Payment Status</th>
+                    <th className="p-4">Date</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {initialPayments.map((p) => (
+                    <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="p-4 font-mono font-bold text-emerald-700">
+                        <Link href={`/admin/bookings/${p.id}`} className="hover:underline">
+                          #{p.bookingNumber}
+                        </Link>
+                      </td>
+                      <td className="p-4">
+                        <Link href={`/admin/customers/${p.customerId}`} className="font-bold text-slate-900 hover:underline block">
+                          {p.customerName}
+                        </Link>
+                        <div className="text-slate-400 text-xs">{p.customerEmail}</div>
+                      </td>
+                      <td className="p-4">
+                        <div className="font-bold text-slate-800 uppercase">{p.paymentMethod}</div>
+                        <div className="text-slate-500 text-xs font-mono">{p.paymentReference || 'No ref'}</div>
+                      </td>
+                      <td className="p-4 font-black text-slate-900">
+                        ${p.amount.toFixed(2)}
+                      </td>
+                      <td className="p-4">
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                            p.paymentStatus === 'PAID'
+                              ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                              : p.paymentStatus === 'PENDING'
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                              : p.paymentStatus === 'REFUNDED'
+                              ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                              : 'bg-rose-100 text-rose-900 border border-rose-300'
+                          }`}
+                        >
+                          {p.paymentStatus}
+                        </span>
+                      </td>
+                      <td className="p-4 text-slate-500">
+                        {new Date(p.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </td>
+                      <td className="p-4 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPayment(p)}
+                          className="px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-800 font-bold text-xs transition-colors cursor-pointer"
+                        >
+                          Inspect / Manage
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Mobile Cards View */}
+          <div className="md:hidden space-y-4">
+            {initialPayments.map((p) => (
+              <div key={p.id} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block uppercase">Booking #</span>
+                    <Link href={`/admin/bookings/${p.id}`} className="font-mono font-bold text-emerald-700 text-sm hover:underline">
                       #{p.bookingNumber}
                     </Link>
-                  </td>
-                  <td className="p-4">
-                    <Link href={`/admin/customers/${p.customerId}`} className="font-bold text-slate-900 hover:underline block">
-                      {p.customerName}
-                    </Link>
-                    <div className="text-slate-400 text-xs">{p.customerEmail}</div>
-                  </td>
-                  <td className="p-4">
-                    <div className="font-bold text-slate-800 uppercase">{p.paymentMethod}</div>
-                    <div className="text-slate-500 text-xs font-mono">{p.paymentReference || 'No ref'}</div>
-                  </td>
-                  <td className="p-4 font-black text-slate-900">
-                    ${p.amount.toFixed(2)}
-                  </td>
-                  <td className="p-4">
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                        p.paymentStatus === 'PAID'
-                          ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                          : p.paymentStatus === 'PENDING'
-                          ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                          : p.paymentStatus === 'REFUNDED'
-                          ? 'bg-purple-100 text-purple-900 border border-purple-300'
-                          : 'bg-rose-100 text-rose-900 border border-rose-300'
-                      }`}
-                    >
-                      {p.paymentStatus}
-                    </span>
-                  </td>
-                  <td className="p-4 text-slate-500">
-                    {new Date(p.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
-                  </td>
-                  <td className="p-4 text-right">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPayment(p)}
-                      className="px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-800 font-bold text-xs transition-colors cursor-pointer"
-                    >
-                      Inspect / Manage
-                    </button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+                  </div>
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                      p.paymentStatus === 'PAID'
+                        ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                        : p.paymentStatus === 'PENDING'
+                        ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                        : p.paymentStatus === 'REFUNDED'
+                        ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                        : 'bg-rose-100 text-rose-900 border border-rose-300'
+                    }`}
+                  >
+                    {p.paymentStatus}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block uppercase">Customer</span>
+                    <span className="font-bold text-slate-900 block truncate">{p.customerName}</span>
+                    <span className="text-slate-500 text-[11px] block truncate">{p.customerEmail}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block uppercase">Method</span>
+                    <span className="font-bold text-slate-800 uppercase block">{p.paymentMethod}</span>
+                    <span className="text-slate-500 font-mono text-[11px] block truncate">{p.paymentReference || 'No ref'}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                  <span className="font-black text-slate-900 text-base">${p.amount.toFixed(2)} USD</span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPayment(p)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-900 text-white font-bold text-xs cursor-pointer"
+                  >
+                    Inspect / Manage
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* Payment & Refund Detail Modal */}
       {selectedPayment && (

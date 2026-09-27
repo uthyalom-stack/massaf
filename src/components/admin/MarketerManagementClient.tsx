@@ -199,9 +199,20 @@ export default function MarketerManagementClient({ initialMarketers, userRole }:
             <button
               type="submit"
               disabled={isCreating || !newMarketerName.trim()}
-              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-md text-sm transition-colors disabled:opacity-50"
+              aria-busy={isCreating}
+              className="px-4 py-2 min-h-[38px] bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-md text-sm transition-colors disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
             >
-              {isCreating ? 'Creating Account...' : 'Create Account'}
+              {isCreating ? (
+                <>
+                  <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span>Creating Account...</span>
+                </>
+              ) : (
+                <span>Create Account</span>
+              )}
             </button>
           </form>
 
@@ -299,7 +310,7 @@ export default function MarketerManagementClient({ initialMarketers, userRole }:
         </div>
       )}
 
-      {/* Marketers Table */}
+      {/* Marketers Table & Mobile Cards */}
       <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center">
           <h2 className="text-lg font-semibold text-slate-800">Marketers ({marketers.length})</h2>
@@ -310,92 +321,160 @@ export default function MarketerManagementClient({ initialMarketers, userRole }:
             No marketer accounts found.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm text-slate-700">
-              <thead className="bg-slate-50 text-slate-500 uppercase text-xs border-b border-slate-200">
-                <tr>
-                  <th className="px-6 py-3">Marketer</th>
-                  <th className="px-6 py-3">Referral Links</th>
-                  <th className="px-6 py-3 text-center">Clicks</th>
-                  <th className="px-6 py-3 text-center">Paid Bookings</th>
-                  <th className="px-6 py-3 text-right">Revenue</th>
-                  {isSuperAdmin && <th className="px-6 py-3 text-right">Actions</th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200">
-                {marketers.map((m) => (
-                  <tr key={m.id} className="hover:bg-slate-50">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-slate-900">{m.name || m.email}</span>
-                        {m.isActive ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                            Active
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600">
-                            Inactive
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-slate-500 font-mono">{m.email}</div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="space-y-1">
-                        {m.marketingLinks.map((l) => (
-                          <div key={l.id} className="text-xs flex items-center gap-2">
-                            <span className="font-mono bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded">
-                              {l.code}
-                            </span>
-                            <span className="text-slate-500 truncate max-w-[150px]">{l.name}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-center font-medium">{m.clicks}</td>
-                    <td className="px-6 py-4 text-center font-medium">
-                      {m.paidBookings} / {m.totalBookings}
-                    </td>
-                    <td className="px-6 py-4 text-right font-bold text-slate-900">
-                      ${m.paidRevenue.toFixed(2)}
-                    </td>
-                    {isSuperAdmin && (
-                      <td className="px-6 py-4 text-right space-x-2 whitespace-nowrap">
-                        <button
-                          onClick={() => handleToggleActive(m.id, !m.isActive)}
-                          disabled={togglingId === m.id}
-                          className={`px-2.5 py-1 text-xs font-medium rounded transition-colors border ${
-                            m.isActive
-                              ? 'text-amber-800 bg-amber-50 hover:bg-amber-100 border-amber-200'
-                              : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
-                          }`}
-                        >
-                          {togglingId === m.id
-                            ? 'Saving...'
-                            : m.isActive
-                            ? 'Deactivate'
-                            : 'Activate'}
-                        </button>
-                        <button
-                          onClick={() => handleRegeneratePassword(m.id)}
-                          disabled={regeneratingId === m.id}
-                          className="px-2.5 py-1 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded transition-colors"
-                        >
-                          {regeneratingId === m.id ? 'Resetting...' : 'Reset Pass'}
-                        </button>
-                        <button
-                          onClick={() => setDeletingId(m.id)}
-                          className="px-2.5 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded transition-colors"
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    )}
+          <>
+            {/* Desktop Table View */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left text-sm text-slate-700">
+                <thead className="bg-slate-50 text-slate-500 uppercase text-xs border-b border-slate-200">
+                  <tr>
+                    <th className="px-6 py-3">Marketer</th>
+                    <th className="px-6 py-3">Referral Links</th>
+                    <th className="px-6 py-3 text-center">Clicks</th>
+                    <th className="px-6 py-3 text-center">Paid Bookings</th>
+                    <th className="px-6 py-3 text-right">Revenue</th>
+                    {isSuperAdmin && <th className="px-6 py-3 text-right">Actions</th>}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {marketers.map((m) => (
+                    <tr key={m.id} className="hover:bg-slate-50">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-slate-900">{m.name || m.email}</span>
+                          {m.isActive ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                              Active
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600">
+                              Inactive
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-500 font-mono">{m.email}</div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="space-y-1">
+                          {m.marketingLinks.map((l) => (
+                            <div key={l.id} className="text-xs flex items-center gap-2">
+                              <span className="font-mono bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded">
+                                {l.code}
+                              </span>
+                              <span className="text-slate-500 truncate max-w-[150px]">{l.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-center font-medium">{m.clicks}</td>
+                      <td className="px-6 py-4 text-center font-medium">
+                        {m.paidBookings} / {m.totalBookings}
+                      </td>
+                      <td className="px-6 py-4 text-right font-bold text-slate-900">
+                        ${m.paidRevenue.toFixed(2)}
+                      </td>
+                      {isSuperAdmin && (
+                        <td className="px-6 py-4 text-right space-x-2 whitespace-nowrap">
+                          <button
+                            onClick={() => handleToggleActive(m.id, !m.isActive)}
+                            disabled={togglingId === m.id}
+                            className={`px-2.5 py-1 text-xs font-medium rounded transition-colors border ${
+                              m.isActive
+                                ? 'text-amber-800 bg-amber-50 hover:bg-amber-100 border-amber-200'
+                                : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
+                            }`}
+                          >
+                            {togglingId === m.id
+                              ? 'Saving...'
+                              : m.isActive
+                              ? 'Deactivate'
+                              : 'Activate'}
+                          </button>
+                          <button
+                            onClick={() => handleRegeneratePassword(m.id)}
+                            disabled={regeneratingId === m.id}
+                            className="px-2.5 py-1 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded transition-colors"
+                          >
+                            {regeneratingId === m.id ? 'Resetting...' : 'Reset Pass'}
+                          </button>
+                          <button
+                            onClick={() => setDeletingId(m.id)}
+                            className="px-2.5 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Cards View */}
+            <div className="md:hidden p-4 space-y-4">
+              {marketers.map((m) => (
+                <div key={m.id} className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <div>
+                      <span className="font-bold text-slate-900 text-sm block">{m.name || m.email}</span>
+                      <span className="text-slate-500 font-mono text-xs block">{m.email}</span>
+                    </div>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        m.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                      }`}
+                    >
+                      {m.isActive ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 text-xs text-slate-600">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block uppercase">Clicks</span>
+                      <span className="font-bold">{m.clicks}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block uppercase">Bookings</span>
+                      <span className="font-bold">{m.paidBookings}/{m.totalBookings}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block uppercase">Revenue</span>
+                      <span className="font-bold text-slate-900">${m.paidRevenue.toFixed(2)}</span>
+                    </div>
+                  </div>
+
+                  {isSuperAdmin && (
+                    <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-200">
+                      <button
+                        onClick={() => handleToggleActive(m.id, !m.isActive)}
+                        disabled={togglingId === m.id}
+                        className={`px-2.5 py-1 text-xs font-medium rounded transition-colors border cursor-pointer ${
+                          m.isActive
+                            ? 'text-amber-800 bg-amber-50 border-amber-200'
+                            : 'text-emerald-800 bg-emerald-50 border-emerald-200'
+                        }`}
+                      >
+                        {togglingId === m.id ? 'Saving...' : m.isActive ? 'Deactivate' : 'Activate'}
+                      </button>
+                      <button
+                        onClick={() => handleRegeneratePassword(m.id)}
+                        disabled={regeneratingId === m.id}
+                        className="px-2.5 py-1 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded cursor-pointer"
+                      >
+                        {regeneratingId === m.id ? 'Resetting...' : 'Reset Pass'}
+                      </button>
+                      <button
+                        onClick={() => setDeletingId(m.id)}
+                        className="px-2.5 py-1 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded cursor-pointer"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
 

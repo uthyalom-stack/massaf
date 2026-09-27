@@ -86,6 +86,7 @@ export function TherapistDashboardClient() {
   const [error, setError] = useState<string | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'appointments' | 'schedule' | 'services' | 'areas' | 'gallery' | 'profile'>('appointments');
+  const [updatingBookingId, setUpdatingBookingId] = useState<string | null>(null);
 
   // Profile Edit State
   const [editName, setEditName] = useState('');
@@ -569,81 +570,109 @@ export function TherapistDashboardClient() {
                     </div>
 
                     {/* Appointment Progress Actions */}
-                    <div className="flex items-center gap-2 pt-2 sm:pt-0">
+                    <div className="flex flex-wrap items-center gap-2 pt-2 sm:pt-0">
                       {a.status !== 'COMPLETED' && a.status !== 'CANCELLED' && a.status !== 'REFUNDED' && (
                         <>
                           {(a.status === 'ASSIGNED' || a.status === 'PENDING') && (
                             <button
+                              disabled={updatingBookingId === a.id}
+                              aria-busy={updatingBookingId === a.id}
                               onClick={async () => {
-                                const res = await fetch('/api/therapist/appointments', {
-                                  method: 'PUT',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ bookingId: a.id, status: 'CONFIRMED' }),
-                                });
-                                if (res.ok) loadPortalData();
-                                else {
-                                  const err = await res.json();
-                                  alert(err.error || 'Failed to confirm booking');
+                                setUpdatingBookingId(a.id);
+                                try {
+                                  const res = await fetch('/api/therapist/appointments', {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ bookingId: a.id, status: 'CONFIRMED' }),
+                                  });
+                                  if (res.ok) await loadPortalData();
+                                  else {
+                                    const err = await res.json();
+                                    alert(err.error || 'Failed to confirm booking');
+                                  }
+                                } finally {
+                                  setUpdatingBookingId(null);
                                 }
                               }}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                              className="px-3 py-1.5 min-h-[38px] rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors cursor-pointer disabled:opacity-50"
                             >
-                              Confirm
+                              {updatingBookingId === a.id ? 'Updating...' : 'Confirm'}
                             </button>
                           )}
                           {a.status !== 'IN_PROGRESS' && (
                             <button
+                              disabled={updatingBookingId === a.id}
+                              aria-busy={updatingBookingId === a.id}
                               onClick={async () => {
+                                setUpdatingBookingId(a.id);
+                                try {
+                                  const res = await fetch('/api/therapist/appointments', {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ bookingId: a.id, status: 'IN_PROGRESS' }),
+                                  });
+                                  if (res.ok) await loadPortalData();
+                                  else {
+                                    const err = await res.json();
+                                    alert(err.error || 'Failed to update status');
+                                  }
+                                } finally {
+                                  setUpdatingBookingId(null);
+                                }
+                              }}
+                              className="px-3 py-1.5 min-h-[38px] rounded-lg text-xs font-bold bg-amber-500 text-white hover:bg-amber-600 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {updatingBookingId === a.id ? 'Updating...' : 'In Progress'}
+                            </button>
+                          )}
+                          <button
+                            disabled={updatingBookingId === a.id}
+                            aria-busy={updatingBookingId === a.id}
+                            onClick={async () => {
+                              setUpdatingBookingId(a.id);
+                              try {
                                 const res = await fetch('/api/therapist/appointments', {
                                   method: 'PUT',
                                   headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ bookingId: a.id, status: 'IN_PROGRESS' }),
+                                  body: JSON.stringify({ bookingId: a.id, status: 'COMPLETED' }),
                                 });
-                                if (res.ok) loadPortalData();
+                                if (res.ok) await loadPortalData();
                                 else {
                                   const err = await res.json();
                                   alert(err.error || 'Failed to update status');
                                 }
-                              }}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-white hover:bg-amber-600 transition-colors"
-                            >
-                              In Progress
-                            </button>
-                          )}
-                          <button
-                            onClick={async () => {
-                              const res = await fetch('/api/therapist/appointments', {
-                                method: 'PUT',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ bookingId: a.id, status: 'COMPLETED' }),
-                              });
-                              if (res.ok) loadPortalData();
-                              else {
-                                const err = await res.json();
-                                alert(err.error || 'Failed to update status');
+                              } finally {
+                                setUpdatingBookingId(null);
                               }
                             }}
-                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                            className="px-3 py-1.5 min-h-[38px] rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors cursor-pointer disabled:opacity-50"
                           >
-                            Mark Completed
+                            {updatingBookingId === a.id ? 'Updating...' : 'Mark Completed'}
                           </button>
                           <button
+                            disabled={updatingBookingId === a.id}
+                            aria-busy={updatingBookingId === a.id}
                             onClick={async () => {
                               if (!confirm('Record customer no-show for this appointment?')) return;
-                              const res = await fetch('/api/therapist/appointments', {
-                                method: 'PUT',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ bookingId: a.id, status: 'NO_SHOW' }),
-                              });
-                              if (res.ok) loadPortalData();
-                              else {
-                                const err = await res.json();
-                                alert(err.error || 'Failed to update status');
+                              setUpdatingBookingId(a.id);
+                              try {
+                                const res = await fetch('/api/therapist/appointments', {
+                                  method: 'PUT',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ bookingId: a.id, status: 'NO_SHOW' }),
+                                });
+                                if (res.ok) await loadPortalData();
+                                else {
+                                  const err = await res.json();
+                                  alert(err.error || 'Failed to update status');
+                                }
+                              } finally {
+                                setUpdatingBookingId(null);
                               }
                             }}
-                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+                            className="px-3 py-1.5 min-h-[38px] rounded-lg text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer disabled:opacity-50"
                           >
-                            Record No-Show
+                            {updatingBookingId === a.id ? 'Updating...' : 'Record No-Show'}
                           </button>
                         </>
                       )}

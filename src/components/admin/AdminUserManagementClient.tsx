@@ -120,59 +120,112 @@ export function AdminUserManagementClient({
         </div>
       )}
 
-      {/* Users Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <table className="w-full text-left border-collapse text-xs sm:text-sm">
-          <thead>
-            <tr className="bg-slate-50 border-b border-slate-200 font-bold text-slate-500 uppercase tracking-wider text-[11px]">
-              <th className="p-4">Name</th>
-              <th className="p-4">Email</th>
-              <th className="p-4">Role</th>
-              <th className="p-4">Status</th>
-              <th className="p-4 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {initialUsers.map((u) => {
-              const isSelf = u.email === currentUserEmail;
-              return (
-                <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="p-4 font-bold text-slate-900">
-                    {u.name || 'Unnamed Admin'} {isSelf && <span className="text-[10px] text-emerald-700 font-bold uppercase ml-1">(You)</span>}
-                  </td>
-                  <td className="p-4 font-mono text-slate-600">{u.email}</td>
-                  <td className="p-4 font-bold text-emerald-800">{u.role}</td>
-                  <td className="p-4">
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                        u.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+      {/* Users Table & Mobile Cards */}
+      <>
+        {/* Desktop View */}
+        <div className="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs sm:text-sm">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 font-bold text-slate-500 uppercase tracking-wider text-[11px]">
+                  <th className="p-4">Name</th>
+                  <th className="p-4">Email</th>
+                  <th className="p-4">Role</th>
+                  <th className="p-4">Status</th>
+                  <th className="p-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {initialUsers.map((u) => {
+                  const isSelf = u.email === currentUserEmail;
+                  return (
+                    <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="p-4 font-bold text-slate-900">
+                        {u.name || 'Unnamed Admin'} {isSelf && <span className="text-[10px] text-emerald-700 font-bold uppercase ml-1">(You)</span>}
+                      </td>
+                      <td className="p-4 font-mono text-slate-600">{u.email}</td>
+                      <td className="p-4 font-bold text-emerald-800">{u.role}</td>
+                      <td className="p-4">
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                            u.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                          }`}
+                        >
+                          {u.isActive ? 'Active' : 'Deactivated'}
+                        </span>
+                      </td>
+                      <td className="p-4 text-right">
+                        {!isSelf && (
+                          <button
+                            type="button"
+                            disabled={isPending}
+                            onClick={() => handleToggleActive(u.id, !u.isActive)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                              u.isActive
+                                ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
+                                : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
+                            }`}
+                          >
+                            {u.isActive ? 'Deactivate' : 'Reactivate'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Mobile Cards View */}
+        <div className="md:hidden space-y-4">
+          {initialUsers.map((u) => {
+            const isSelf = u.email === currentUserEmail;
+            return (
+              <div key={u.id} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <div>
+                    <span className="font-bold text-slate-900 text-sm">
+                      {u.name || 'Unnamed Admin'} {isSelf && <span className="text-[10px] text-emerald-700 font-bold uppercase ml-1">(You)</span>}
+                    </span>
+                    <span className="text-slate-500 font-mono text-xs block">{u.email}</span>
+                  </div>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      u.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                    }`}
+                  >
+                    {u.isActive ? 'Active' : 'Deactivated'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between text-xs pt-1">
+                  <span className="text-slate-500">Role Privileges:</span>
+                  <span className="font-bold text-emerald-800">{u.role}</span>
+                </div>
+
+                {!isSelf && (
+                  <div className="pt-2 border-t border-slate-100 flex justify-end">
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={() => handleToggleActive(u.id, !u.isActive)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                        u.isActive
+                          ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
+                          : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
                       }`}
                     >
-                      {u.isActive ? 'Active' : 'Deactivated'}
-                    </span>
-                  </td>
-                  <td className="p-4 text-right">
-                    {!isSelf && (
-                      <button
-                        type="button"
-                        disabled={isPending}
-                        onClick={() => handleToggleActive(u.id, !u.isActive)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                          u.isActive
-                            ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
-                            : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
-                        }`}
-                      >
-                        {u.isActive ? 'Deactivate' : 'Reactivate'}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                      {u.isActive ? 'Deactivate' : 'Reactivate'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </>
 
       {/* Modal */}
       {isModalOpen && (

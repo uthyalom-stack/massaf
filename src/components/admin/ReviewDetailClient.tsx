@@ -123,10 +123,11 @@ export function ReviewDetailClient({ review }: ReviewDetailClientProps) {
             <button
               type="button"
               disabled={isPending}
+              aria-busy={isPending}
               onClick={() => handleStatusChange('APPROVED')}
-              className="px-4 py-2 text-xs font-bold rounded-xl bg-emerald-700 text-white hover:bg-emerald-800 disabled:opacity-50 transition-colors shadow-xs cursor-pointer"
+              className="px-4 py-2 min-h-[38px] text-xs font-bold rounded-xl bg-emerald-700 text-white hover:bg-emerald-800 disabled:opacity-50 transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
             >
-              Approve Review
+              {isPending ? 'Updating...' : 'Approve Review'}
             </button>
           )}
 
@@ -134,8 +135,9 @@ export function ReviewDetailClient({ review }: ReviewDetailClientProps) {
             <button
               type="button"
               disabled={isPending}
+              aria-busy={isPending}
               onClick={() => setShowRejectModal(true)}
-              className="px-4 py-2 text-xs font-semibold rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 disabled:opacity-50 transition-colors cursor-pointer"
+              className="px-4 py-2 min-h-[38px] text-xs font-semibold rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 disabled:opacity-50 transition-colors cursor-pointer"
             >
               Reject / Hide
             </button>
@@ -145,10 +147,11 @@ export function ReviewDetailClient({ review }: ReviewDetailClientProps) {
             <button
               type="button"
               disabled={isPending}
+              aria-busy={isPending}
               onClick={() => handleStatusChange('PENDING')}
-              className="px-3 py-2 text-xs font-semibold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 disabled:opacity-50 transition-colors cursor-pointer"
+              className="px-3 py-2 min-h-[38px] text-xs font-semibold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 disabled:opacity-50 transition-colors cursor-pointer"
             >
-              Reset to Pending
+              {isPending ? 'Updating...' : 'Reset to Pending'}
             </button>
           )}
         </div>
@@ -322,7 +325,7 @@ export function ReviewDetailClient({ review }: ReviewDetailClientProps) {
       {/* Confirmation Modal */}
       {showRejectModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
+          <div className="bg-white rounded-2xl max-w-md w-[calc(100%-2rem)] max-h-[90vh] overflow-y-auto p-6 shadow-xl space-y-4">
             <h3 className="text-lg font-bold text-slate-900">
               Confirm Reject / Hide Review
             </h3>

@@ -84,45 +84,75 @@ export default async function AdminCategoriesPage() {
       </form>
 
       {/* Category List */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase">
-              <th className="px-6 py-3">Category Name</th>
-              <th className="px-6 py-3">Description</th>
-              <th className="px-6 py-3">Assigned Services</th>
-              <th className="px-6 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200 text-sm">
+      {categories.length === 0 ? (
+        <div className="bg-white p-8 text-center text-slate-500 rounded-xl border border-slate-200 shadow-sm text-sm">
+          No service categories found. Create your first category above.
+        </div>
+      ) : (
+        <>
+          {/* Desktop View */}
+          <div className="hidden md:block bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase">
+                    <th className="px-6 py-3">Category Name</th>
+                    <th className="px-6 py-3">Description</th>
+                    <th className="px-6 py-3">Assigned Services</th>
+                    <th className="px-6 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 text-sm">
+                  {categories.map((cat) => (
+                    <tr key={cat.id} className="hover:bg-slate-50">
+                      <td className="px-6 py-4 font-semibold text-slate-900">{cat.name}</td>
+                      <td className="px-6 py-4 text-slate-600">{cat.description || '—'}</td>
+                      <td className="px-6 py-4 text-slate-600">{cat._count.services} service(s)</td>
+                      <td className="px-6 py-4 text-right">
+                        <form action={handleDeleteCategory} className="inline">
+                          <input type="hidden" name="id" value={cat.id} />
+                          <button
+                            type="submit"
+                            className="text-xs text-red-600 hover:text-red-800 font-medium cursor-pointer"
+                          >
+                            Delete
+                          </button>
+                        </form>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Mobile Cards View */}
+          <div className="md:hidden space-y-4">
             {categories.map((cat) => (
-              <tr key={cat.id} className="hover:bg-slate-50">
-                <td className="px-6 py-4 font-semibold text-slate-900">{cat.name}</td>
-                <td className="px-6 py-4 text-slate-600">{cat.description || '—'}</td>
-                <td className="px-6 py-4 text-slate-600">{cat._count.services} service(s)</td>
-                <td className="px-6 py-4 text-right">
-                  <form action={handleDeleteCategory} className="inline">
+              <div key={cat.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <span className="font-bold text-slate-900 text-base">{cat.name}</span>
+                  <span className="text-xs text-slate-500">{cat._count.services} service(s)</span>
+                </div>
+                {cat.description && (
+                  <p className="text-xs text-slate-600">{cat.description}</p>
+                )}
+                <div className="pt-2 border-t border-slate-100 flex justify-end">
+                  <form action={handleDeleteCategory}>
                     <input type="hidden" name="id" value={cat.id} />
                     <button
                       type="submit"
-                      className="text-xs text-red-600 hover:text-red-800 font-medium"
+                      className="text-xs text-rose-600 font-bold hover:underline cursor-pointer"
                     >
                       Delete
                     </button>
                   </form>
-                </td>
-              </tr>
+                </div>
+              </div>
             ))}
-            {categories.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-6 py-8 text-center text-slate-500">
-                  No service categories found. Create your first category above.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
