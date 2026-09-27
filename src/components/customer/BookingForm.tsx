@@ -139,8 +139,8 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
 
   const availableTimeSlots = useMemo(() => {
     if (!selectedTherapist || !date || !selectedService) return [];
-    return getAvailableTimeSlots(selectedTherapist, date, selectedService.durationMinutes);
-  }, [selectedTherapist, date, selectedService]);
+    return getAvailableTimeSlots(selectedTherapist, date, selectedDurationMinutes);
+  }, [selectedTherapist, date, selectedService, selectedDurationMinutes]);
 
   const handleTherapistChange = (therapistId: string) => {
     const therapist = activeTherapists.find((t) => t.id === therapistId) || null;
@@ -210,6 +210,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     const payload = {
       therapistId: selectedTherapist?.id || '',
       serviceId: selectedService?.id || '',
+      durationMinutes: selectedDurationMinutes,
       locationType,
       date,
       time,
@@ -259,7 +260,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
       selectedTherapist,
       date,
       time,
-      selectedService.durationMinutes
+      selectedDurationMinutes
     );
 
     if (!availabilityCheck.isValid) {
@@ -529,7 +530,6 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                 <div className="space-y-3">
                   {selectedTherapist.services.map((svc) => {
                     const isSelected = selectedService?.id === svc.id;
-                    const durationOptions = [30, 45, 60, 90, 120];
                     return (
                       <div
                         key={svc.id}
@@ -542,9 +542,6 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                         <div
                           onClick={() => {
                             setSelectedService(svc);
-                            if (!durationOptions.includes(selectedDurationMinutes)) {
-                              setSelectedDurationMinutes(svc.durationMinutes || 60);
-                            }
                           }}
                           className="cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                         >
@@ -555,9 +552,6 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                               checked={isSelected}
                               onChange={() => {
                                 setSelectedService(svc);
-                                if (!durationOptions.includes(selectedDurationMinutes)) {
-                                  setSelectedDurationMinutes(svc.durationMinutes || 60);
-                                }
                               }}
                               className="mt-1 h-4 w-4 text-emerald-700 border-slate-300 focus:ring-emerald-600"
                             />
@@ -567,23 +561,22 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                             </div>
                           </div>
                           <div className="text-right shrink-0 pl-7 sm:pl-0">
-                            <p className="text-base font-extrabold text-slate-900">${svc.price}</p>
-                            <p className="text-xs font-medium text-slate-500">${selectedTherapist.startingPrice}/hr rate</p>
+                            <p className="text-base font-extrabold text-slate-900">${selectedTherapist.startingPrice}/hr</p>
+                            <p className="text-xs font-medium text-slate-500">Hourly Rate</p>
                           </div>
                         </div>
 
                         {isSelected && (
                           <div className="pt-3 border-t border-slate-200/80 space-y-2">
                             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                              Appointment Duration / Length
+                              Select Duration / Hours
                             </label>
-                            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                               {[
-                                { min: 30, label: '30 mins (0.5 hr)' },
-                                { min: 45, label: '45 mins (0.75 hr)' },
-                                { min: 60, label: '60 mins (1 hr)' },
-                                { min: 90, label: '90 mins (1.5 hrs)' },
-                                { min: 120, label: '120 mins (2 hrs)' },
+                                { min: 60, label: '1 Hour' },
+                                { min: 120, label: '2 Hours' },
+                                { min: 180, label: '3 Hours' },
+                                { min: 240, label: '4 Hours' },
                               ].map((dur) => (
                                 <button
                                   key={dur.min}
@@ -599,9 +592,9 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                                 </button>
                               ))}
                             </div>
-                            <div className="text-xs font-medium text-emerald-900 pt-1 flex justify-between items-center">
-                              <span>Calculation: ${selectedTherapist.startingPrice}/hr × {(selectedDurationMinutes / 60).toFixed(2)} hrs</span>
-                              <span className="font-extrabold text-sm">${calculatedTotal} USD</span>
+                            <div className="text-xs font-medium text-emerald-900 pt-1 flex justify-between items-center bg-emerald-100/60 p-2.5 rounded-xl border border-emerald-200/60">
+                              <span>Pricing: ${selectedTherapist.startingPrice}/hour × {selectedDurationMinutes / 60} hour(s)</span>
+                              <span className="font-extrabold text-sm text-emerald-950">${calculatedTotal} USD</span>
                             </div>
                           </div>
                         )}
@@ -1065,7 +1058,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                 <div>
                   <span className="text-xs text-slate-500 block uppercase font-semibold">Service & Duration</span>
                   <span className="font-bold text-slate-900 text-base">
-                    {selectedService ? `${selectedService.name} (${selectedService.durationMinutes} mins)` : 'Not selected'}
+                    {selectedService ? `${selectedService.name} (${selectedDurationMinutes / 60} hr / ${selectedDurationMinutes} mins)` : 'Not selected'}
                   </span>
                 </div>
                 <button
@@ -1147,7 +1140,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
             <div className="pt-4 border-t border-slate-200 flex justify-between items-center">
               <span className="text-base font-bold text-slate-900">Total Booking Amount</span>
               <span className="text-3xl font-extrabold text-emerald-800">
-                ${selectedService ? selectedService.price : 0}
+                ${calculatedTotal}
               </span>
             </div>
 
@@ -1238,7 +1231,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
             {selectedService && (
               <div className="flex justify-between items-center pb-3 border-b border-slate-100">
                 <span className="text-slate-500">Duration</span>
-                <span className="font-semibold text-slate-800">{selectedService.durationMinutes} minutes</span>
+                <span className="font-semibold text-slate-800">{selectedDurationMinutes / 60} hour(s) ({selectedDurationMinutes} mins)</span>
               </div>
             )}
 
@@ -1297,7 +1290,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
             <div className="pt-2 flex justify-between items-baseline">
               <span className="text-base font-bold text-slate-900">Total Price</span>
               <span className="text-2xl font-extrabold text-emerald-800">
-                ${selectedService ? selectedService.price : 0}
+                ${calculatedTotal}
               </span>
             </div>
 
