@@ -3,9 +3,18 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { createTherapistAction, updateTherapistAction } from '@/app/admin/actions';
+import { createTherapistAction, updateTherapistAction, assignTherapistServiceAction } from '@/app/admin/actions';
 
-export function AddTherapistForm() {
+interface AddTherapistFormProps {
+  availableGlobalServices?: Array<{
+    id: string;
+    name: string;
+    durationMinutes: number;
+    price: number;
+  }>;
+}
+
+export function AddTherapistForm({ availableGlobalServices = [] }: AddTherapistFormProps) {
   const router = useRouter();
   const [formData, setFormData] = useState({
     name: '',
@@ -19,6 +28,9 @@ export function AddTherapistForm() {
     offersStudio: true,
     offersInHome: true,
   });
+
+  // Multi-Service selection state
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
 
   // Local state for deferred profile image file & preview
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -90,6 +102,17 @@ export function AddTherapistForm() {
       }
 
       const createdTherapistId = res.therapist.id;
+
+      // 1b. Assign selected services to created therapist
+      if (selectedServiceIds.length > 0) {
+        setSubmitStepText('Assigning selected services...');
+        for (const serviceId of selectedServiceIds) {
+          await assignTherapistServiceAction(createdTherapistId, {
+            serviceId,
+            isActive: true,
+          });
+        }
+      }
 
       // 2. If a profile image file was selected, upload to R2 using the REAL therapist ID
       if (selectedFile) {
@@ -329,6 +352,60 @@ export function AddTherapistForm() {
               className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
             />
           </div>
+
+          {/* Multi-Service Selection Component */}
+          {availableGlobalServices.length > 0 && (
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  Select Offered Services
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedServiceIds.length === availableGlobalServices.length) {
+                      setSelectedServiceIds([]);
+                    } else {
+                      setSelectedServiceIds(availableGlobalServices.map((s) => s.id));
+                    }
+                  }}
+                  className="text-xs text-emerald-700 font-bold hover:underline cursor-pointer"
+                >
+                  {selectedServiceIds.length === availableGlobalServices.length ? 'Deselect All' : 'Select All'}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {availableGlobalServices.map((srv) => {
+                  const isChecked = selectedServiceIds.includes(srv.id);
+                  return (
+                    <label
+                      key={srv.id}
+                      className={`p-3 rounded-xl border flex items-center gap-3 cursor-pointer text-xs transition-colors ${
+                        isChecked
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-900 font-bold'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedServiceIds((prev) => [...prev, srv.id]);
+                          } else {
+                            setSelectedServiceIds((prev) => prev.filter((id) => id !== srv.id));
+                          }
+                        }}
+                        className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+                      />
+                      <span className="truncate">{srv.name} (${srv.price})</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Checkboxes & Switches */}
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">

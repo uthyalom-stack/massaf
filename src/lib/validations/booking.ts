@@ -3,7 +3,9 @@ import { z } from 'zod';
 export const bookingSchema = z.object({
   therapistId: z.string().min(1, 'Therapist is required'),
   serviceId: z.string().min(1, 'Service selection is required'),
-  durationMinutes: z.number().int().positive().optional(),
+  durationMinutes: z.number().int().refine((val) => [60, 120, 180, 240].includes(val), {
+    message: 'Please select a valid whole-hour duration (1, 2, 3, or 4 hours)',
+  }),
   locationType: z.enum(['STUDIO', 'IN_HOME']),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Please select a valid appointment date (YYYY-MM-DD)'),
   time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Please select a valid appointment time'),

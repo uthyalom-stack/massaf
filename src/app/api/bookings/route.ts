@@ -84,8 +84,14 @@ export async function POST(request: Request) {
     }
 
     const service = therapistService.service;
-    const requestedDuration = Number(data.durationMinutes) || therapistService.customDurationMinutes || service.durationMinutes;
-    const durationMinutes = [30, 45, 60, 90, 120].includes(requestedDuration) ? requestedDuration : service.durationMinutes;
+    const requestedDuration = Number(data.durationMinutes);
+    if (![60, 120, 180, 240].includes(requestedDuration)) {
+      return NextResponse.json(
+        { error: 'Invalid appointment duration. Supported durations are 1, 2, 3, or 4 hours.' },
+        { status: 400 }
+      );
+    }
+    const durationMinutes = requestedDuration;
 
     // Server-authoritative hourly rate calculation: Total = HourlyRate * (DurationMinutes / 60)
     const hourlyRateUsed = therapist.hourlyRate || 100.0;
