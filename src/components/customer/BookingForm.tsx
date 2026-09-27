@@ -429,7 +429,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
       <div className="lg:col-span-7 space-y-6">
 
         {/* Workflow Progress Steps Bar */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs flex items-center justify-between text-xs font-semibold text-slate-600 overflow-x-auto gap-2">
+        <div className="bg-white rounded-2xl border border-slate-200 p-3 sm:p-4 shadow-xs flex items-center justify-between text-xs font-semibold text-slate-600 overflow-x-auto gap-2">
           {[
             { id: 1, label: 'Therapist & Service' },
             { id: 2, label: 'Location' },
@@ -441,7 +441,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
               key={s.id}
               type="button"
               onClick={() => setActiveStep(s.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all cursor-pointer whitespace-nowrap ${
+              className={`shrink-0 min-h-[44px] flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all cursor-pointer whitespace-nowrap ${
                 activeStep === s.id
                   ? 'bg-emerald-700 text-white shadow-xs'
                   : s.id < activeStep
@@ -449,7 +449,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                   : 'hover:bg-slate-100 text-slate-600'
               }`}
             >
-              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
                 activeStep === s.id
                   ? 'bg-white text-emerald-800'
                   : s.id < activeStep
@@ -553,14 +553,15 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                           onClick={() => {
                             setSelectedService(svc);
                           }}
-                          className="cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                          className="cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-h-[44px]"
                         >
                           <div className="flex items-start gap-3">
                             <input
                               type="radio"
                               name="service"
                               checked={isSelected}
-                              onChange={() => {
+                              onChange={(e) => {
+                                e.stopPropagation();
                                 setSelectedService(svc);
                               }}
                               className="mt-1 h-4 w-4 text-emerald-700 border-slate-300 focus:ring-emerald-600"

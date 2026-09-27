@@ -454,7 +454,7 @@ export function MatchWizard({ services }: MatchWizardProps) {
             <button
               type="button"
               onClick={handleNext}
-              className="px-6 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 font-semibold text-white transition-colors text-xs sm:text-sm cursor-pointer shadow-xs"
+              className="px-6 py-2.5 min-h-[44px] rounded-xl bg-emerald-700 hover:bg-emerald-800 font-semibold text-white transition-colors text-xs sm:text-sm cursor-pointer shadow-xs"
             >
               Continue
             </button>
@@ -462,7 +462,8 @@ export function MatchWizard({ services }: MatchWizardProps) {
             <button
               type="submit"
               disabled={loading}
-              className="px-8 py-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 font-bold text-white transition-colors text-xs sm:text-sm cursor-pointer shadow-md disabled:opacity-50 flex items-center gap-2"
+              aria-busy={loading}
+              className="px-8 py-3 min-h-[44px] rounded-xl bg-emerald-700 hover:bg-emerald-800 font-bold text-white transition-colors text-xs sm:text-sm cursor-pointer shadow-md disabled:opacity-50 flex items-center gap-2"
             >
               {loading ? (
                 <>

@@ -179,74 +179,133 @@ export function TestimonialManagementClient({
       )}
 
       {/* Testimonials List */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <table className="w-full text-left border-collapse text-xs sm:text-sm">
-          <thead>
-            <tr className="bg-slate-50 border-b border-slate-200 font-bold text-slate-500 uppercase tracking-wider text-[11px]">
-              <th className="p-4">Author / Reviewer</th>
-              <th className="p-4">Associated Therapist</th>
-              <th className="p-4">Rating & Comment</th>
-              <th className="p-4">Status</th>
-              <th className="p-4 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {filteredTestimonials.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="p-8 text-center text-slate-400 italic">
-                  No promotional testimonials found.
-                </td>
-              </tr>
-            ) : (
-              filteredTestimonials.map((t) => (
-                <tr key={t.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="p-4">
-                    <div className="font-bold text-slate-900">{t.authorName}</div>
-                    <div className="text-slate-400 text-xs">{t.authorLocation || 'No location'}</div>
-                  </td>
-                  <td className="p-4 font-semibold text-slate-800">{t.therapistName}</td>
-                  <td className="p-4 space-y-1">
-                    <div className="text-amber-600 font-bold">★ {t.rating}/5</div>
-                    <div className="text-slate-600 line-clamp-2 italic">&ldquo;{t.comment}&rdquo;</div>
-                  </td>
-                  <td className="p-4">
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                        t.isPublished ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
-                      }`}
-                    >
-                      {t.isPublished ? 'Published' : 'Draft / Unpublished'}
-                    </span>
-                  </td>
-                  <td className="p-4 text-right space-x-2">
-                    <button
-                      type="button"
-                      onClick={() => handleTogglePublished(t.id, t.isPublished)}
-                      className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs cursor-pointer"
-                    >
-                      {t.isPublished ? 'Unpublish' : 'Publish'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openEditModal(t)}
-                      className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs cursor-pointer"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(t.id)}
-                      className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs cursor-pointer"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      {filteredTestimonials.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400 italic">
+          No promotional testimonials found.
+        </div>
+      ) : (
+        <>
+          {/* Desktop Table View */}
+          <div className="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 font-bold text-slate-500 uppercase tracking-wider text-[11px]">
+                    <th className="p-4">Author / Reviewer</th>
+                    <th className="p-4">Associated Therapist</th>
+                    <th className="p-4">Rating & Comment</th>
+                    <th className="p-4">Status</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredTestimonials.map((t) => (
+                    <tr key={t.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="p-4">
+                        <div className="font-bold text-slate-900">{t.authorName}</div>
+                        <div className="text-slate-400 text-xs">{t.authorLocation || 'No location'}</div>
+                      </td>
+                      <td className="p-4 font-semibold text-slate-800">{t.therapistName}</td>
+                      <td className="p-4 space-y-1">
+                        <div className="text-amber-600 font-bold">★ {t.rating}/5</div>
+                        <div className="text-slate-600 line-clamp-2 italic">&ldquo;{t.comment}&rdquo;</div>
+                      </td>
+                      <td className="p-4">
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                            t.isPublished ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {t.isPublished ? 'Published' : 'Draft / Unpublished'}
+                        </span>
+                      </td>
+                      <td className="p-4 text-right space-x-2">
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePublished(t.id, t.isPublished)}
+                          className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs cursor-pointer"
+                        >
+                          {t.isPublished ? 'Unpublish' : 'Publish'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(t)}
+                          className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs cursor-pointer"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(t.id)}
+                          className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs cursor-pointer"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Mobile Cards View */}
+          <div className="md:hidden space-y-4">
+            {filteredTestimonials.map((t) => (
+              <div key={t.id} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <div>
+                    <span className="font-bold text-slate-900 text-sm">{t.authorName}</span>
+                    <span className="text-slate-400 text-xs block">{t.authorLocation || 'No location'}</span>
+                  </div>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      t.isPublished ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    {t.isPublished ? 'Published' : 'Draft'}
+                  </span>
+                </div>
+
+                <div className="text-xs space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Therapist:</span>
+                    <span className="font-bold text-slate-800">{t.therapistName}</span>
+                  </div>
+                  <div className="text-amber-600 font-bold">★ {t.rating}/5</div>
+                  <p className="text-slate-600 italic bg-slate-50 p-2.5 rounded-xl">
+                    &ldquo;{t.comment}&rdquo;
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => handleTogglePublished(t.id, t.isPublished)}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-800 font-semibold text-xs cursor-pointer"
+                  >
+                    {t.isPublished ? 'Unpublish' : 'Publish'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openEditModal(t)}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-800 font-semibold text-xs cursor-pointer"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(t.id)}
+                    className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-semibold text-xs cursor-pointer"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* Modal */}
       {isModalOpen && (
