@@ -32,7 +32,7 @@ export function PaymentMethodSelector({
 }: PaymentMethodSelectorProps) {
   const router = useRouter();
   const [availableProviders, setAvailableProviders] = useState<PaymentProviderOption[]>([]);
-  const [selectedProviderId, setSelectedProviderId] = useState<string>('paylio');
+  const [selectedProviderId, setSelectedProviderId] = useState<string>('');
   const [loadingProviders, setLoadingProviders] = useState<boolean>(true);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -209,13 +209,7 @@ export function PaymentMethodSelector({
     }
   };
 
-  const activeProviders = availableProviders.length > 0
-    ? availableProviders
-    : [
-        { id: 'paylio', name: 'PayLio', description: 'Pay securely with Credit/Debit card or Apple Pay via PayLio hosted checkout.', categories: ['card'], isDefault: true, priority: 1 },
-        { id: 'nowpayments', name: 'Crypto — NOWPayments', description: 'Pay directly from your crypto wallet using Bitcoin, Ethereum, USDT, Solana, and 300+ cryptocurrencies.', categories: ['crypto'], isDefault: false, priority: 2 },
-        { id: 'giftcard', name: 'Gift Card', description: 'Submit a Visa, Spafinder, or brand gift card for manual verification by MASSAF admins.', categories: ['giftcard'], isDefault: false, priority: 3 },
-      ];
+  const activeProviders = availableProviders;
 
   const currentProviderObj = activeProviders.find((p) => p.id === selectedProviderId) || activeProviders[0];
 
@@ -244,6 +238,15 @@ export function PaymentMethodSelector({
       {loadingProviders ? (
         <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 rounded-2xl border border-slate-200 animate-pulse">
           Loading active payment options...
+        </div>
+      ) : activeProviders.length === 0 ? (
+        <div className="p-6 text-center text-xs text-slate-600 bg-slate-50 rounded-2xl border border-slate-200 space-y-1">
+          <p className="font-semibold text-slate-800">
+            No payment methods are currently available. Please try again later.
+          </p>
+          <p className="text-[11px] text-slate-500">
+            If you need assistance, please contact customer support.
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -299,157 +302,159 @@ export function PaymentMethodSelector({
       )}
 
       {/* Selected Method Action Panel */}
-      <div className="pt-4 border-t border-slate-100">
-        {selectedProviderId === 'giftcard' ? (
-          <form onSubmit={handleGiftCardSubmit} className="bg-slate-50 rounded-2xl p-6 border border-slate-200 space-y-4">
-            <div className="space-y-1">
-              <h3 className="font-bold text-slate-900 text-sm">Submit Gift Card Details</h3>
-              <p className="text-xs text-slate-600">
-                Enter your gift card details below for administrative verification.
-              </p>
-            </div>
+      {activeProviders.length > 0 && (
+        <div className="pt-4 border-t border-slate-100">
+          {selectedProviderId === 'giftcard' ? (
+            <form onSubmit={handleGiftCardSubmit} className="bg-slate-50 rounded-2xl p-6 border border-slate-200 space-y-4">
+              <div className="space-y-1">
+                <h3 className="font-bold text-slate-900 text-sm">Submit Gift Card Details</h3>
+                <p className="text-xs text-slate-600">
+                  Enter your gift card details below for administrative verification.
+                </p>
+              </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
-                  Gift Card Type / Brand *
-                </label>
-                <select
-                  value={giftCardType}
-                  onChange={(e) => setGiftCardType(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm focus:ring-emerald-600 focus:border-emerald-600"
-                >
-                  <option value="Visa Gift Card">Visa Gift Card</option>
-                  <option value="Mastercard Gift Card">Mastercard Gift Card</option>
-                  <option value="Amex Gift Card">American Express Gift Card</option>
-                  <option value="Spafinder">Spafinder Wellness Card</option>
-                  <option value="Amazon">Amazon Gift Card</option>
-                  <option value="Other">Other / Custom Gift Card</option>
-                </select>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
+                    Gift Card Type / Brand *
+                  </label>
+                  <select
+                    value={giftCardType}
+                    onChange={(e) => setGiftCardType(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm focus:ring-emerald-600 focus:border-emerald-600"
+                  >
+                    <option value="Visa Gift Card">Visa Gift Card</option>
+                    <option value="Mastercard Gift Card">Mastercard Gift Card</option>
+                    <option value="Amex Gift Card">American Express Gift Card</option>
+                    <option value="Spafinder">Spafinder Wellness Card</option>
+                    <option value="Amazon">Amazon Gift Card</option>
+                    <option value="Other">Other / Custom Gift Card</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
+                    Declared Value ($ USD) *
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    step="0.01"
+                    min="1"
+                    value={giftCardValue}
+                    onChange={(e) => setGiftCardValue(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm focus:ring-emerald-600 focus:border-emerald-600"
+                  />
+                </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
-                  Declared Value ($ USD) *
+                  Gift Card Number / Claim Code / PIN *
                 </label>
                 <input
-                  type="number"
+                  type="text"
                   required
-                  step="0.01"
-                  min="1"
-                  value={giftCardValue}
-                  onChange={(e) => setGiftCardValue(e.target.value)}
+                  value={giftCardCode}
+                  onChange={(e) => setGiftCardCode(e.target.value)}
+                  placeholder="e.g. 4000-1234-5678-9012 (PIN: 1234)"
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm focus:ring-emerald-600 focus:border-emerald-600"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Restricted to authorized MASSAF administrative review. Never displayed publicly.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
+                  Gift Card Photos / Screenshots (Required) *
+                </label>
+                <p className="text-[11px] text-slate-500 mb-2">
+                  Upload clear photos of the physical card (front/back, visible card number & PIN) or digital e-card receipt.
+                </p>
+
+                <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center bg-white hover:border-emerald-600 transition-colors cursor-pointer relative">
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleFileChange}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  />
+                  <div className="space-y-1">
+                    <span className="text-sm font-extrabold text-emerald-800">
+                      + Upload Card Photos (JPEG, PNG, WebP)
+                    </span>
+                    <p className="text-[11px] text-slate-500">
+                      Max 10MB per file. Must be clearly readable.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Image Previews */}
+                {imagePreviews.length > 0 && (
+                  <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {imagePreviews.map((src, index) => (
+                      <div key={index} className="relative group rounded-xl overflow-hidden border border-slate-200 aspect-square bg-slate-100">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={src} alt={`Gift card upload preview ${index + 1}`} className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => removeImage(index)}
+                          className="absolute top-1 right-1 bg-rose-600 text-white rounded-full p-1 text-[10px] font-bold shadow-xs hover:bg-rose-700 transition-colors"
+                          title="Remove photo"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
+                  Additional Notes (Optional)
+                </label>
+                <textarea
+                  rows={2}
+                  value={giftCardNotes}
+                  onChange={(e) => setGiftCardNotes(e.target.value)}
+                  placeholder="Serial number or special instructions..."
                   className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm focus:ring-emerald-600 focus:border-emerald-600"
                 />
               </div>
-            </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
-                Gift Card Number / Claim Code / PIN *
-              </label>
-              <input
-                type="text"
-                required
-                value={giftCardCode}
-                onChange={(e) => setGiftCardCode(e.target.value)}
-                placeholder="e.g. 4000-1234-5678-9012 (PIN: 1234)"
-                className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm focus:ring-emerald-600 focus:border-emerald-600"
-              />
-              <p className="text-[11px] text-slate-500 mt-1">
-                Restricted to authorized MASSAF administrative review. Never displayed publicly.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
-                Gift Card Photos / Screenshots (Required) *
-              </label>
-              <p className="text-[11px] text-slate-500 mb-2">
-                Upload clear photos of the physical card (front/back, visible card number & PIN) or digital e-card receipt.
-              </p>
-
-              <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center bg-white hover:border-emerald-600 transition-colors cursor-pointer relative">
-                <input
-                  type="file"
-                  multiple
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={handleFileChange}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
-                <div className="space-y-1">
-                  <span className="text-sm font-extrabold text-emerald-800">
-                    + Upload Card Photos (JPEG, PNG, WebP)
-                  </span>
-                  <p className="text-[11px] text-slate-500">
-                    Max 10MB per file. Must be clearly readable.
-                  </p>
-                </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-sm rounded-xl transition-colors shadow-xs cursor-pointer"
+              >
+                {loading ? 'Submitting Gift Card...' : 'Submit Gift Card for Verification →'}
+              </button>
+            </form>
+          ) : (
+            <div className="bg-slate-50 rounded-2xl p-6 border border-slate-200 space-y-4">
+              <div className="space-y-1">
+                <h3 className="font-bold text-slate-900 text-sm">
+                  Pay with {currentProviderObj?.name || 'Selected Provider'}
+                </h3>
+                <p className="text-xs text-slate-600">
+                  You will be securely redirected to complete payment of <strong>${amount.toFixed(2)} USD</strong> for booking <strong>{bookingNumber}</strong>.
+                </p>
               </div>
-
-              {/* Image Previews */}
-              {imagePreviews.length > 0 && (
-                <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {imagePreviews.map((src, index) => (
-                    <div key={index} className="relative group rounded-xl overflow-hidden border border-slate-200 aspect-square bg-slate-100">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={src} alt={`Gift card upload preview ${index + 1}`} className="w-full h-full object-cover" />
-                      <button
-                        type="button"
-                        onClick={() => removeImage(index)}
-                        className="absolute top-1 right-1 bg-rose-600 text-white rounded-full p-1 text-[10px] font-bold shadow-xs hover:bg-rose-700 transition-colors"
-                        title="Remove photo"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => handleCreatePayment(selectedProviderId)}
+                className="w-full py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-sm rounded-xl transition-colors shadow-xs cursor-pointer"
+              >
+                {loading ? `Initializing ${currentProviderObj?.name}...` : `Proceed with ${currentProviderObj?.name} →`}
+              </button>
             </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
-                Additional Notes (Optional)
-              </label>
-              <textarea
-                rows={2}
-                value={giftCardNotes}
-                onChange={(e) => setGiftCardNotes(e.target.value)}
-                placeholder="Serial number or special instructions..."
-                className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm focus:ring-emerald-600 focus:border-emerald-600"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-sm rounded-xl transition-colors shadow-xs cursor-pointer"
-            >
-              {loading ? 'Submitting Gift Card...' : 'Submit Gift Card for Verification →'}
-            </button>
-          </form>
-        ) : (
-          <div className="bg-slate-50 rounded-2xl p-6 border border-slate-200 space-y-4">
-            <div className="space-y-1">
-              <h3 className="font-bold text-slate-900 text-sm">
-                Pay with {currentProviderObj?.name || 'Selected Provider'}
-              </h3>
-              <p className="text-xs text-slate-600">
-                You will be securely redirected to complete payment of <strong>${amount.toFixed(2)} USD</strong> for booking <strong>{bookingNumber}</strong>.
-              </p>
-            </div>
-            <button
-              type="button"
-              disabled={loading}
-              onClick={() => handleCreatePayment(selectedProviderId)}
-              className="w-full py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-sm rounded-xl transition-colors shadow-xs cursor-pointer"
-            >
-              {loading ? `Initializing ${currentProviderObj?.name}...` : `Proceed with ${currentProviderObj?.name} →`}
-            </button>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {/* Fallback Contact Section */}
       <div className="pt-6 border-t border-slate-200 text-center space-y-2">
