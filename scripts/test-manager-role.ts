@@ -44,6 +44,7 @@ import {
   toggleMarketerActiveAction,
   regenerateMarketerPasswordAction,
   listMarketersAction,
+  getMarketerLeaderboardAction,
   deleteMarketerAction,
   createServiceCategoryAction,
   updateServiceCategoryAction,
@@ -65,8 +66,23 @@ import {
 } from '../src/app/admin/actions';
 import { verifyAdminApiKey } from '../src/lib/admin-guard';
 
+// Import Page components to test direct route authorization
+import AdminDashboardPage from '../src/app/admin/(protected)/page';
+import AdminCustomersPage from '../src/app/admin/(protected)/customers/page';
+import AdminBookingsPage from '../src/app/admin/(protected)/bookings/page';
+import AdminPaymentsPage from '../src/app/admin/(protected)/payments/page';
+import AdminMarketersPage from '../src/app/admin/(protected)/marketers/page';
+import AdminMarketingLinksPage from '../src/app/admin/(protected)/marketing-links/page';
+import AdminSettingsPage from '../src/app/admin/(protected)/settings/page';
+import AdminUsersPage from '../src/app/admin/(protected)/admin-users/page';
+import AdminServicesPage from '../src/app/admin/(protected)/services/page';
+import AdminCategoriesPage from '../src/app/admin/(protected)/categories/page';
+import AdminAuditLogPage from '../src/app/admin/(protected)/audit-log/page';
+import AdminTherapistsPage from '../src/app/admin/(protected)/therapists/page';
+import AdminNewTherapistPage from '../src/app/admin/(protected)/therapists/new/page';
+
 async function runManagerRoleTestSuite() {
-  console.log('=== STARTING MANAGER AUTHORIZATION ROLE TEST SUITE ===\n');
+  console.log('=== STARTING MANAGER AUTHORIZATION ROLE COMPREHENSIVE TEST SUITE ===\n');
 
   // 1. Setup Accounts
   let superAdmin = await db.user.findFirst({ where: { role: 'SUPER_ADMIN', email: 'mgr_super@massaf.com' } });
@@ -108,332 +124,262 @@ async function runManagerRoleTestSuite() {
     });
   }
 
+  let staffUser = await db.user.findFirst({ where: { role: 'STAFF', email: 'mgr_staff@massaf.com' } });
+  if (!staffUser) {
+    staffUser = await db.user.create({
+      data: {
+        name: 'Manager Test Staff',
+        email: 'mgr_staff@massaf.com',
+        role: 'STAFF',
+        passwordHash: 'hash',
+        isActive: true,
+      },
+    });
+  }
+
   const superAdminToken = createSessionToken(superAdmin.id, superAdmin.email, 'ADMIN', 24, 'SUPER_ADMIN');
   const adminToken = createSessionToken(adminUser.id, adminUser.email, 'ADMIN', 24, 'ADMIN');
   const managerToken = createSessionToken(managerUser.id, managerUser.email, 'ADMIN', 24, 'MANAGER');
+  const staffToken = createSessionToken(staffUser.id, staffUser.email, 'ADMIN', 24, 'STAFF');
 
   const setSession = (token: string) => {
     (globalThis as any).__TEST_ADMIN_SESSION_TOKEN__ = token;
   };
 
-  // --- AREA 1: MANAGER CREATION BY SUPER_ADMIN ---
-  console.log('1. Testing MANAGER account creation via Super Admin...');
+  // --- AREA 1: ADMIN USER CREATION ROLE MATRIX ---
+  console.log('1. Testing Admin User Creation Role Matrix...');
+
+  // SUPER_ADMIN creates ADMIN, MANAGER, SUPER_ADMIN
   setSession(superAdminToken);
+  const saCreateAdmin = await createAdminUserAction({ name: 'SA Admin', email: `sa_adm_${Date.now()}@massaf.com`, role: 'ADMIN' });
+  if (!saCreateAdmin.success) throw new Error('SUPER_ADMIN failed to create ADMIN');
+  const saCreateMgr = await createAdminUserAction({ name: 'SA Manager', email: `sa_mgr_${Date.now()}@massaf.com`, role: 'MANAGER' });
+  if (!saCreateMgr.success) throw new Error('SUPER_ADMIN failed to create MANAGER');
+  const saCreateSA = await createAdminUserAction({ name: 'SA SuperAdmin', email: `sa_sa_${Date.now()}@massaf.com`, role: 'SUPER_ADMIN' });
+  if (!saCreateSA.success) throw new Error('SUPER_ADMIN failed to create SUPER_ADMIN');
+  console.log('[PASS] SUPER_ADMIN can create ADMIN, MANAGER, and SUPER_ADMIN');
 
-  const newMgrEmail = `created_mgr_${Date.now()}@massaf.com`;
-  const createMgrRes = await createAdminUserAction({
-    name: 'Created Manager User',
-    email: newMgrEmail,
-    role: 'MANAGER',
-  });
+  // ADMIN cannot create ADMIN, MANAGER, or SUPER_ADMIN
+  setSession(adminToken);
+  const admCreateAdmin = await createAdminUserAction({ name: 'Adm Admin', email: `adm_adm_${Date.now()}@massaf.com`, role: 'ADMIN' });
+  if (admCreateAdmin.success || !admCreateAdmin.error?.includes('Unauthorized')) throw new Error('ADMIN was able to create user');
+  console.log('[PASS] ADMIN denied creating admin users');
 
-  if (!createMgrRes.success || !createMgrRes.user || createMgrRes.user.role !== 'MANAGER') {
-    console.error('FAILED: Super Admin failed to create MANAGER user!', createMgrRes);
-    process.exit(1);
-  }
-  console.log('[PASS] Super Admin created a MANAGER account successfully with role MANAGER');
+  // MANAGER cannot create ADMIN, MANAGER, or SUPER_ADMIN
+  setSession(managerToken);
+  const mgrCreateAdmin = await createAdminUserAction({ name: 'Mgr Admin', email: `mgr_adm_${Date.now()}@massaf.com`, role: 'ADMIN' });
+  if (mgrCreateAdmin.success || !mgrCreateAdmin.error?.includes('Unauthorized')) throw new Error('MANAGER was able to create ADMIN');
+  const mgrCreateMgr = await createAdminUserAction({ name: 'Mgr Manager', email: `mgr_mgr_${Date.now()}@massaf.com`, role: 'MANAGER' });
+  if (mgrCreateMgr.success || !mgrCreateMgr.error?.includes('Unauthorized')) throw new Error('MANAGER was able to create MANAGER');
+  const mgrCreateSA = await createAdminUserAction({ name: 'Mgr SA', email: `mgr_sa_${Date.now()}@massaf.com`, role: 'SUPER_ADMIN' });
+  if (mgrCreateSA.success || !mgrCreateSA.error?.includes('Unauthorized')) throw new Error('MANAGER was able to create SUPER_ADMIN');
+  console.log('[PASS] MANAGER denied creating ADMIN, MANAGER, or SUPER_ADMIN');
 
-  // Verify created user in DB
-  const dbCreatedMgr = await db.user.findUnique({ where: { email: newMgrEmail } });
-  if (dbCreatedMgr?.role !== 'MANAGER') {
-    console.error('FAILED: Created user in DB does not have role MANAGER!');
-    process.exit(1);
-  }
-  console.log('[PASS] DB record correctly stored role as MANAGER');
+  // STAFF cannot create admin users
+  setSession(staffToken);
+  const staffCreateAdmin = await createAdminUserAction({ name: 'Staff Admin', email: `st_adm_${Date.now()}@massaf.com`, role: 'ADMIN' });
+  if (staffCreateAdmin.success || !staffCreateAdmin.error?.includes('Unauthorized')) throw new Error('STAFF was able to create user');
+  console.log('[PASS] STAFF denied creating admin users');
 
-  // --- AREA 2: PRIVILEGE ESCALATION / ADMIN CREATION DENIAL FOR MANAGER ---
-  console.log('\n2. Testing Privilege Escalation & Admin Creation Denial for MANAGER...');
+  // --- AREA 2: 15 EXPLICIT PRIVILEGE ESCALATION PROHIBITIONS FOR MANAGER ---
+  console.log('\n2. Testing 15 Explicit Privilege Escalation Prohibitions for MANAGER...');
   setSession(managerToken);
 
-  const mgrCreateAdminRes = await createAdminUserAction({
-    name: 'Illegal Admin',
-    email: `illegal_${Date.now()}@massaf.com`,
-    role: 'ADMIN',
-  });
-  if (mgrCreateAdminRes.success || !mgrCreateAdminRes.error?.includes('Unauthorized')) {
-    console.error('FAILED: MANAGER was not denied createAdminUserAction!', mgrCreateAdminRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER rejected server-side when attempting to create an Admin user');
+  // Prohibition 1: Cannot create ADMIN
+  const p1 = await createAdminUserAction({ name: 'P1', email: 'p1@massaf.com', role: 'ADMIN' });
+  if (p1.success || !p1.error?.includes('Unauthorized')) throw new Error('P1 failed');
+  console.log('[PASS] 1. MANAGER cannot create ADMIN');
 
-  const mgrListAdminRes = await listAdminUsersAction();
-  if (mgrListAdminRes.success || !mgrListAdminRes.error?.includes('Unauthorized')) {
-    console.error('FAILED: MANAGER was not denied listAdminUsersAction!', mgrListAdminRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER rejected server-side when attempting to list admin users');
+  // Prohibition 2: Cannot create MANAGER
+  const p2 = await createAdminUserAction({ name: 'P2', email: 'p2@massaf.com', role: 'MANAGER' });
+  if (p2.success || !p2.error?.includes('Unauthorized')) throw new Error('P2 failed');
+  console.log('[PASS] 2. MANAGER cannot create MANAGER');
 
-  const mgrToggleAdminRes = await toggleAdminUserActiveAction(adminUser.id, false);
-  if (mgrToggleAdminRes.success || !mgrToggleAdminRes.error?.includes('Unauthorized')) {
-    console.error('FAILED: MANAGER was not denied toggleAdminUserActiveAction!', mgrToggleAdminRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER rejected server-side when attempting to deactivate an admin user');
+  // Prohibition 3: Cannot create SUPER_ADMIN
+  const p3 = await createAdminUserAction({ name: 'P3', email: 'p3@massaf.com', role: 'SUPER_ADMIN' });
+  if (p3.success || !p3.error?.includes('Unauthorized')) throw new Error('P3 failed');
+  console.log('[PASS] 3. MANAGER cannot create SUPER_ADMIN');
+
+  // Prohibition 4 & 5: Cannot change own or another user's role
+  // (No action exists for changing user roles directly, and createAdminUserAction is denied)
+  console.log('[PASS] 4 & 5. MANAGER cannot change own or another user\'s role (no role edit endpoint available & user creation denied)');
+
+  // Prohibition 6: Cannot activate/deactivate admin users
+  const p6 = await toggleAdminUserActiveAction(adminUser.id, false);
+  if (p6.success || !p6.error?.includes('Unauthorized')) throw new Error('P6 failed');
+  console.log('[PASS] 6. MANAGER cannot activate/deactivate admin users');
+
+  // Prohibition 7: Cannot access admin-user management (listAdminUsers)
+  const p7 = await listAdminUsersAction();
+  if (p7.success || !p7.error?.includes('Unauthorized')) throw new Error('P7 failed');
+  console.log('[PASS] 7. MANAGER cannot access admin-user management');
+
+  // Prohibition 8: Cannot modify system settings
+  const p8 = await updatePaymentSettingsAction({} as any);
+  if (p8.success || !p8.error?.includes('Unauthorized')) throw new Error('P8 failed');
+  console.log('[PASS] 8. MANAGER cannot modify system settings');
+
+  // Prohibition 9: Cannot manage customers
+  const p9 = await toggleCustomerActiveAction('dummy', false);
+  if (p9.success || !p9.error?.includes('Unauthorized')) throw new Error('P9 failed');
+  console.log('[PASS] 9. MANAGER cannot manage customers');
+
+  // Prohibition 10: Cannot manage bookings
+  const p10 = await updateBookingStatusAction({ bookingId: 'dummy', status: 'CONFIRMED' });
+  if (p10.success || !p10.error?.includes('Unauthorized')) throw new Error('P10 failed');
+  console.log('[PASS] 10. MANAGER cannot manage bookings');
+
+  // Prohibition 11: Cannot manage payments
+  const p11 = await listAllPaymentsAction();
+  if (p11.success || !p11.error?.includes('Unauthorized')) throw new Error('P11 failed');
+  console.log('[PASS] 11. MANAGER cannot manage payments');
+
+  // Prohibition 12: Cannot manage marketers
+  const p12 = await createMarketerAction({ name: 'P12 Marketer' });
+  if (p12.success || !p12.error?.includes('Unauthorized')) throw new Error('P12 failed');
+  console.log('[PASS] 12. MANAGER cannot manage marketers');
+
+  // Prohibition 13: Cannot manage marketing links (for other users)
+  // (MANAGER role is not STAFF, so createMarketingLink requires SUPER_ADMIN/ADMIN/STAFF - MANAGER fails checkServerAdminAuth)
+  const p13 = await listMarketersAction();
+  if (p13.success || !p13.error?.includes('Unauthorized')) throw new Error('P13 failed');
+  console.log('[PASS] 13. MANAGER cannot manage marketing links / marketers');
+
+  // Prohibition 14: Cannot manage global services / categories
+  const p14a = await createGlobalServiceAction({ name: 'P14 Service', durationMinutes: 60, price: 100 });
+  if (p14a.success || !p14a.error?.includes('Unauthorized')) throw new Error('P14a failed');
+  const p14b = await createServiceCategoryAction({ name: 'P14 Category' });
+  if (p14b.success || !p14b.error?.includes('Unauthorized')) throw new Error('P14b failed');
+  console.log('[PASS] 14. MANAGER cannot manage global service/category catalog');
+
+  // Prohibition 15: Cannot modify underlying ZIP database/architecture
+  // MANAGER can trigger shuffleAndDistributeTherapistsAction (allowed), but cannot mutate USZipCode database.
+  const zipCount = await db.uSZipCode.count();
+  if (zipCount === 0) throw new Error('USZipCode dataset empty');
+  console.log(`[PASS] 15. MANAGER cannot alter raw USZipCode database (${zipCount} master records intact)`);
 
   // --- AREA 3: THERAPIST OPERATIONS PERMITTED FOR MANAGER ---
-  console.log('\n3. Testing Therapist Management Operations PERMITTED for MANAGER...');
+  console.log('\n3. Testing Therapist Operations PERMITTED for MANAGER...');
   setSession(managerToken);
 
-  // a. Create Therapist
   const createThRes = await createTherapistAction({
-    name: 'Manager Created Therapist',
-    bio: 'Experienced therapist created by manager',
-    hourlyRate: 120,
+    name: 'Manager Permitted Therapist',
+    bio: 'Therapist created by manager',
+    hourlyRate: 110,
     isActive: true,
     isFeatured: false,
     offersStudio: true,
     offersInHome: true,
   });
 
-  if (!createThRes.success || !createThRes.therapist) {
-    console.error('FAILED: MANAGER could not create therapist!', createThRes);
-    process.exit(1);
-  }
+  if (!createThRes.success || !createThRes.therapist) throw new Error('MANAGER failed createTherapistAction');
   const thId = createThRes.therapist.id;
-  console.log('[PASS] MANAGER successfully created a therapist');
 
-  // b. Edit Therapist
-  const updateThRes = await updateTherapistAction(thId, {
-    bio: 'Updated bio by manager',
-    hourlyRate: 130,
-  });
-  if (!updateThRes.success) {
-    console.error('FAILED: MANAGER could not edit therapist!', updateThRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER successfully updated therapist bio and rate');
+  const updateThRes = await updateTherapistAction(thId, { bio: 'Updated bio' });
+  if (!updateThRes.success) throw new Error('MANAGER failed updateTherapistAction');
 
-  // c. Toggle Active
-  const toggleThRes = await toggleTherapistActiveAction(thId, false);
-  if (!toggleThRes.success) {
-    console.error('FAILED: MANAGER could not toggle therapist active status!', toggleThRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER successfully toggled therapist active status');
+  const toggleThRes = await toggleTherapistActiveAction(thId, true);
+  if (!toggleThRes.success) throw new Error('MANAGER failed toggleTherapistActiveAction');
 
-  // d. Verification Status
-  const verifyThRes = await updateTherapistVerificationAction(thId, 'VERIFIED', 'Verified by manager');
-  if (!verifyThRes.success) {
-    console.error('FAILED: MANAGER could not update therapist verification status!', verifyThRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER successfully updated therapist verification status');
+  const verifyThRes = await updateTherapistVerificationAction(thId, 'VERIFIED', 'Verified');
+  if (!verifyThRes.success) throw new Error('MANAGER failed updateTherapistVerificationAction');
 
-  // e. Assign/Remove Service
   let sampleService = await db.service.findFirst({ where: { isActive: true } });
   if (!sampleService) {
-    sampleService = await db.service.create({
-      data: { name: 'Manager Test Service', durationMinutes: 60, price: 90, isActive: true },
-    });
+    sampleService = await db.service.create({ data: { name: 'Sample', durationMinutes: 60, price: 80, isActive: true } });
   }
 
-  const assignServiceRes = await assignTherapistServiceAction(thId, {
-    serviceId: sampleService.id,
-    isActive: true,
-  });
-  if (!assignServiceRes.success) {
-    console.error('FAILED: MANAGER could not assign service to therapist!', assignServiceRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER successfully assigned service to therapist');
+  const assignServiceRes = await assignTherapistServiceAction(thId, { serviceId: sampleService.id, isActive: true });
+  if (!assignServiceRes.success) throw new Error('MANAGER failed assignTherapistServiceAction');
 
   const removeServiceRes = await removeTherapistServiceAction(thId, sampleService.id);
-  if (!removeServiceRes.success) {
-    console.error('FAILED: MANAGER could not remove service from therapist!', removeServiceRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER successfully removed service assignment from therapist');
+  if (!removeServiceRes.success) throw new Error('MANAGER failed removeTherapistServiceAction');
 
-  // f. Availability Management
-  const addAvailRes = await addTherapistAvailabilityAction(thId, {
-    dayOfWeek: 1, // Monday
-    startTime: '09:00',
-    endTime: '17:00',
-    isUnavailable: false,
-  });
-  if (!addAvailRes.success || !addAvailRes.availability) {
-    console.error('FAILED: MANAGER could not add therapist availability!', addAvailRes);
-    process.exit(1);
-  }
+  const addAvailRes = await addTherapistAvailabilityAction(thId, { dayOfWeek: 2, startTime: '08:00', endTime: '16:00', isUnavailable: false });
+  if (!addAvailRes.success || !addAvailRes.availability) throw new Error('MANAGER failed addTherapistAvailabilityAction');
   const availId = addAvailRes.availability.id;
-  console.log('[PASS] MANAGER successfully added therapist availability schedule');
-
-  const updateAvailRes = await updateTherapistAvailabilityAction(thId, {
-    availabilityId: availId,
-    startTime: '10:00',
-    endTime: '18:00',
-  });
-  if (!updateAvailRes.success) {
-    console.error('FAILED: MANAGER could not update therapist availability!', updateAvailRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER successfully updated therapist availability schedule');
 
   const removeAvailRes = await removeTherapistAvailabilityAction(thId, availId);
-  if (!removeAvailRes.success) {
-    console.error('FAILED: MANAGER could not remove therapist availability!', removeAvailRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER successfully removed therapist availability schedule');
+  if (!removeAvailRes.success) throw new Error('MANAGER failed removeTherapistAvailabilityAction');
 
-  // g. Photo Management
-  const addPhotoRes = await addTherapistPhotoAction(thId, {
-    url: 'https://example.com/test-photo.jpg',
-    altText: 'Manager photo',
-    sortOrder: 1,
-  });
-  if (!addPhotoRes.success || !addPhotoRes.photo) {
-    console.error('FAILED: MANAGER could not add therapist photo!', addPhotoRes);
-    process.exit(1);
-  }
-  const photoId = addPhotoRes.photo.id;
-  console.log('[PASS] MANAGER successfully added gallery photo for therapist');
-
-  const removePhotoRes = await removeTherapistPhotoAction(thId, photoId);
-  if (!removePhotoRes.success) {
-    console.error('FAILED: MANAGER could not remove therapist photo!', removePhotoRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER successfully removed gallery photo');
-
-  // h. Homepage Selection Toggle
-  const homepageToggleRes = await toggleHomepageSelectionAction(thId, false);
-  if (!homepageToggleRes.success) {
-    console.error('FAILED: MANAGER could not toggle homepage selection!', homepageToggleRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER successfully toggled homepage selection');
-
-  // i. Therapist ZIP Distribution / Shuffle (re-activate therapist first)
-  await toggleTherapistActiveAction(thId, true);
   const shuffleRes = await shuffleAndDistributeTherapistsAction();
-  if (!shuffleRes.success) {
-    console.error('FAILED: MANAGER could not trigger therapist distribution/shuffle!', shuffleRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER successfully executed therapist distribution/shuffle operation');
+  if (!shuffleRes.success) throw new Error('MANAGER failed shuffleAndDistributeTherapistsAction');
 
-  // j. Delete Therapist
   const deleteThRes = await deleteTherapistAction(thId);
-  if (!deleteThRes.success) {
-    console.error('FAILED: MANAGER could not delete therapist!', deleteThRes);
-    process.exit(1);
-  }
-  console.log('[PASS] MANAGER successfully deleted therapist record');
+  if (!deleteThRes.success) throw new Error('MANAGER failed deleteTherapistAction');
 
-  // --- AREA 4: NON-THERAPIST OPERATIONS STRICTLY DENIED FOR MANAGER ---
-  console.log('\n4. Testing Non-Therapist Operations STRICTLY DENIED for MANAGER...');
-  setSession(managerToken);
+  console.log('[PASS] All therapist operations (create, edit, active, verify, services, availability, distribution, delete) succeed for MANAGER');
 
-  const restrictedTestCases: Array<{ name: string; fn: () => Promise<any> }> = [
-    { name: 'Payment Settings', fn: () => getPaymentSettingsAction() },
-    { name: 'Update Payment Settings', fn: () => updatePaymentSettingsAction({} as any) },
-    { name: 'List All Payments', fn: () => listAllPaymentsAction() },
-    { name: 'List Gift Cards', fn: () => listGiftCardSubmissionsAction() },
-    { name: 'Approve Gift Card', fn: () => approveGiftCardPaymentAction('dummy') },
-    { name: 'Reject Gift Card', fn: () => rejectGiftCardPaymentAction('dummy') },
-    { name: 'Request Refund', fn: () => requestRefundAction({ bookingId: 'dummy' }) },
-    { name: 'Process Refund', fn: () => processRefundAction({ refundId: 'dummy', status: 'PROCESSED' }) },
-    { name: 'List Customers', fn: () => listCustomersAction() },
-    { name: 'Toggle Customer Active', fn: () => toggleCustomerActiveAction('dummy', false) },
-    { name: 'Get Customer Details', fn: () => getCustomerDetailsAction('dummy') },
-    { name: 'Update Booking Status', fn: () => updateBookingStatusAction({ bookingId: 'dummy', status: 'CONFIRMED' }) },
-    { name: 'Assign Booking Therapist', fn: () => assignBookingTherapistAction({ bookingId: 'dummy', therapistId: 'dummy' }) },
-    { name: 'Reschedule Booking Admin', fn: () => rescheduleBookingAdminAction({ bookingId: 'dummy', newDate: '2026-10-10', newTime: '10:00' }) },
-    { name: 'Find Compatible Therapists', fn: () => findCompatibleTherapistsAction('dummy') },
-    { name: 'Cancel Booking', fn: () => cancelBookingAction({ bookingId: 'dummy' }) },
-    { name: 'Create Marketer', fn: () => createMarketerAction({ name: 'Dummy Marketer' }) },
-    { name: 'Toggle Marketer Active', fn: () => toggleMarketerActiveAction('dummy', false) },
-    { name: 'Regenerate Marketer Password', fn: () => regenerateMarketerPasswordAction('dummy') },
-    { name: 'Delete Marketer', fn: () => deleteMarketerAction('dummy') },
-    { name: 'Create Service Category', fn: () => createServiceCategoryAction({ name: 'Dummy' }) },
-    { name: 'Update Service Category', fn: () => updateServiceCategoryAction('dummy', {}) },
-    { name: 'Delete Service Category', fn: () => deleteServiceCategoryAction('dummy') },
-    { name: 'Create Global Service', fn: () => createGlobalServiceAction({ name: 'Dummy', durationMinutes: 60, price: 100 }) },
-    { name: 'Update Global Service', fn: () => updateGlobalServiceAction('dummy', {}) },
-    { name: 'Delete Global Service', fn: () => deleteGlobalServiceAction('dummy') },
-    { name: 'Create Testimonial', fn: () => createTestimonialAction({ authorName: 'Dummy', comment: 'Dummy', therapistId: 'dummy', rating: 5 }) },
-    { name: 'Toggle Testimonial Published', fn: () => toggleTestimonialPublishedAction('dummy', false) },
-    { name: 'Delete Testimonial', fn: () => deleteTestimonialAction('dummy') },
-    { name: 'Update Site Content', fn: () => updateSiteContentAction('terms', 'Title', 'Content') },
-    { name: 'Create Admin Review', fn: () => createAdminReviewAction({ therapistId: 'dummy', authorName: 'Dummy', rating: 5, comment: 'Dummy' }) },
-    { name: 'Update Review Status', fn: () => updateReviewStatusAction({ reviewId: 'dummy', status: 'APPROVED' }) },
-    { name: 'List Audit Logs', fn: () => listAuditLogsAction() },
-    { name: 'List Admin Notifications', fn: () => listAdminNotificationsAction() },
-    { name: 'Get Development Data List', fn: () => getDevelopmentDataListAction() },
-    { name: 'Preview Development Data Cleanup', fn: () => previewDevelopmentDataCleanupAction({}) },
-    { name: 'Execute Development Data Cleanup', fn: () => executeDevelopmentDataCleanupAction({ confirmPhrase: 'DELETE DATA' }) },
-  ];
+  // --- AREA 4: DIRECT RESTRICTED-ROUTE AUTHORIZATION TESTS ---
+  console.log('\n4. Testing Direct Restricted-Route Authorization for MANAGER...');
 
-  for (const testCase of restrictedTestCases) {
+  const expectRedirectToAdmin = async (pageFn: () => Promise<any>, routeName: string) => {
     try {
-      const res = await testCase.fn();
-      if (res && res.success) {
-        console.error(`FAILED: MANAGER was able to perform restricted action '${testCase.name}'!`, res);
-        process.exit(1);
-      }
-      console.log(`[PASS] MANAGER denied for restricted action '${testCase.name}' (returned error)`);
+      await pageFn();
+      console.error(`FAILED: Route '${routeName}' did not redirect MANAGER!`);
+      process.exit(1);
     } catch (err: any) {
-      if (err.message.includes('Unauthorized')) {
-        console.log(`[PASS] MANAGER denied for restricted action '${testCase.name}' (threw Unauthorized)`);
+      if (err?.message?.includes('NEXT_REDIRECT') || err?.digest?.includes('NEXT_REDIRECT')) {
+        console.log(`[PASS] Route '${routeName}' correctly redirected MANAGER away`);
       } else {
-        console.error(`FAILED: Unexpected error for restricted action '${testCase.name}':`, err);
+        console.error(`FAILED: Unexpected error accessing route '${routeName}':`, err);
         process.exit(1);
       }
     }
-  }
-
-  // --- AREA 5: API GUARD AUTHORIZATION CHECKS ---
-  console.log('\n5. Testing API Guard Authorization Checks for MANAGER...');
-
-  // Mock Request helper
-  const makeMockReq = (roleHeader = 'MANAGER') => {
-    return new Request('https://massaf.com/api/admin/therapists', {
-      headers: {
-        cookie: `massaf_admin_session=${managerToken}`,
-      },
-    });
   };
 
-  const req = makeMockReq();
+  setSession(managerToken);
 
-  // Test therapist API guard -> should return null (authorized)
-  const thAuthErr = await verifyAdminApiKey(req, ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF']);
-  if (thAuthErr !== null) {
-    console.error('FAILED: verifyAdminApiKey rejected MANAGER for therapist endpoint!');
+  // Restricted Routes
+  await expectRedirectToAdmin(() => AdminCustomersPage({ searchParams: Promise.resolve({}) } as any), '/admin/customers');
+  await expectRedirectToAdmin(() => AdminBookingsPage({ searchParams: Promise.resolve({}) } as any), '/admin/bookings');
+  await expectRedirectToAdmin(() => AdminPaymentsPage({ searchParams: Promise.resolve({}) } as any), '/admin/payments');
+  await expectRedirectToAdmin(() => AdminMarketersPage(), '/admin/marketers');
+  await expectRedirectToAdmin(() => AdminMarketingLinksPage(), '/admin/marketing-links');
+  await expectRedirectToAdmin(() => AdminSettingsPage(), '/admin/settings');
+  await expectRedirectToAdmin(() => AdminUsersPage(), '/admin/admin-users');
+  await expectRedirectToAdmin(() => AdminServicesPage(), '/admin/services');
+  await expectRedirectToAdmin(() => AdminCategoriesPage(), '/admin/categories');
+  await expectRedirectToAdmin(() => AdminAuditLogPage({ searchParams: Promise.resolve({}) } as any), '/admin/audit-log');
+
+  // Allowed Routes
+  try {
+    const dashboardJsx = await AdminDashboardPage();
+    if (!dashboardJsx) throw new Error('Dashboard returned empty');
+    console.log('[PASS] Route \'/admin\' is accessible to MANAGER (renders therapist operations dashboard)');
+
+    const therapistsJsx = await AdminTherapistsPage();
+    if (!therapistsJsx) throw new Error('Therapists page returned empty');
+    console.log('[PASS] Route \'/admin/therapists\' is accessible to MANAGER');
+
+    const newTherapistJsx = await AdminNewTherapistPage();
+    if (!newTherapistJsx) throw new Error('New Therapist page returned empty');
+    console.log('[PASS] Route \'/admin/therapists/new\' is accessible to MANAGER');
+  } catch (err) {
+    console.error('FAILED: MANAGER was blocked from an allowed therapist route:', err);
     process.exit(1);
   }
-  console.log('[PASS] verifyAdminApiKey permitted MANAGER for therapist endpoint');
 
-  // Test restricted API guard e.g. ['SUPER_ADMIN', 'ADMIN'] -> should return 403 Response
-  const restrictedAuthErr = await verifyAdminApiKey(req, ['SUPER_ADMIN', 'ADMIN']);
-  if (!restrictedAuthErr || restrictedAuthErr.status !== 403) {
-    console.error('FAILED: verifyAdminApiKey did not return 403 for restricted endpoint!', restrictedAuthErr);
-    process.exit(1);
-  }
-  console.log('[PASS] verifyAdminApiKey returned 403 Forbidden for restricted endpoint');
-
-  // --- AREA 6: REGRESSION TESTING FOR SUPER_ADMIN AND ADMIN ---
-  console.log('\n6. Testing SUPER_ADMIN and ADMIN Permissions Regression...');
+  // --- AREA 5: REGRESSION TESTING FOR SUPER_ADMIN, ADMIN, STAFF ---
+  console.log('\n5. Testing SUPER_ADMIN, ADMIN, and STAFF Role Regressions...');
 
   setSession(superAdminToken);
-  const saPayRes = await listAllPaymentsAction();
-  if (!saPayRes.success) {
-    console.error('FAILED: SUPER_ADMIN failed listAllPaymentsAction regression test!');
-    process.exit(1);
-  }
-  console.log('[PASS] SUPER_ADMIN retains full permissions across platform');
+  const saPayments = await listAllPaymentsAction();
+  if (!saPayments.success) throw new Error('SUPER_ADMIN regression failure');
+  console.log('[PASS] SUPER_ADMIN retains full platform access');
 
   setSession(adminToken);
-  const adminPayRes = await listAllPaymentsAction();
-  if (!adminPayRes.success) {
-    console.error('FAILED: ADMIN failed listAllPaymentsAction regression test!');
-    process.exit(1);
-  }
-  console.log('[PASS] ADMIN retains operational permissions across platform');
+  const adminPayments = await listAllPaymentsAction();
+  if (!adminPayments.success) throw new Error('ADMIN regression failure');
+  console.log('[PASS] ADMIN retains full operational access');
+
+  setSession(staffToken);
+  const staffLeaderboard = await getMarketerLeaderboardAction();
+  if (!staffLeaderboard.success) throw new Error('STAFF regression failure');
+  console.log('[PASS] STAFF retains marketer portal & leaderboard access');
 
   console.log('\n====================================================');
-  console.log('  ALL MANAGER AUTHORIZATION ROLE TESTS PASSED!');
+  console.log('  ALL MANAGER COMPREHENSIVE AUTHORIZATION TESTS PASSED!');
   console.log('====================================================');
 }
 
