@@ -378,8 +378,8 @@ export async function getVerifiedAdminSession(reqCookieHeader?: string): Promise
 
     if (!adminUser || !adminUser.isActive) return null;
 
-    // Strict Authoritative Role Verification (SUPER_ADMIN, ADMIN, STAFF)
-    const allowedRoles = ['SUPER_ADMIN', 'ADMIN', 'STAFF'];
+    // Strict Authoritative Role Verification (SUPER_ADMIN, ADMIN, MANAGER, STAFF)
+    const allowedRoles = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF'];
     if (!allowedRoles.includes(String(adminUser.role))) {
       return null;
     }

@@ -14,6 +14,9 @@ export default async function AdminCategoriesPage() {
   if (session.role === 'STAFF') {
     redirect('/admin/marketer');
   }
+  if (session.role === 'MANAGER') {
+    redirect('/admin');
+  }
   const categories = await db.serviceCategory.findMany({
     orderBy: { sortOrder: 'asc' },
     include: {

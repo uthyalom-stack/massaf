@@ -1,0 +1,3 @@
+-- Non-destructive migration adding MANAGER to Role enum in SQLite schema
+-- Note: In SQLite, Prisma represents Role enum as TEXT on the User table.
+-- Existing values: SUPER_ADMIN, ADMIN, STAFF. New value added: MANAGER.

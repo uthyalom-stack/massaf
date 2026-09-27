@@ -14,6 +14,7 @@ export default async function AdminAnalyticsPage() {
   const session = await getVerifiedAdminSession();
   if (!session) redirect('/admin/login');
   if (session.role === 'STAFF') redirect('/admin/marketer');
+  if (session.role === 'MANAGER') redirect('/admin');
 
   const [
     allBookings,

@@ -16,6 +16,9 @@ export default async function AdminMarketingLinksPage() {
   if (!session) {
     redirect('/admin/login');
   }
+  if (session.role === 'MANAGER') {
+    redirect('/admin');
+  }
 
   // STRICT SERVER-SIDE DATA ISOLATION:
   // STAFF marketers must ONLY see their own marketing links.

@@ -170,6 +170,8 @@ async function deployTursoMigrations() {
         isSchemaAlreadyPresent = hasAdminNote && hasRefundRecord && hasSupportRequest;
       } else if (mig.dirName.includes('add_overnight_fields')) {
         isSchemaAlreadyPresent = await checkColumnExists(client, 'Therapist', 'overnightAvailable');
+      } else if (mig.dirName.includes('add_manager_role')) {
+        isSchemaAlreadyPresent = await checkTableExists(client, 'User');
       }
 
       const migrationId = crypto.randomUUID();

@@ -69,7 +69,7 @@ function safeRevalidatePath(path: string) {
 
 export async function previewTherapistCsvAction(csvContent: string) {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
 
     if (!csvContent || !csvContent.trim()) {
       return { success: false, error: 'CSV file content is empty.' };
@@ -148,7 +148,7 @@ export async function executeTherapistCsvImportAction(input: {
   }>;
 }) {
   try {
-    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
 
     if (!input || !Array.isArray(input.rows) || input.rows.length === 0) {
       return { success: false, error: 'No import rows provided.' };
@@ -373,7 +373,7 @@ export async function executeTherapistCsvImportAction(input: {
 
 export async function createTherapistAction(input: unknown) {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
     const rawInput = input as Record<string, any>;
     const validated = therapistBaseSchema.parse(input);
 
@@ -854,7 +854,7 @@ export async function updateTherapistVerificationAction(
   notes?: string
 ) {
   try {
-    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
 
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
@@ -926,7 +926,7 @@ export async function listAdminUsersAction() {
   }
 }
 
-export async function createAdminUserAction(input: { name: string; email: string; role?: 'ADMIN' | 'SUPER_ADMIN' }) {
+export async function createAdminUserAction(input: { name: string; email: string; role?: 'ADMIN' | 'MANAGER' | 'SUPER_ADMIN' }) {
   try {
     const adminSession = await checkServerAdminAuth(['SUPER_ADMIN']);
 
@@ -949,7 +949,7 @@ export async function createAdminUserAction(input: { name: string; email: string
 
     const tempPassword = generateSecurePassword();
     const passwordHash = await hashPassword(tempPassword);
-    const assignedRole = input.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : 'ADMIN';
+    const assignedRole = input.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : input.role === 'MANAGER' ? 'MANAGER' : 'ADMIN';
 
     const newUser = await db.user.create({
       data: {
@@ -1692,7 +1692,7 @@ function shuffleArray<T>(array: T[]): T[] {
  */
 export async function shuffleAndDistributeTherapistsAction() {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
 
     // 1. Fetch all active therapists
     const activeTherapists = await db.therapist.findMany({
@@ -2192,7 +2192,7 @@ export async function rejectGiftCardPaymentAction(bookingId: string, reason?: st
 
 export async function toggleHomepageSelectionAction(therapistId: string, isHomepageSelected: boolean) {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -3801,7 +3801,7 @@ export async function updateTherapistAction(id: string, input: unknown) {
   let newlyUploadedUrl: string | null = null;
 
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
     const therapist = await db.therapist.findUnique({ where: { id } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -3895,7 +3895,7 @@ export async function toggleTherapistActiveAction(id: string, isActive: boolean)
 
 export async function deleteTherapistAction(id: string) {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
     const therapist = await db.therapist.findUnique({
       where: { id },
       include: {
@@ -3947,7 +3947,7 @@ export async function addTherapistPhotoAction(therapistId: string, input: unknow
   let uploadedUrl: string | null = null;
 
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
 
     if (typeof input === 'object' && input !== null && 'url' in input && typeof (input as { url: unknown }).url === 'string') {
       uploadedUrl = (input as { url: string }).url;
@@ -3999,7 +3999,7 @@ export async function addTherapistPhotoAction(therapistId: string, input: unknow
 
 export async function updateTherapistPhotoOrderAction(therapistId: string, input: unknown) {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -4037,7 +4037,7 @@ export async function updateTherapistPhotoOrderAction(therapistId: string, input
 
 export async function removeTherapistPhotoAction(therapistId: string, photoId: string) {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
     const photo = await db.therapistPhoto.findFirst({
       where: { id: photoId, therapistId },
     });
@@ -4071,7 +4071,7 @@ export async function removeTherapistPhotoAction(therapistId: string, photoId: s
 
 export async function assignTherapistServiceAction(therapistId: string, input: unknown) {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -4128,7 +4128,7 @@ export async function assignTherapistServiceAction(therapistId: string, input: u
 
 export async function removeTherapistServiceAction(therapistId: string, serviceId: string) {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
     const therapistService = await db.therapistService.findUnique({
       where: {
         therapistId_serviceId: {
@@ -4166,7 +4166,7 @@ export async function removeTherapistServiceAction(therapistId: string, serviceI
 
 export async function addServiceAreaAction(therapistId: string, input: unknown) {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -4240,7 +4240,7 @@ export async function addServiceAreaAction(therapistId: string, input: unknown) 
 
 export async function removeServiceAreaAction(therapistId: string, areaId: string) {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
     const serviceArea = await db.serviceArea.findFirst({
       where: { id: areaId, therapistId },
     });
@@ -4282,7 +4282,7 @@ function expandDayRange(startDay: number, endDay: number): number[] {
 
 export async function addTherapistAvailabilityAction(therapistId: string, input: unknown) {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -4379,7 +4379,7 @@ export async function addTherapistAvailabilityAction(therapistId: string, input:
 
 export async function updateTherapistAvailabilityAction(therapistId: string, input: unknown) {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
     const therapist = await db.therapist.findUnique({ where: { id: therapistId } });
     if (!therapist) {
       return { success: false, error: 'Therapist not found.' };
@@ -4457,7 +4457,7 @@ export async function updateTherapistAvailabilityAction(therapistId: string, inp
 
 export async function removeTherapistAvailabilityAction(therapistId: string, availabilityId: string) {
   try {
-    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
     const availability = await db.therapistAvailability.findFirst({
       where: { id: availabilityId, therapistId },
     });
