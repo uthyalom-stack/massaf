@@ -31,6 +31,7 @@ export async function POST(request: Request) {
     const activeTherapists = await getActiveTherapists();
 
     const matches = await rankTherapistsForMatch(criteria, activeTherapists);
+    const totalMatches = matches.length;
 
     // Apply customer-specific rolling 5-therapist rotation if ZIP is supplied
     let finalMatches = matches;
@@ -65,6 +66,7 @@ export async function POST(request: Request) {
       {
         success: true,
         count: finalMatches.length,
+        totalMatches,
         matches: finalMatches,
       },
       { status: 200 }
