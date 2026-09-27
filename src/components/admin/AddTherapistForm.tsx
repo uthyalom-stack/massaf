@@ -27,6 +27,8 @@ export function AddTherapistForm({ availableGlobalServices = [] }: AddTherapistF
     isFeatured: false,
     offersStudio: true,
     offersInHome: true,
+    overnightAvailable: false,
+    overnightMultiplier: 4.0,
   });
 
   // Multi-Service selection state
@@ -94,6 +96,8 @@ export function AddTherapistForm({ availableGlobalServices = [] }: AddTherapistF
         isFeatured: formData.isFeatured,
         offersStudio: formData.offersStudio,
         offersInHome: formData.offersInHome,
+        overnightAvailable: formData.overnightAvailable,
+        overnightMultiplier: formData.overnightMultiplier,
       });
 
       if (!res.success || !res.therapist?.id) {
@@ -451,6 +455,33 @@ export function AddTherapistForm({ availableGlobalServices = [] }: AddTherapistF
                 />
                 <span className="font-semibold text-slate-800">Offers In-Home Appointments</span>
               </label>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.overnightAvailable}
+                  onChange={(e) => setFormData({ ...formData, overnightAvailable: e.target.checked })}
+                  className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+                />
+                <span className="font-semibold text-slate-800">Offers Overnight Appointments</span>
+              </label>
+
+              {formData.overnightAvailable && (
+                <div className="col-span-1 sm:col-span-2 pt-2 flex items-center gap-3">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider whitespace-nowrap">
+                    Overnight Price Multiplier (× Base Service Price)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="1"
+                    required
+                    value={formData.overnightMultiplier}
+                    onChange={(e) => setFormData({ ...formData, overnightMultiplier: parseFloat(e.target.value) || 4.0 })}
+                    className="w-24 px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg font-bold text-emerald-800 focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                  />
+                </div>
+              )}
             </div>
           </div>
 

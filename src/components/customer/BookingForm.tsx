@@ -55,16 +55,24 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     return selectedTherapist?.services[0] || null;
   });
 
-  // Selected duration minutes state (30, 45, 60, 90, 120 mins)
-  const [selectedDurationMinutes, setSelectedDurationMinutes] = useState<number>(() => {
-    return selectedService?.durationMinutes || 60;
-  });
+  // Selected duration minutes state (60, 120, 180, 240, 300, 360, or 720 for Overnight)
+  const [selectedDurationMinutes, setSelectedDurationMinutes] = useState<number>(60);
+  const [isOvernight, setIsOvernight] = useState<boolean>(false);
 
-  // Calculate dynamic hourly total: (HourlyRate * DurationHours)
+  // Calculate dynamic total from Service.price:
+  // Normal: Service.price * (DurationMinutes / 60)
+  // Overnight: Service.price * (overnightMultiplier || 4)
   const calculatedTotal = useMemo(() => {
-    const hourlyRate = selectedTherapist?.startingPrice || 100.0;
-    return Math.round(hourlyRate * (selectedDurationMinutes / 60) * 100) / 100;
-  }, [selectedTherapist, selectedDurationMinutes]);
+    if (!selectedService) return 0;
+    const baseServicePrice = selectedService.price;
+
+    if (isOvernight || selectedDurationMinutes === 720) {
+      const multiplier = (selectedTherapist as any)?.overnightMultiplier || 4.0;
+      return Math.round(baseServicePrice * multiplier * 100) / 100;
+    }
+
+    return Math.round(baseServicePrice * (selectedDurationMinutes / 60) * 100) / 100;
+  }, [selectedService, selectedTherapist, selectedDurationMinutes, isOvernight]);
 
   // Location state
   const [locationType, setLocationType] = useState<'STUDIO' | 'IN_HOME'>(() => {
@@ -210,7 +218,8 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     const payload = {
       therapistId: selectedTherapist?.id || '',
       serviceId: selectedService?.id || '',
-      durationMinutes: selectedDurationMinutes,
+      durationMinutes: isOvernight ? 720 : selectedDurationMinutes,
+      isOvernight,
       locationType,
       date,
       time,
@@ -271,7 +280,8 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     const payload = {
       therapistId: selectedTherapist.id,
       serviceId: selectedService.id,
-      durationMinutes: selectedDurationMinutes,
+      durationMinutes: isOvernight ? 720 : selectedDurationMinutes,
+      isOvernight,
       locationType,
       date,
       time,
@@ -561,7 +571,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                             </div>
                           </div>
                           <div className="text-right shrink-0 pl-7 sm:pl-0">
-                            <p className="text-base font-extrabold text-slate-900">${selectedTherapist.startingPrice}/hr</p>
+                            <p className="text-base font-extrabold text-slate-900">${svc.price}/hr</p>
                             <p className="text-xs font-medium text-slate-500">Hourly Rate</p>
                           </div>
                         </div>
@@ -569,31 +579,47 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                         {isSelected && (
                           <div className="pt-3 border-t border-slate-200/80 space-y-2">
                             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                              Select Duration / Hours
+                              Select Duration
                             </label>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                               {[
-                                { min: 60, label: '1 Hour' },
-                                { min: 120, label: '2 Hours' },
-                                { min: 180, label: '3 Hours' },
-                                { min: 240, label: '4 Hours' },
-                              ].map((dur) => (
-                                <button
-                                  key={dur.min}
-                                  type="button"
-                                  onClick={() => setSelectedDurationMinutes(dur.min)}
-                                  className={`py-2 px-2 rounded-xl text-xs font-bold border text-center transition-all cursor-pointer ${
-                                    selectedDurationMinutes === dur.min
-                                      ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
-                                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
-                                  }`}
-                                >
-                                  {dur.label}
-                                </button>
-                              ))}
+                                { min: 60, label: '1 Hour', isOv: false },
+                                { min: 120, label: '2 Hours', isOv: false },
+                                { min: 180, label: '3 Hours', isOv: false },
+                                { min: 240, label: '4 Hours', isOv: false },
+                                { min: 300, label: '5 Hours', isOv: false },
+                                { min: 360, label: '6 Hours', isOv: false },
+                                ...((selectedTherapist as any)?.overnightAvailable ? [{ min: 720, label: 'Overnight', isOv: true }] : []),
+                              ].map((dur) => {
+                                const isCurrentSelected = dur.isOv
+                                  ? isOvernight
+                                  : (!isOvernight && selectedDurationMinutes === dur.min);
+
+                                return (
+                                  <button
+                                    key={dur.min}
+                                    type="button"
+                                    onClick={() => {
+                                      setIsOvernight(dur.isOv);
+                                      setSelectedDurationMinutes(dur.min);
+                                    }}
+                                    className={`py-2 px-2 rounded-xl text-xs font-bold border text-center transition-all cursor-pointer ${
+                                      isCurrentSelected
+                                        ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                                    }`}
+                                  >
+                                    {dur.label}
+                                  </button>
+                                );
+                              })}
                             </div>
                             <div className="text-xs font-medium text-emerald-900 pt-1 flex justify-between items-center bg-emerald-100/60 p-2.5 rounded-xl border border-emerald-200/60">
-                              <span>Pricing: ${selectedTherapist.startingPrice}/hour × {selectedDurationMinutes / 60} hour(s)</span>
+                              <span>
+                                {isOvernight
+                                  ? `Overnight Calculation: $${svc.price} base × ${(selectedTherapist as any)?.overnightMultiplier || 4} multiplier`
+                                  : `Hourly Calculation: $${svc.price}/hr × ${selectedDurationMinutes / 60} hour(s)`}
+                              </span>
                               <span className="font-extrabold text-sm text-emerald-950">${calculatedTotal} USD</span>
                             </div>
                           </div>

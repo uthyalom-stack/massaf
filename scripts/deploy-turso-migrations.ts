@@ -168,6 +168,8 @@ async function deployTursoMigrations() {
         const hasRefundRecord = await checkTableExists(client, 'RefundRecord');
         const hasSupportRequest = await checkTableExists(client, 'SupportRequest');
         isSchemaAlreadyPresent = hasAdminNote && hasRefundRecord && hasSupportRequest;
+      } else if (mig.dirName.includes('add_overnight_fields')) {
+        isSchemaAlreadyPresent = await checkColumnExists(client, 'Therapist', 'overnightAvailable');
       }
 
       const migrationId = crypto.randomUUID();

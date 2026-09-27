@@ -7,7 +7,7 @@ import { generateTimePresetOptions, isAppointmentTimeAvailable } from '../src/li
 import { bookingSchema } from '../src/lib/validations/booking';
 
 async function main() {
-  console.log('=== Running Strengthened Production MASSAF V1 Security & Duration Test Suite ===\n');
+  console.log('=== Running Production MASSAF V1 Security, Pricing & Duration Test Suite ===\n');
 
   // 1. Checkout capability tokens
   console.log('[Test 1] Checkout Capability Tokens & Isolation');
@@ -66,10 +66,10 @@ async function main() {
   }
   console.log('  ✅ All spreadsheet formula triggers (=, +, -, @, \\t) successfully sanitized.');
 
-  // 3. Server-Side Duration Schema Validation (60, 120, 180, 240 allowed; 30, 45, 90, 150, 300 rejected)
+  // 3. Server-Side Duration Schema Validation (60, 120, 180, 240, 300, 360, 720 allowed; 30, 45, 90, 150, 420 rejected)
   console.log('[Test 3] Production Duration Minutes Schema Validation (bookingSchema)');
-  const validDurations = [60, 120, 180, 240];
-  const invalidDurations = [30, 45, 90, 150, 300];
+  const validDurations = [60, 120, 180, 240, 300, 360, 720];
+  const invalidDurations = [30, 45, 90, 150, 420];
 
   const basePayload = {
     therapistId: 'th-1',
@@ -106,20 +106,35 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('  ✅ Whole-hour durations (60, 120, 180, 240) accepted; non-standard durations (30, 45, 90, 150, 300) & missing duration rejected.');
+  console.log('  ✅ Durations (60, 120, 180, 240, 300, 360, 720) accepted; non-standard durations (30, 45, 90, 150, 420) & missing duration rejected.');
 
-  // 4. Hourly Price Calculation Server-Side Logic
-  console.log('[Test 4] Hourly Price Calculation Logic ($100/hr)');
-  const hourlyRate = 100.0;
-  const total60 = Math.round(hourlyRate * (60 / 60) * 100) / 100;
-  const total120 = Math.round(hourlyRate * (120 / 60) * 100) / 100;
-  const total180 = Math.round(hourlyRate * (180 / 60) * 100) / 100;
-  const total240 = Math.round(hourlyRate * (240 / 60) * 100) / 100;
+  // 4. Normal & Overnight Service Pricing Server-Side Calculation Logic (Service.price * hours / multiplier)
+  console.log('[Test 4] Service.price Base Pricing Calculation Logic');
+  const servicePriceNuru = 210.0;
+  const servicePriceHotStone = 150.0;
+  const overnightMultiplier = 4.0;
 
-  if (total60 === 100 && total120 === 200 && total180 === 300 && total240 === 400) {
-    console.log('  ✅ Server-side hourly price calculations verified ($100, $200, $300, $400).');
+  // Nuru 1 to 6 hours
+  const nuru1hr = Math.round(servicePriceNuru * 1 * 100) / 100;
+  const nuru3hr = Math.round(servicePriceNuru * 3 * 100) / 100;
+  const nuru6hr = Math.round(servicePriceNuru * 6 * 100) / 100;
+  const nuruOvernight = Math.round(servicePriceNuru * overnightMultiplier * 100) / 100;
+
+  // Hot Stone 3 hours and overnight
+  const hotStone3hr = Math.round(servicePriceHotStone * 3 * 100) / 100;
+  const hotStoneOvernight = Math.round(servicePriceHotStone * overnightMultiplier * 100) / 100;
+
+  if (
+    nuru1hr === 210 &&
+    nuru3hr === 630 &&
+    nuru6hr === 1260 &&
+    nuruOvernight === 840 &&
+    hotStone3hr === 450 &&
+    hotStoneOvernight === 600
+  ) {
+    console.log('  ✅ Service.price authoritative calculations verified: Nuru (1h=$210, 3h=$630, 6h=$1260, Ov=$840) & Hot Stone (3h=$450, Ov=$600).');
   } else {
-    console.error('  ❌ Hourly price calculation test failed!');
+    console.error('  ❌ Service.price calculation test failed!', { nuru1hr, nuru3hr, nuru6hr, nuruOvernight, hotStone3hr, hotStoneOvernight });
     process.exit(1);
   }
 
@@ -168,7 +183,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('\n=== All MASSAF V1 Security & Duration Tests Passed Successfully! ===\n');
+  console.log('\n=== All MASSAF V1 Security, Pricing & Duration Tests Passed Successfully! ===\n');
 }
 
 main().catch((err) => {

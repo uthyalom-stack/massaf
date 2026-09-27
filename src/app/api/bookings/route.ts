@@ -84,19 +84,42 @@ export async function POST(request: Request) {
     }
 
     const service = therapistService.service;
-    const requestedDuration = Number(data.durationMinutes);
-    if (![60, 120, 180, 240].includes(requestedDuration)) {
-      return NextResponse.json(
-        { error: 'Invalid appointment duration. Supported durations are 1, 2, 3, or 4 hours.' },
-        { status: 400 }
-      );
-    }
-    const durationMinutes = requestedDuration;
+    const isOvernightBooking = Boolean(data.isOvernight || data.durationMinutes === 720);
 
-    // Server-authoritative hourly rate calculation: Total = HourlyRate * (DurationMinutes / 60)
-    const hourlyRateUsed = therapist.hourlyRate || 100.0;
-    const calculatedTotal = Math.round(hourlyRateUsed * (durationMinutes / 60) * 100) / 100;
-    const authoritativePrice = calculatedTotal;
+    let durationMinutes: number;
+    let authoritativePrice: number;
+
+    if (isOvernightBooking) {
+      if (!therapist.overnightAvailable) {
+        return NextResponse.json(
+          { error: 'Overnight appointments are not offered by this therapist.' },
+          { status: 400 }
+        );
+      }
+
+      durationMinutes = 720; // 12 hours interval for overnight
+      const multiplier = therapist.overnightMultiplier && therapist.overnightMultiplier > 0
+        ? therapist.overnightMultiplier
+        : 4.0;
+
+      // Authoritative Overnight Price: Service.price * Therapist.overnightMultiplier
+      authoritativePrice = Math.round(service.price * multiplier * 100) / 100;
+    } else {
+      const requestedDuration = Number(data.durationMinutes);
+      if (![60, 120, 180, 240, 300, 360].includes(requestedDuration)) {
+        return NextResponse.json(
+          { error: 'Invalid appointment duration. Supported durations are 1, 2, 3, 4, 5, or 6 hours.' },
+          { status: 400 }
+        );
+      }
+
+      durationMinutes = requestedDuration;
+      // Authoritative Normal Price: Service.price * durationHours
+      authoritativePrice = Math.round(service.price * (durationMinutes / 60) * 100) / 100;
+    }
+
+    const hourlyRateUsed = service.price;
+    const calculatedTotal = authoritativePrice;
 
     // 4. Validate location type is supported by therapist & validate ServiceArea for IN_HOME
     if (data.locationType === 'STUDIO' && !therapist.offersStudio) {
@@ -290,6 +313,7 @@ export async function POST(request: Request) {
           hourlyRateUsed,
           calculatedTotal,
           amount: authoritativePrice,
+          isOvernight: isOvernightBooking,
           status: 'PENDING',
           paymentStatus: 'UNPAID',
         },

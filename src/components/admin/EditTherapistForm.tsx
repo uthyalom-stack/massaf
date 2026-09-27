@@ -78,6 +78,8 @@ export interface DetailedTherapist {
   isHomepageSelected?: boolean;
   offersStudio: boolean;
   offersInHome: boolean;
+  overnightAvailable?: boolean;
+  overnightMultiplier?: number;
   photos: PhotoData[];
   services: ServiceData[];
   availabilities: AvailabilityData[];
@@ -132,6 +134,8 @@ export function EditTherapistForm({
     isHomepageSelected: therapist.isHomepageSelected ?? false,
     offersStudio: therapist.offersStudio,
     offersInHome: therapist.offersInHome,
+    overnightAvailable: therapist.overnightAvailable ?? false,
+    overnightMultiplier: therapist.overnightMultiplier ?? 4.0,
   });
 
   // Local state for deferred profile image file & preview
@@ -285,6 +289,8 @@ export function EditTherapistForm({
         isHomepageSelected: basicForm.isHomepageSelected,
         offersStudio: basicForm.offersStudio,
         offersInHome: basicForm.offersInHome,
+        overnightAvailable: basicForm.overnightAvailable,
+        overnightMultiplier: basicForm.overnightMultiplier,
       });
 
       if (!res.success) {
@@ -1155,6 +1161,33 @@ export function EditTherapistForm({
                   />
                   <span className="font-semibold text-slate-800">Offers In-Home Appointments</span>
                 </label>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={basicForm.overnightAvailable}
+                    onChange={(e) => setBasicForm({ ...basicForm, overnightAvailable: e.target.checked })}
+                    className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+                  />
+                  <span className="font-semibold text-slate-800">Offers Overnight Appointments</span>
+                </label>
+
+                {basicForm.overnightAvailable && (
+                  <div className="col-span-1 sm:col-span-2 pt-2 flex items-center gap-3">
+                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider whitespace-nowrap">
+                      Overnight Price Multiplier (× Base Service Price)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="1"
+                      required
+                      value={basicForm.overnightMultiplier}
+                      onChange={(e) => setBasicForm({ ...basicForm, overnightMultiplier: parseFloat(e.target.value) || 4.0 })}
+                      className="w-24 px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg font-bold text-emerald-800 focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                    />
+                  </div>
+                )}
               </div>
             </div>
 
