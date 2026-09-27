@@ -29,6 +29,7 @@ interface BookingDetails {
 function SuccessContent() {
   const searchParams = useSearchParams();
   const bookingId = searchParams.get('id');
+  const checkoutTokenParam = searchParams.get('token') || searchParams.get('checkoutToken');
   const payErrorParam = searchParams.get('pay_error');
 
   const [booking, setBooking] = useState<BookingDetails | null>(null);
@@ -46,11 +47,23 @@ function SuccessContent() {
 
     try {
       setVerifying(true);
+      const headers: Record<string, string> = {};
+      if (checkoutTokenParam) {
+        headers['x-checkout-token'] = checkoutTokenParam;
+      }
+
       // Query payment status endpoint which re-checks PayLio if state is pending
-      const statusRes = await fetch(`/api/payments/status?bookingId=${bookingId}`);
+      const statusUrl = checkoutTokenParam
+        ? `/api/payments/status?bookingId=${bookingId}&checkoutToken=${encodeURIComponent(checkoutTokenParam)}`
+        : `/api/payments/status?bookingId=${bookingId}`;
+      const statusRes = await fetch(statusUrl, { headers });
+
       if (statusRes.ok) {
         // Now fetch full customer display details
-        const detailsRes = await fetch(`/api/bookings/details?id=${bookingId}`);
+        const detailsUrl = checkoutTokenParam
+          ? `/api/bookings/details?id=${bookingId}&checkoutToken=${encodeURIComponent(checkoutTokenParam)}`
+          : `/api/bookings/details?id=${bookingId}`;
+        const detailsRes = await fetch(detailsUrl, { headers });
         const data = await detailsRes.json();
         if (detailsRes.ok) {
           setBooking(data.booking);
@@ -83,9 +96,21 @@ function SuccessContent() {
 
       try {
         if (!ignore) setVerifying(true);
-        const statusRes = await fetch(`/api/payments/status?bookingId=${bookingId}`);
+        const headers: Record<string, string> = {};
+        if (checkoutTokenParam) {
+          headers['x-checkout-token'] = checkoutTokenParam;
+        }
+
+        const statusUrl = checkoutTokenParam
+          ? `/api/payments/status?bookingId=${bookingId}&checkoutToken=${encodeURIComponent(checkoutTokenParam)}`
+          : `/api/payments/status?bookingId=${bookingId}`;
+        const statusRes = await fetch(statusUrl, { headers });
+
         if (statusRes.ok) {
-          const detailsRes = await fetch(`/api/bookings/details?id=${bookingId}`);
+          const detailsUrl = checkoutTokenParam
+            ? `/api/bookings/details?id=${bookingId}&checkoutToken=${encodeURIComponent(checkoutTokenParam)}`
+            : `/api/bookings/details?id=${bookingId}`;
+          const detailsRes = await fetch(detailsUrl, { headers });
           const data = await detailsRes.json();
           if (!ignore) {
             if (detailsRes.ok) {
@@ -326,6 +351,7 @@ function SuccessContent() {
             bookingId={booking.id}
             bookingNumber={booking.bookingNumber}
             amount={booking.amount}
+            checkoutToken={checkoutTokenParam || undefined}
           />
         </div>
       )}

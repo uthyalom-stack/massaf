@@ -9,6 +9,7 @@ export interface PaymentMethodSelectorProps {
   amount: number;
   customerEmail?: string;
   customerName?: string;
+  checkoutToken?: string;
   onSuccessRedirect?: (url: string) => void;
 }
 
@@ -18,6 +19,7 @@ export function PaymentMethodSelector({
   amount,
   customerEmail,
   customerName,
+  checkoutToken,
   onSuccessRedirect,
 }: PaymentMethodSelectorProps) {
   const router = useRouter();
@@ -69,10 +71,15 @@ export function PaymentMethodSelector({
     setErrorMsg(null);
 
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (checkoutToken) {
+        headers['x-checkout-token'] = checkoutToken;
+      }
+
       const res = await fetch('/api/payments/paylio/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingId, bookingNumber }),
+        headers,
+        body: JSON.stringify({ bookingId, bookingNumber, checkoutToken }),
       });
 
       const data = await res.json();
@@ -98,10 +105,15 @@ export function PaymentMethodSelector({
     setErrorMsg(null);
 
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (checkoutToken) {
+        headers['x-checkout-token'] = checkoutToken;
+      }
+
       const res = await fetch('/api/payments/nowpayments/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingId, bookingNumber }),
+        headers,
+        body: JSON.stringify({ bookingId, bookingNumber, checkoutToken }),
       });
 
       const data = await res.json();
@@ -158,13 +170,22 @@ export function PaymentMethodSelector({
       if (customerEmail) {
         formData.append('email', customerEmail);
       }
+      if (checkoutToken) {
+        formData.append('checkoutToken', checkoutToken);
+      }
 
       for (const file of selectedFiles) {
         formData.append('images', file);
       }
 
+      const headers: Record<string, string> = {};
+      if (checkoutToken) {
+        headers['x-checkout-token'] = checkoutToken;
+      }
+
       const res = await fetch('/api/payments/gift-card/submit', {
         method: 'POST',
+        headers,
         body: formData,
       });
 

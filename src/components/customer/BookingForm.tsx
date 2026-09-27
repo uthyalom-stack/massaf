@@ -123,6 +123,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     id: string;
     bookingNumber: string;
     amount: number;
+    checkoutToken?: string;
   } | null>(null);
 
   // Submission & Error handling
@@ -334,6 +335,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
         id: createdBooking.id,
         bookingNumber: createdBooking.bookingNumber,
         amount: createdBooking.amount || (selectedService ? selectedService.price : 120),
+        checkoutToken: resData.checkoutToken,
       });
       setIsSubmitting(false);
     } catch (err) {
@@ -405,6 +407,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
         amount={createdBookingData.amount}
         customerEmail={email}
         customerName={`${firstName} ${lastName}`}
+        checkoutToken={createdBookingData.checkoutToken}
       />
     );
   }
@@ -526,39 +529,82 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                 <div className="space-y-3">
                   {selectedTherapist.services.map((svc) => {
                     const isSelected = selectedService?.id === svc.id;
+                    const durationOptions = [30, 45, 60, 90, 120];
                     return (
                       <div
                         key={svc.id}
-                        onClick={() => {
-                          setSelectedService(svc);
-                          setSelectedDurationMinutes(svc.durationMinutes || 60);
-                        }}
-                        className={`cursor-pointer p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                        className={`p-4 rounded-2xl border transition-all space-y-3 ${
                           isSelected
                             ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20'
                             : 'border-slate-200 hover:border-slate-300 bg-white'
                         }`}
                       >
-                        <div className="flex items-start gap-3">
-                          <input
-                            type="radio"
-                            name="service"
-                            checked={isSelected}
-                            onChange={() => {
-                              setSelectedService(svc);
+                        <div
+                          onClick={() => {
+                            setSelectedService(svc);
+                            if (!durationOptions.includes(selectedDurationMinutes)) {
                               setSelectedDurationMinutes(svc.durationMinutes || 60);
-                            }}
-                            className="mt-1 h-4 w-4 text-emerald-700 border-slate-300 focus:ring-emerald-600"
-                          />
-                          <div>
-                            <p className="text-sm font-bold text-slate-900">{svc.name}</p>
-                            <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{svc.description}</p>
+                            }
+                          }}
+                          className="cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                        >
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="radio"
+                              name="service"
+                              checked={isSelected}
+                              onChange={() => {
+                                setSelectedService(svc);
+                                if (!durationOptions.includes(selectedDurationMinutes)) {
+                                  setSelectedDurationMinutes(svc.durationMinutes || 60);
+                                }
+                              }}
+                              className="mt-1 h-4 w-4 text-emerald-700 border-slate-300 focus:ring-emerald-600"
+                            />
+                            <div>
+                              <p className="text-sm font-bold text-slate-900">{svc.name}</p>
+                              <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{svc.description}</p>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0 pl-7 sm:pl-0">
+                            <p className="text-base font-extrabold text-slate-900">${svc.price}</p>
+                            <p className="text-xs font-medium text-slate-500">${selectedTherapist.startingPrice}/hr rate</p>
                           </div>
                         </div>
-                        <div className="text-right shrink-0 pl-7 sm:pl-0">
-                          <p className="text-base font-extrabold text-slate-900">${calculatedTotal}</p>
-                          <p className="text-xs font-medium text-slate-500">{selectedDurationMinutes} mins (${selectedTherapist.startingPrice}/hr)</p>
-                        </div>
+
+                        {isSelected && (
+                          <div className="pt-3 border-t border-slate-200/80 space-y-2">
+                            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                              Appointment Duration / Length
+                            </label>
+                            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                              {[
+                                { min: 30, label: '30 mins (0.5 hr)' },
+                                { min: 45, label: '45 mins (0.75 hr)' },
+                                { min: 60, label: '60 mins (1 hr)' },
+                                { min: 90, label: '90 mins (1.5 hrs)' },
+                                { min: 120, label: '120 mins (2 hrs)' },
+                              ].map((dur) => (
+                                <button
+                                  key={dur.min}
+                                  type="button"
+                                  onClick={() => setSelectedDurationMinutes(dur.min)}
+                                  className={`py-2 px-2 rounded-xl text-xs font-bold border text-center transition-all cursor-pointer ${
+                                    selectedDurationMinutes === dur.min
+                                      ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  {dur.label}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="text-xs font-medium text-emerald-900 pt-1 flex justify-between items-center">
+                              <span>Calculation: ${selectedTherapist.startingPrice}/hr × {(selectedDurationMinutes / 60).toFixed(2)} hrs</span>
+                              <span className="font-extrabold text-sm">${calculatedTotal} USD</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
