@@ -122,6 +122,97 @@ function safeCompareSignatures(sigA: string, sigB: string): boolean {
 /**
  * Encodes and signs a session payload into a cookie string token formatted as `base64Payload.signature`.
  */
+export interface CheckoutTokenPayload {
+  bookingId: string;
+  nonce: string;
+  exp: number;
+}
+
+/**
+ * Creates a cryptographically signed, short-lived guest checkout capability token.
+ * Tied strictly to a single booking ID and impossible to derive without the server auth secret.
+ */
+export function createCheckoutToken(bookingId: string, durationMinutes = 60): string {
+  const secret = getAuthSecret();
+  const payload: CheckoutTokenPayload = {
+    bookingId,
+    nonce: cryptoNativeRandomUUID(),
+    exp: Date.now() + durationMinutes * 60 * 1000,
+  };
+
+  const payloadStr = JSON.stringify(payload);
+  const base64Payload = Buffer.from(payloadStr, 'utf-8').toString('base64url');
+  const signature = signPayload(base64Payload, secret);
+
+  return `${base64Payload}.${signature}`;
+}
+
+/**
+ * Verifies a guest checkout capability token against a specific expected booking ID.
+ * Returns true only if the signature is valid, token is unexpired, and booking ID matches.
+ */
+export function verifyCheckoutToken(
+  token: string | undefined | null,
+  expectedBookingId: string
+): boolean {
+  if (!token || !expectedBookingId) return false;
+
+  try {
+    const secret = getAuthSecret();
+    const parts = token.split('.');
+    if (parts.length !== 2) return false;
+
+    const [base64Payload, signature] = parts;
+    const expectedSignature = signPayload(base64Payload, secret);
+
+    if (!safeCompareSignatures(signature, expectedSignature)) {
+      return false;
+    }
+
+    const payloadJson = Buffer.from(base64Payload, 'base64url').toString('utf-8');
+    const payload = JSON.parse(payloadJson) as CheckoutTokenPayload;
+
+    if (!payload || typeof payload !== 'object') return false;
+    if (payload.bookingId !== expectedBookingId) return false;
+    if (typeof payload.exp !== 'number' || Date.now() > payload.exp) return false;
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Helper to extract checkout capability token from request headers, query params, or JSON body.
+ */
+export function extractCheckoutToken(request: Request, body?: any): string | null {
+  try {
+    if (body?.checkoutToken && typeof body.checkoutToken === 'string') {
+      return body.checkoutToken.trim();
+    }
+
+    const headerToken = request.headers.get('x-checkout-token');
+    if (headerToken) return headerToken.trim();
+
+    const authHeader = request.headers.get('authorization');
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7).trim();
+      // Ignore if it looks like admin key or session cookie format
+      if (!token.startsWith('env-') && !token.startsWith('sk_')) {
+        return token;
+      }
+    }
+
+    const url = new URL(request.url);
+    const searchToken = url.searchParams.get('checkoutToken') || url.searchParams.get('token');
+    if (searchToken) return searchToken.trim();
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function createSessionToken(
   entityId: string,
   email: string,
@@ -196,13 +287,13 @@ export async function getVerifiedCustomerSession(reqCookieHeader?: string): Prom
     const payload = verifySessionToken(token, 'CUSTOMER');
     if (!payload) return null;
 
-    // Database revalidation: Confirm customer still exists
-    const customer = await db.customer.findUnique({
-      where: { id: payload.entityId },
-      select: { id: true, email: true },
+    // Database revalidation: Confirm customer exists and is active (Customer.isActive === true)
+    const customer = await db.customer.findFirst({
+      where: { id: payload.entityId, isActive: true },
+      select: { id: true, email: true, isActive: true },
     });
 
-    if (!customer) return null;
+    if (!customer || !customer.isActive) return null;
 
     // Return payload with authoritative email from DB
     return {

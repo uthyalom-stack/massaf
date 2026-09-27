@@ -6,8 +6,27 @@ import { isAppointmentTimeAvailable } from '@/lib/availability';
 import { parseAppointmentDateTime } from '@/lib/timezone';
 import { cookies } from 'next/headers';
 
+import { checkRateLimit } from '@/lib/auth-rate-limit';
+
 export async function POST(request: Request) {
   try {
+    // Rate limiting: Max 10 booking attempts per 15 minutes per IP
+    const clientIp = request.headers.get('x-forwarded-for') || 'anon_ip';
+    const rateCheck = await checkRateLimit(clientIp, 'booking_creation', 10, 15);
+
+    if (!rateCheck.allowed) {
+      if (rateCheck.error) {
+        return NextResponse.json(
+          { error: 'Booking system temporarily unavailable. Please try again in a few moments.' },
+          { status: 503 }
+        );
+      }
+      return NextResponse.json(
+        { error: 'Too many booking attempts. Please wait a few minutes before trying again.' },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
 
     // 1. Zod schema validation
@@ -305,6 +324,9 @@ export async function POST(request: Request) {
       console.error('Failed to dispatch notifyBookingCreated:', notifErr);
     }
 
+    const { createCheckoutToken } = await import('@/lib/auth-session');
+    const checkoutToken = createCheckoutToken(createdBooking.id);
+
     return NextResponse.json(
       {
         message: 'Booking created successfully',
@@ -320,6 +342,7 @@ export async function POST(request: Request) {
           serviceName: service.name,
           durationMinutes,
         },
+        checkoutToken,
       },
       { status: 201 }
     );

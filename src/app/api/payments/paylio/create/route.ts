@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { paylioClient } from '@/lib/paylio';
+import { getVerifiedCustomerSession, extractCheckoutToken, verifyCheckoutToken } from '@/lib/auth-session';
 
 export function getCanonicalBaseUrl(request?: Request): string {
   const envUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || process.env.APP_URL;
@@ -59,6 +60,20 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'Booking record not found.' },
         { status: 404 }
+      );
+    }
+
+    // 1b. Server-side Authorization Check
+    const cookieHeader = request.headers.get('cookie') || undefined;
+    const customerSession = await getVerifiedCustomerSession(cookieHeader);
+    const token = extractCheckoutToken(request, body);
+    const isOwner = Boolean(customerSession && customerSession.entityId === booking.customerId);
+    const hasValidToken = Boolean(token && verifyCheckoutToken(token, booking.id));
+
+    if (!isOwner && !hasValidToken) {
+      return NextResponse.json(
+        { error: 'Unauthorized: You do not have permission to pay for this booking.' },
+        { status: 403 }
       );
     }
 

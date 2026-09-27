@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { paylioClient, confirmVerifiedPayLioPayment } from '@/lib/paylio';
+import { getVerifiedCustomerSession, extractCheckoutToken, verifyCheckoutToken } from '@/lib/auth-session';
 
 export async function GET(request: Request) {
   try {
@@ -30,6 +31,19 @@ export async function GET(request: Request) {
       return NextResponse.json(
         { error: 'Booking record not found.' },
         { status: 404 }
+      );
+    }
+
+    const cookieHeader = request.headers.get('cookie') || undefined;
+    const customerSession = await getVerifiedCustomerSession(cookieHeader);
+    const token = extractCheckoutToken(request);
+    const isOwner = Boolean(customerSession && customerSession.entityId === booking.customerId);
+    const hasValidToken = Boolean(token && verifyCheckoutToken(token, booking.id));
+
+    if (!isOwner && !hasValidToken) {
+      return NextResponse.json(
+        { error: 'Unauthorized: Access restricted.' },
+        { status: 403 }
       );
     }
 

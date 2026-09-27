@@ -5,7 +5,7 @@ import { therapistBaseSchema } from '@/lib/validations/admin-therapist';
 import { verifyAdminApiKey } from '@/lib/admin-guard';
 
 export async function GET(request: Request) {
-  const authError = await verifyAdminApiKey(request);
+  const authError = await verifyAdminApiKey(request, ['SUPER_ADMIN', 'ADMIN', 'STAFF']);
   if (authError) return authError;
 
   try {
@@ -32,7 +32,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const authError = await verifyAdminApiKey(request);
+  const authError = await verifyAdminApiKey(request, ['SUPER_ADMIN', 'ADMIN']);
   if (authError) return authError;
 
   try {
