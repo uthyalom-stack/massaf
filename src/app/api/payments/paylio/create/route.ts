@@ -101,7 +101,8 @@ export async function POST(request: Request) {
 
     // 3. Construct application PayLio callback URL
     const baseUrl = getCanonicalBaseUrl(request);
-    const callbackUrl = `${baseUrl}/api/payments/paylio/callback?bookingId=${booking.id}`;
+    const tokenQueryParam = token ? `&token=${encodeURIComponent(token)}` : '';
+    const callbackUrl = `${baseUrl}/api/payments/paylio/callback?bookingId=${booking.id}${tokenQueryParam}`;
 
     // 4. Create PayLio wallet checkout link
     try {

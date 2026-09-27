@@ -290,11 +290,12 @@ Review this submission in the MASSAF admin dashboard.`;
       }
     }
 
+    const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
     return NextResponse.json({
       success: true,
       submissionId: submission.id,
       bookingId: booking.id,
-      redirectUrl: `/booking/success?id=${booking.id}&gift_card=1`,
+      redirectUrl: `/booking/success?id=${booking.id}&gift_card=1${tokenParam}`,
     });
   } catch (err: unknown) {
     console.error('Error in gift card submission:', err);

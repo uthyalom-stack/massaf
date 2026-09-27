@@ -54,8 +54,9 @@ export async function POST(request: Request) {
 
     const baseUrl = getCanonicalBaseUrl(request);
     const callbackUrl = `${baseUrl}/api/payments/nowpayments/ipn`;
-    const successUrl = `${baseUrl}/booking/success?id=${booking.id}`;
-    const cancelUrl = `${baseUrl}/booking/success?id=${booking.id}&pay_error=1`;
+    const tokenQueryParam = token ? `&token=${encodeURIComponent(token)}` : '';
+    const successUrl = `${baseUrl}/booking/success?id=${booking.id}${tokenQueryParam}`;
+    const cancelUrl = `${baseUrl}/booking/success?id=${booking.id}&pay_error=1${tokenQueryParam}`;
 
     const invoice = await nowPaymentsClient.createInvoice({
       bookingId: booking.id,

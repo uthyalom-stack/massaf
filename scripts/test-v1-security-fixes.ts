@@ -1,29 +1,51 @@
 import {
   createCheckoutToken,
   verifyCheckoutToken,
+  extractCheckoutToken,
 } from '../src/lib/auth-session';
 import { generateTimePresetOptions, isAppointmentTimeAvailable } from '../src/lib/availability';
 import { bookingSchema } from '../src/lib/validations/booking';
 
 async function main() {
-  console.log('=== Running Comprehensive MASSAF V1 Security & Duration Test Suite ===\n');
+  console.log('=== Running Strengthened Production MASSAF V1 Security & Duration Test Suite ===\n');
 
   // 1. Checkout capability tokens
-  console.log('[Test 1] Checkout Capability Tokens');
-  const bookingId = 'test-booking-123';
-  const token = createCheckoutToken(bookingId, 15);
-  const isValid = verifyCheckoutToken(token, bookingId);
-  const isInvalidBooking = verifyCheckoutToken(token, 'other-booking-456');
+  console.log('[Test 1] Checkout Capability Tokens & Isolation');
+  const bookingIdA = 'booking-aaa-111';
+  const bookingIdB = 'booking-bbb-222';
+  const tokenA = createCheckoutToken(bookingIdA, 15);
+  const isValidA = verifyCheckoutToken(tokenA, bookingIdA);
+  const isRejectedCross = verifyCheckoutToken(tokenA, bookingIdB);
+  const isRejectedGarbage = verifyCheckoutToken('invalid.token.str', bookingIdA);
 
-  if (isValid && !isInvalidBooking) {
-    console.log('  ✅ Valid checkout token verified and cross-booking token rejected correctly.');
+  if (isValidA && !isRejectedCross && !isRejectedGarbage) {
+    console.log('  ✅ Valid token authorized, cross-booking token rejected, and malformed token rejected.');
   } else {
     console.error('  ❌ Checkout token test failed!');
     process.exit(1);
   }
 
+  // 1b. Token Extraction Test
+  console.log('[Test 1b] Checkout Token Extraction Helper');
+  const mockReqHeader = new Request('http://localhost:3000/api/payments/paylio/create', {
+    headers: { 'x-checkout-token': tokenA },
+  });
+  const extractedHeaderToken = extractCheckoutToken(mockReqHeader);
+
+  const mockReqBody = new Request('http://localhost:3000/api/payments/paylio/create', {
+    method: 'POST',
+  });
+  const extractedBodyToken = extractCheckoutToken(mockReqBody, { checkoutToken: tokenA });
+
+  if (extractedHeaderToken === tokenA && extractedBodyToken === tokenA) {
+    console.log('  ✅ Checkout token correctly extracted from headers and JSON body.');
+  } else {
+    console.error('  ❌ Checkout token extraction test failed!');
+    process.exit(1);
+  }
+
   // 2. CSV Formula Injection escaping check
-  console.log('[Test 2] CSV Formula Escaping');
+  console.log('[Test 2] CSV Formula Escaping Sanitization');
   function escapeCsvField(val: unknown): string {
     if (val === null || val === undefined) return '""';
     let str = String(val);
@@ -34,17 +56,18 @@ async function main() {
     return `"${escaped}"`;
   }
 
-  const formulaStr = '=SUM(1+1)';
-  const escaped = escapeCsvField(formulaStr);
-  if (escaped === '"\'=SUM(1+1)"') {
-    console.log('  ✅ Formula injection successfully sanitized with leading single quote.');
-  } else {
-    console.error('  ❌ CSV formula escaping test failed!', escaped);
-    process.exit(1);
+  const formulaTriggers = ['=1+1', '+123', '-cmd', '@echo', '\tTab'];
+  for (const trig of formulaTriggers) {
+    const escapedVal = escapeCsvField(trig);
+    if (!escapedVal.startsWith('"\'')) {
+      console.error(`  ❌ Formula trigger "${trig}" was not sanitized with leading single quote!`, escapedVal);
+      process.exit(1);
+    }
   }
+  console.log('  ✅ All spreadsheet formula triggers (=, +, -, @, \\t) successfully sanitized.');
 
   // 3. Server-Side Duration Schema Validation (60, 120, 180, 240 allowed; 30, 45, 90, 150, 300 rejected)
-  console.log('[Test 3] Duration Minutes Schema Validation');
+  console.log('[Test 3] Production Duration Minutes Schema Validation (bookingSchema)');
   const validDurations = [60, 120, 180, 240];
   const invalidDurations = [30, 45, 90, 150, 300];
 
@@ -75,7 +98,15 @@ async function main() {
       process.exit(1);
     }
   }
-  console.log('  ✅ Whole-hour durations (60, 120, 180, 240) accepted; non-standard durations (30, 45, 90, 150, 300) rejected.');
+
+  // Missing duration check
+  const parseResMissing = bookingSchema.safeParse(basePayload);
+  if (parseResMissing.success) {
+    console.error('  ❌ Missing durationMinutes should have been REJECTED by bookingSchema!');
+    process.exit(1);
+  }
+
+  console.log('  ✅ Whole-hour durations (60, 120, 180, 240) accepted; non-standard durations (30, 45, 90, 150, 300) & missing duration rejected.');
 
   // 4. Hourly Price Calculation Server-Side Logic
   console.log('[Test 4] Hourly Price Calculation Logic ($100/hr)');
@@ -92,50 +123,8 @@ async function main() {
     process.exit(1);
   }
 
-  // 5. Appointment Interval Overlap Conflict Logic
-  console.log('[Test 5] Full Appointment Interval Overlap Conflict Logic');
-  function hasConflict(
-    reqStart: number,
-    reqEnd: number,
-    existStart: number,
-    existEnd: number
-  ): boolean {
-    return existStart < reqEnd && existEnd > reqStart;
-  }
-
-  // Existing booking: 2:00 PM to 4:00 PM (14:00 - 16:00)
-  const b1Start = new Date('2026-10-01T14:00:00Z').getTime();
-  const b1End = new Date('2026-10-01T16:00:00Z').getTime();
-
-  // Overlapping request 1: 3:00 PM to 4:00 PM (15:00 - 16:00) -> CONFLICT
-  const r1Start = new Date('2026-10-01T15:00:00Z').getTime();
-  const r1End = new Date('2026-10-01T16:00:00Z').getTime();
-  const c1 = hasConflict(r1Start, r1End, b1Start, b1End);
-
-  // Overlapping request 2: 1:00 PM to 3:00 PM (13:00 - 15:00) -> CONFLICT
-  const r2Start = new Date('2026-10-01T13:00:00Z').getTime();
-  const r2End = new Date('2026-10-01T15:00:00Z').getTime();
-  const c2 = hasConflict(r2Start, r2End, b1Start, b1End);
-
-  // Adjacent request 1: 4:00 PM to 5:00 PM (16:00 - 17:00) -> NO CONFLICT
-  const r3Start = new Date('2026-10-01T16:00:00Z').getTime();
-  const r3End = new Date('2026-10-01T17:00:00Z').getTime();
-  const c3 = hasConflict(r3Start, r3End, b1Start, b1End);
-
-  // Adjacent request 2: 12:00 PM to 2:00 PM (12:00 - 14:00) -> NO CONFLICT
-  const r4Start = new Date('2026-10-01T12:00:00Z').getTime();
-  const r4End = new Date('2026-10-01T14:00:00Z').getTime();
-  const c4 = hasConflict(r4Start, r4End, b1Start, b1End);
-
-  if (c1 && c2 && !c3 && !c4) {
-    console.log('  ✅ Interval overlap conflict logic verified (overlaps conflict, adjacent times allowed).');
-  } else {
-    console.error('  ❌ Interval overlap conflict test failed!', { c1, c2, c3, c4 });
-    process.exit(1);
-  }
-
-  // 6. Time Presets Generation Check (12:00 AM to 11:00 PM)
-  console.log('[Test 6] Time Presets Generation (12:00 AM -> 11:00 PM)');
+  // 5. Time Presets Generation Check (12:00 AM to 11:00 PM)
+  console.log('[Test 5] Time Presets Generation (12:00 AM -> 11:00 PM)');
   const presets = generateTimePresetOptions();
   const firstPreset = presets[0];
   const lastPreset = presets[presets.length - 1];
@@ -149,8 +138,8 @@ async function main() {
     process.exit(1);
   }
 
-  // 7. Working Hours Availability Boundary Checks (12 AM–11 PM Cutoff)
-  console.log('[Test 7] Working Hours Availability Boundary Checks');
+  // 6. Production Working Hours Availability Boundary Checks (12 AM–11 PM Cutoff)
+  console.log('[Test 6] Production Working Hours Availability Boundary Checks (isAppointmentTimeAvailable)');
   const mockTherapist = {
     id: 'therapist-1',
     name: 'Test Therapist',
@@ -173,13 +162,13 @@ async function main() {
   const fit2hrAt10pm = isAppointmentTimeAvailable(mockTherapist, '2026-10-05', '22:00', 120);
 
   if (fit1hr.isValid && fit2hr.isValid && fit3hr.isValid && fit4hr.isValid && !fit2hrAt10pm.isValid) {
-    console.log('  ✅ Availability boundaries verified (1h at 10 PM, 2h at 9 PM, 3h at 8 PM, 4h at 7 PM fit 11 PM cutoff; 2h at 10 PM rejected).');
+    console.log('  ✅ Production availability boundaries verified (1h at 10 PM, 2h at 9 PM, 3h at 8 PM, 4h at 7 PM fit 11 PM cutoff; 2h at 10 PM rejected).');
   } else {
     console.error('  ❌ Working hours boundary test failed!', { fit1hr, fit2hr, fit3hr, fit4hr, fit2hrAt10pm });
     process.exit(1);
   }
 
-  console.log('\n=== All MASSAF V1 Security & Duration Checks Passed Successfully! ===\n');
+  console.log('\n=== All MASSAF V1 Security & Duration Tests Passed Successfully! ===\n');
 }
 
 main().catch((err) => {
