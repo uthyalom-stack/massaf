@@ -18,6 +18,7 @@ export default async function AdminCustomerDetailPage({ params }: PageProps) {
   const session = await getVerifiedAdminSession();
   if (!session) redirect('/admin/login');
   if (session.role === 'STAFF') redirect('/admin/marketer');
+  if (session.role === 'MANAGER') redirect('/admin');
 
   const { id } = await params;
   const res = await getCustomerDetailsAction(id);

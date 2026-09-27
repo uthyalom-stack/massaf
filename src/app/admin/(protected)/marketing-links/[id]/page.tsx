@@ -20,6 +20,9 @@ export default async function MarketingLinkDetailPage({ params }: PageProps) {
   if (!session) {
     redirect('/admin/login');
   }
+  if (session.role === 'MANAGER') {
+    redirect('/admin');
+  }
 
   const { id } = await params;
 

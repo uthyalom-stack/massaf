@@ -14,6 +14,7 @@ export default async function ProtectedAdminLayout({
   }
 
   const isMarketer = session.role === 'STAFF';
+  const isManager = session.role === 'MANAGER';
 
   const navSections: NavSection[] = isMarketer
     ? [
@@ -23,6 +24,17 @@ export default async function ProtectedAdminLayout({
             { label: 'Dashboard', href: '/admin/marketer' },
             { label: 'Leaderboard', href: '/admin/leaderboard' },
           ],
+        },
+      ]
+    : isManager
+    ? [
+        {
+          title: 'OVERVIEW',
+          links: [{ label: 'Dashboard', href: '/admin' }],
+        },
+        {
+          title: 'PEOPLE',
+          links: [{ label: 'Therapists', href: '/admin/therapists' }],
         },
       ]
     : [

@@ -26,6 +26,9 @@ export default async function AdminSettingsPage() {
   if (session.role === 'STAFF') {
     redirect('/admin/marketer');
   }
+  if (session.role === 'MANAGER') {
+    redirect('/admin');
+  }
 
   // 1. Environment & App URL
   const environment = process.env.NODE_ENV || 'production';

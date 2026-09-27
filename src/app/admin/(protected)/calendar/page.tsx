@@ -12,6 +12,12 @@ export default async function AdminCalendarPage() {
   if (!session) {
     redirect('/admin/login');
   }
+  if (session.role === 'STAFF') {
+    redirect('/admin/marketer');
+  }
+  if (session.role === 'MANAGER') {
+    redirect('/admin');
+  }
 
   // Retrieve initial bookings, therapists, and active services
   const [bookings, therapists, services] = await Promise.all([

@@ -24,6 +24,9 @@ export default async function AdminReviewDetailPage({ params }: PageProps) {
   if (session.role === 'STAFF') {
     redirect('/admin/marketer');
   }
+  if (session.role === 'MANAGER') {
+    redirect('/admin');
+  }
 
   const { id } = await params;
 

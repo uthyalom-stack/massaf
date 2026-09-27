@@ -36,7 +36,7 @@ export function AdminUserManagementClient({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formName, setFormName] = useState('');
   const [formEmail, setFormEmail] = useState('');
-  const [formRole, setFormRole] = useState<'ADMIN' | 'SUPER_ADMIN'>('ADMIN');
+  const [formRole, setFormRole] = useState<'ADMIN' | 'MANAGER' | 'SUPER_ADMIN'>('ADMIN');
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -211,10 +211,11 @@ export function AdminUserManagementClient({
                 <label className="block font-bold text-slate-700 uppercase mb-1">Role Privileges</label>
                 <select
                   value={formRole}
-                  onChange={(e) => setFormRole(e.target.value as 'ADMIN' | 'SUPER_ADMIN')}
+                  onChange={(e) => setFormRole(e.target.value as 'ADMIN' | 'MANAGER' | 'SUPER_ADMIN')}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm"
                 >
                   <option value="ADMIN">ADMIN (Full Operations Access)</option>
+                  <option value="MANAGER">MANAGER (Therapist Management Only)</option>
                   <option value="SUPER_ADMIN">SUPER_ADMIN (Includes Admin User Management)</option>
                 </select>
               </div>

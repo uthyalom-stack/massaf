@@ -9,7 +9,7 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authError = await verifyAdminApiKey(request);
+  const authError = await verifyAdminApiKey(request, ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF']);
   if (authError) return authError;
 
   const { id } = await params;
@@ -97,7 +97,7 @@ export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authError = await verifyAdminApiKey(request);
+  const authError = await verifyAdminApiKey(request, ['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
   if (authError) return authError;
 
   const { id } = await params;
@@ -206,7 +206,7 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authError = await verifyAdminApiKey(request);
+  const authError = await verifyAdminApiKey(request, ['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
   if (authError) return authError;
 
   const { id } = await params;

@@ -17,6 +17,9 @@ export default async function MarketersPage() {
   if (adminSession.role === 'STAFF') {
     redirect('/admin/marketer');
   }
+  if (adminSession.role === 'MANAGER') {
+    redirect('/admin');
+  }
 
   const res = await listMarketersAction();
   const marketers = res.success && res.marketers ? res.marketers : [];

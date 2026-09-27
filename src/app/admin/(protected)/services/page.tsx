@@ -16,8 +16,14 @@ export const dynamic = 'force-dynamic';
 
 export default async function AdminServicesPage() {
   const session = await getVerifiedAdminSession();
-  if (!session || session.role === 'STAFF') {
+  if (!session) {
+    redirect('/admin/login');
+  }
+  if (session.role === 'STAFF') {
     redirect('/admin/marketer');
+  }
+  if (session.role === 'MANAGER') {
+    redirect('/admin');
   }
 
   let initialServices: AdminServiceItem[] = [];

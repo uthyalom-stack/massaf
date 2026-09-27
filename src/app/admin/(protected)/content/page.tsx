@@ -14,6 +14,9 @@ export default async function AdminContentPage() {
   if (session.role === 'STAFF') {
     redirect('/admin/marketer');
   }
+  if (session.role === 'MANAGER') {
+    redirect('/admin');
+  }
   const contents = await db.siteContent.findMany({
     orderBy: { key: 'asc' },
   });

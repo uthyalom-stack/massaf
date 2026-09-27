@@ -26,6 +26,9 @@ export default async function LeaderboardPage() {
   if (!session) {
     redirect('/admin/login');
   }
+  if (session.role === 'MANAGER') {
+    redirect('/admin');
+  }
 
   // Fetch all STAFF marketer accounts and their marketing links + bookings
   const marketers = await db.user.findMany({

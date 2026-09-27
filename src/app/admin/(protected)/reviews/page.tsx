@@ -25,6 +25,9 @@ export default async function AdminReviewsPage({ searchParams }: PageProps) {
   if (session?.role === 'STAFF') {
     redirect('/admin/marketer');
   }
+  if (session?.role === 'MANAGER') {
+    redirect('/admin');
+  }
 
   const params = await searchParams;
   const search = params.search || '';

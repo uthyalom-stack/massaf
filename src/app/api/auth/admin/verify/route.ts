@@ -66,7 +66,7 @@ export async function POST(request: Request) {
         );
       }
 
-      const allowedRoles = ['SUPER_ADMIN', 'ADMIN', 'STAFF'];
+      const allowedRoles = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF'];
       if (!allowedRoles.includes(dbUser.role)) {
         return NextResponse.json(
           { error: 'Invalid authentication credentials provided' },

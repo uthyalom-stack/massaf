@@ -27,6 +27,9 @@ export default async function AdminBookingsPage({ searchParams }: BookingsPagePr
   if (session?.role === 'STAFF') {
     redirect('/admin/marketer');
   }
+  if (session?.role === 'MANAGER') {
+    redirect('/admin');
+  }
 
   const resolvedParams = await searchParams;
   const search = resolvedParams?.search || '';
