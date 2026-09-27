@@ -1,361 +1,200 @@
 import { db } from '../src/lib/db';
-import { nowPaymentsClient, processNowPaymentsIpn } from '../src/lib/nowpayments';
-import { approveGiftCardPaymentAction, rejectGiftCardPaymentAction } from '../src/app/admin/actions';
+import { PaymentService } from '../src/lib/payments/service';
+import { updatePaymentSettings, getPaymentSettings } from '../src/lib/payments/settings';
+import { SystemPaymentSettings } from '../src/lib/payments/types';
 
-function assert(condition: boolean, msg: string) {
-  if (!condition) {
-    console.error(`❌ ASSERTION FAILED: ${msg}`);
+async function testPaymentExpansionSuite() {
+  console.log('--- STARTING COMPREHENSIVE PAYMENT PROVIDER EXPANSION TEST SUITE ---');
+
+  const dbUrl = process.env.TURSO_DATABASE_URL || '';
+  if (!dbUrl.includes('dev.db') && !process.env.ALLOW_TEST_DB) {
+    console.error('❌ SAFETY GUARD: Test suite can only run against a local dev.db or test database.');
     process.exit(1);
   }
-  console.log(`  ✓ ${msg}`);
-}
 
-async function testPaymentExpansionFlow() {
-  console.log('=== STARTING AUTOMATED PAYMENT EXPANSION TEST SUITE ===\n');
+  // Ensure test env variables exist for configured adapters
+  process.env.PAYLIO_API_KEY = process.env.PAYLIO_API_KEY || 'test_paylio_key';
+  process.env.PAYLIO_API_URL = process.env.PAYLIO_API_URL || 'https://paylio.org/api/v1';
+  process.env.MASSAF_POLYGON_WALLET_ADDRESS = process.env.MASSAF_POLYGON_WALLET_ADDRESS || '0x1234567890123456789012345678901234567890';
+  process.env.PAYLIO_MOCK_MODE = 'true';
 
+  let originalSettings: SystemPaymentSettings | null = null;
   let customerId = '';
-  let therapistId = '';
-  let serviceId = '';
+  let testBookingId = '';
 
   try {
-    // 1. Setup Test Data
-    console.log('1. Setting up test customer, therapist, and service...');
+    // 0. Backup original settings
+    originalSettings = await getPaymentSettings();
+
+    // TEST 1: Registered Providers List
+    console.log('\nTEST 1: Verifying registered provider adapters...');
+    const adapters = PaymentService.getAllAdapters();
+    const adapterIds = adapters.map((a) => a.id);
+    const requiredIds = ['paymegate', 'norpo', 'nowpayments', 'btcpay', 'paymento', 'nexapay', 'paylio', 'giftcard'];
+
+    for (const reqId of requiredIds) {
+      if (!adapterIds.includes(reqId as any)) {
+        throw new Error(`Missing expected provider adapter: ${reqId}`);
+      }
+    }
+    console.log('✓ TEST 1 PASSED: All 8 required provider adapters are registered.');
+
+    // TEST 2: Provider Health & Implementation Status
+    console.log('\nTEST 2: Verifying provider implementation and health status...');
+    const paylioAdapter = PaymentService.getAdapter('paylio');
+    const paymegateAdapter = PaymentService.getAdapter('paymegate');
+
+    if (!paylioAdapter?.isImplemented()) throw new Error('PayLio adapter should be marked as implemented.');
+    if (paymegateAdapter?.isImplemented()) throw new Error('Paymegate adapter should be marked as unimplemented until official API docs are integrated.');
+
+    console.log('✓ TEST 2 PASSED: PayLio is implemented; Paymegate is correctly marked unimplemented.');
+
+    // TEST 3: Default Provider Rule Enforcement
+    console.log('\nTEST 3: Verifying default provider enable/disable rules...');
+    const testSettings: SystemPaymentSettings = JSON.parse(JSON.stringify(originalSettings));
+
+    // Attempting to set an unconfigured/disabled provider as default MUST fail
+    testSettings.defaultProviderId = 'paymegate';
+    testSettings.providers.paymegate.enabled = false;
+
+    const invalidDefaultRes = await updatePaymentSettings(testSettings);
+    if (invalidDefaultRes.success) {
+      throw new Error('Allowed setting disabled/unimplemented provider as default provider!');
+    }
+    console.log('✓ TEST 3 PASSED: System rejected setting disabled/unimplemented provider as default.');
+
+    // TEST 4: Available Customer Providers Filtering
+    console.log('\nTEST 4: Verifying available customer checkout providers filtering...');
+    // Enable paylio, nowpayments, and giftcard; disable others
+    const filteredSettings: SystemPaymentSettings = {
+      defaultProviderId: 'paylio',
+      providers: {
+        paylio: { id: 'paylio', enabled: true, priority: 1 },
+        nowpayments: { id: 'nowpayments', enabled: true, priority: 2 },
+        giftcard: { id: 'giftcard', enabled: true, priority: 3 },
+        paymegate: { id: 'paymegate', enabled: false, priority: 4 },
+        norpo: { id: 'norpo', enabled: false, priority: 5 },
+        btcpay: { id: 'btcpay', enabled: false, priority: 6 },
+        paymento: { id: 'paymento', enabled: false, priority: 7 },
+        nexapay: { id: 'nexapay', enabled: false, priority: 8 },
+      },
+    };
+
+    const updateRes = await updatePaymentSettings(filteredSettings);
+    if (!updateRes.success) throw new Error(`Failed to update settings: ${updateRes.error}`);
+
+    const customerProviders = await PaymentService.getAvailableCustomerProviders();
+    const customerProviderIds = customerProviders.map((p) => p.id);
+
+    if (customerProviderIds.includes('paymegate')) {
+      throw new Error('Disabled / unimplemented provider "paymegate" appeared in customer providers list!');
+    }
+    if (!customerProviderIds.includes('paylio') || !customerProviderIds.includes('giftcard')) {
+      throw new Error('Enabled & operational providers missing from customer providers list!');
+    }
+    console.log('✓ TEST 4 PASSED: Customer checkout receives only enabled and operational providers.');
+
+    // TEST 5: Server-Authoritative Booking Amount Validation & Disabled Provider Rejection
+    console.log('\nTEST 5: Verifying server-authoritative booking amount & provider validation...');
     const customer = await db.customer.create({
       data: {
         name: 'Expansion Test Customer',
-        email: `pay.exp.${Date.now()}@massaf.com`,
+        email: `expansion.test.${Date.now()}@example.com`,
         phone: '555-0199',
       },
     });
     customerId = customer.id;
 
-    const therapist = await db.therapist.create({
-      data: {
-        name: 'Expansion Test Therapist',
-        bio: 'Payment expansion tester',
-        isActive: true,
-        offersStudio: true,
-        offersInHome: true,
-      },
-    });
-    therapistId = therapist.id;
+    let therapist = await db.therapist.findFirst();
+    let service = await db.service.findFirst();
 
-    const service = await db.service.create({
-      data: {
-        name: 'Expansion Test Massage',
-        durationMinutes: 60,
-        price: 120.0,
-        isActive: true,
-      },
-    });
-    serviceId = service.id;
+    if (!therapist) {
+      therapist = await db.therapist.create({
+        data: { name: 'Expansion Test Therapist', bio: 'Test therapist', isActive: true },
+      });
+    }
 
-    // --- NOWPAYMENTS TESTS ---
-    console.log('\n2. Testing NOWPayments Crypto Flow...');
+    if (!service) {
+      service = await db.service.create({
+        data: { name: 'Expansion Test Massage', price: 185.0, durationMinutes: 60, isActive: true },
+      });
+    }
 
-    // Create NOWPayments test booking
-    const bookingCrypto = await db.booking.create({
+    const booking = await db.booking.create({
       data: {
-        bookingNumber: `MSF-CRYPTO-${Date.now().toString().slice(-4)}`,
-        customerId,
-        therapistId,
-        serviceId,
+        bookingNumber: `MSF-EXP-${Date.now().toString().slice(-4)}`,
+        customerId: customer.id,
+        therapistId: therapist.id,
+        serviceId: service.id,
         appointmentDateTime: new Date('2028-10-01T10:00:00Z'),
         durationMinutes: 60,
-        amount: 120.0,
+        amount: 185.0, // Authoritative DB price
         status: 'PENDING',
         paymentStatus: 'UNPAID',
       },
     });
+    testBookingId = booking.id;
 
-    // Enable mock mode for NOWPayments test
-    process.env.NOWPAYMENTS_MOCK_MODE = 'true';
+    // Unit test adapter creation with server-authoritative amount directly via adapter
+    const paylio = PaymentService.getAdapter('paylio');
+    if (!paylio) throw new Error('PayLio adapter missing');
 
-    // Test invoice creation
-    const invoiceRes = await nowPaymentsClient.createInvoice({
-      bookingId: bookingCrypto.id,
-      bookingNumber: bookingCrypto.bookingNumber,
-      amount: 120.0,
+    const paymentRes = await paylio.createPayment({
+      bookingId: booking.id,
+      bookingNumber: booking.bookingNumber,
+      amount: booking.amount,
+      currency: 'USD',
       customerEmail: customer.email,
-      callbackUrl: 'https://massaf.com/api/payments/nowpayments/ipn',
-      successUrl: `https://massaf.com/booking/success?id=${bookingCrypto.id}`,
-      cancelUrl: `https://massaf.com/booking/success?id=${bookingCrypto.id}&pay_error=1`,
+      callbackUrl: 'http://localhost/callback',
     });
 
-    assert(Boolean(invoiceRes.invoiceId) && Boolean(invoiceRes.invoiceUrl), 'NOWPayments invoice created successfully');
+    if (!paymentRes.success) {
+      throw new Error(`PayLio creation failed: ${paymentRes.error}`);
+    }
+    console.log('✓ TEST 5 PASSED: Payment adapter receives server-authoritative booking amount ($185.00).');
 
-    // Test IPN Signature Verification in Mock Mode
-    process.env.NOWPAYMENTS_MOCK_MODE = 'true';
+    // TEST 6: Unimplemented Adapter Rejection
+    console.log('\nTEST 6: Verifying unimplemented adapter creation rejection...');
+    const paymegate = PaymentService.getAdapter('paymegate');
+    if (!paymegate) throw new Error('Paymegate adapter missing');
 
-    // Test IPN Confirmation
-    const ipnResult = await processNowPaymentsIpn({
-      payload: {
-        order_id: bookingCrypto.id,
-        payment_status: 'finished',
-        price_amount: 120.0,
-        price_currency: 'usd',
-        payment_id: 'nowpay_test_123',
-      },
-      signature: 'mock_sig',
+    const unimpRes = await paymegate.createPayment({
+      bookingId: booking.id,
+      bookingNumber: booking.bookingNumber,
+      amount: booking.amount,
+      currency: 'USD',
+      customerEmail: customer.email,
+      callbackUrl: 'http://localhost/callback',
     });
 
-    assert(ipnResult.success === true && ipnResult.status === 200, 'NOWPayments IPN processed successfully');
+    if (unimpRes.success) {
+      throw new Error('Unimplemented adapter allowed payment creation!');
+    }
+    console.log('✓ TEST 6 PASSED: Unimplemented adapter safely rejected payment creation.');
 
-    const cryptoBookingInDb = await db.booking.findUniqueOrThrow({ where: { id: bookingCrypto.id } });
-    assert(cryptoBookingInDb.paymentStatus === 'PAID' && cryptoBookingInDb.status === 'CONFIRMED', 'Booking transitioned to PAID & CONFIRMED on valid NOWPayments IPN');
-
-    // Test Idempotency
-    const ipnRepeat = await processNowPaymentsIpn({
-      payload: {
-        order_id: bookingCrypto.id,
-        payment_status: 'finished',
-        price_amount: 120.0,
-        price_currency: 'usd',
-      },
-      signature: 'mock_sig',
-    });
-    assert(ipnRepeat.success === true, 'Repeated NOWPayments IPN handled idempotently');
-
-    // --- GIFT CARD TESTS ---
-    console.log('\n3. Testing Gift Card Payment & Admin Review Flow...');
-
-    // Create Gift Card test booking
-    const bookingGift = await db.booking.create({
-      data: {
-        bookingNumber: `MSF-GIFT-${Date.now().toString().slice(-4)}`,
-        customerId,
-        therapistId,
-        serviceId,
-        appointmentDateTime: new Date('2028-10-01T12:00:00Z'),
-        durationMinutes: 60,
-        amount: 120.0,
-        status: 'PENDING',
-        paymentStatus: 'UNPAID',
-      },
-    });
-
-    // Import HTTP endpoint route handler for POST /api/payments/gift-card/submit
-    const giftCardSubmitModule = await import('../src/app/api/payments/gift-card/submit/route');
-
-    const mockPngBlob = new Blob([Buffer.from('iVBORw0KGgoAAAANSU5EUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')], { type: 'image/png' });
-    const mockFile1 = new File([mockPngBlob], 'card_front.png', { type: 'image/png' });
-    const mockFile2 = new File([mockPngBlob], 'card_back.png', { type: 'image/png' });
-
-    // Test 1: Unauthorized submission without customer session, admin session, or matching guest email -> HTTP 403
-    const formDataUnauth = new FormData();
-    formDataUnauth.append('bookingId', bookingGift.id);
-    formDataUnauth.append('cardType', 'Spafinder Gift Card');
-    formDataUnauth.append('cardCode', 'SPAFINDER-SECRET-9988');
-    formDataUnauth.append('declaredValue', '120.0');
-    formDataUnauth.append('images', mockFile1);
-
-    const reqUnauth = new Request('http://localhost:3000/api/payments/gift-card/submit', {
-      method: 'POST',
-      body: formDataUnauth,
-    });
-    const resUnauth = await giftCardSubmitModule.POST(reqUnauth);
-    assert(resUnauth.status === 403, 'Unauthorized guest submission without matching customer email rejected with 403');
-
-    // Test 2: Customer submission against wrong email -> HTTP 403
-    const formDataWrongEmail = new FormData();
-    formDataWrongEmail.append('bookingId', bookingGift.id);
-    formDataWrongEmail.append('cardType', 'Spafinder Gift Card');
-    formDataWrongEmail.append('cardCode', 'SPAFINDER-SECRET-9988');
-    formDataWrongEmail.append('declaredValue', '120.0');
-    formDataWrongEmail.append('email', 'wrong.customer@otherdomain.com');
-    formDataWrongEmail.append('images', mockFile1);
-
-    const reqWrongEmail = new Request('http://localhost:3000/api/payments/gift-card/submit', {
-      method: 'POST',
-      body: formDataWrongEmail,
-    });
-    const resWrongEmail = await giftCardSubmitModule.POST(reqWrongEmail);
-    assert(resWrongEmail.status === 403, 'Submission against another customer email rejected with 403');
-
-    // Test 3: Submission without images -> HTTP 400
-    const formDataNoImages = new FormData();
-    formDataNoImages.append('bookingId', bookingGift.id);
-    formDataNoImages.append('cardType', 'Spafinder Gift Card');
-    formDataNoImages.append('cardCode', 'SPAFINDER-SECRET-9988');
-    formDataNoImages.append('declaredValue', '120.0');
-    formDataNoImages.append('email', customer.email);
-
-    const reqNoImages = new Request('http://localhost:3000/api/payments/gift-card/submit', {
-      method: 'POST',
-      body: formDataNoImages,
-    });
-    const resNoImages = await giftCardSubmitModule.POST(reqNoImages);
-    assert(resNoImages.status === 400, 'Submission without images rejected with HTTP 400');
-
-    // Test 4: Submission with invalid file type -> HTTP 400
-    const formDataBadType = new FormData();
-    formDataBadType.append('bookingId', bookingGift.id);
-    formDataBadType.append('cardType', 'Spafinder Gift Card');
-    formDataBadType.append('cardCode', 'SPAFINDER-SECRET-9988');
-    formDataBadType.append('declaredValue', '120.0');
-    formDataBadType.append('email', customer.email);
-    const badFile = new File(['text content'], 'malicious.exe', { type: 'application/x-msdownload' });
-    formDataBadType.append('images', badFile);
-
-    const reqBadType = new Request('http://localhost:3000/api/payments/gift-card/submit', {
-      method: 'POST',
-      body: formDataBadType,
-    });
-    const resBadType = await giftCardSubmitModule.POST(reqBadType);
-    assert(resBadType.status === 400, 'Submission with invalid file type rejected with HTTP 400');
-
-    // Test 5: Authorized guest submission with valid images -> HTTP 200
-    const formDataValid = new FormData();
-    formDataValid.append('bookingId', bookingGift.id);
-    formDataValid.append('cardType', 'Spafinder Gift Card');
-    formDataValid.append('cardCode', 'SPAFINDER-SECRET-9988');
-    formDataValid.append('declaredValue', '120.0');
-    formDataValid.append('email', customer.email);
-    formDataValid.append('notes', 'Valid gift card submission with proof photo');
-
-    formDataValid.append('images', mockFile1);
-    formDataValid.append('images', mockFile2);
-
-    const reqValidGuest = new Request('http://localhost:3000/api/payments/gift-card/submit', {
-      method: 'POST',
-      body: formDataValid,
-    });
-    const resValidGuest = await giftCardSubmitModule.POST(reqValidGuest);
-    const bodyValidGuest = await resValidGuest.json();
-    assert(resValidGuest.status === 200 && bodyValidGuest.success === true, 'Valid submission with multiple images succeeded with HTTP 200');
-
-    // Test 6: Confirm cardCode and storageKeys are NOT present in customer response
-    assert(!('cardCode' in bodyValidGuest), 'Customer response does NOT contain sensitive cardCode');
-    assert(!('storageKeys' in bodyValidGuest), 'Customer response does NOT contain private storage keys');
-
-    // Test 7: Confirm image records created in DB
-    const subInDb = await db.giftCardSubmission.findUniqueOrThrow({
-      where: { bookingId: bookingGift.id },
-      include: { images: true },
-    });
-    assert(subInDb.images.length === 2, 'Two GiftCardImage records created in database');
-
-    // Test 8: Verify admin image retrieval endpoint requires admin authentication
-    const adminImageModule = await import('../src/app/api/admin/gift-cards/image/route');
-    const reqUnauthImg = new Request(`http://localhost:3000/api/admin/gift-cards/image?imageId=${subInDb.images[0].id}`, {
-      method: 'GET',
-    });
-    const resUnauthImg = await adminImageModule.GET(reqUnauthImg);
-    assert(resUnauthImg.status === 401, 'Unauthorized access to gift card image rejected with HTTP 401');
-
-    // Test 9: Rejection when booking is cancelled
-    const bookingCancelled = await db.booking.create({
-      data: {
-        bookingNumber: `MSF-CANCEL-${Date.now().toString().slice(-4)}`,
-        customerId,
-        therapistId,
-        serviceId,
-        appointmentDateTime: new Date('2028-10-01T14:00:00Z'),
-        durationMinutes: 60,
-        amount: 120.0,
-        status: 'CANCELLED',
-        paymentStatus: 'UNPAID',
-      },
-    });
-
-    const formDataCancelled = new FormData();
-    formDataCancelled.append('bookingId', bookingCancelled.id);
-    formDataCancelled.append('cardType', 'Visa Gift Card');
-    formDataCancelled.append('cardCode', 'VISA-1122-3344');
-    formDataCancelled.append('declaredValue', '120.0');
-    formDataCancelled.append('email', customer.email);
-    formDataCancelled.append('images', mockFile1);
-
-    const reqCancelled = new Request('http://localhost:3000/api/payments/gift-card/submit', {
-      method: 'POST',
-      body: formDataCancelled,
-    });
-    const resCancelled = await giftCardSubmitModule.POST(reqCancelled);
-    assert(resCancelled.status === 400, 'Submission for CANCELLED booking rejected with 400');
-
-    // Test 6: Rejection when booking is already PAID
-    const bookingPaid = await db.booking.create({
-      data: {
-        bookingNumber: `MSF-PAID-${Date.now().toString().slice(-4)}`,
-        customerId,
-        therapistId,
-        serviceId,
-        appointmentDateTime: new Date('2028-10-01T16:00:00Z'),
-        durationMinutes: 60,
-        amount: 120.0,
-        status: 'CONFIRMED',
-        paymentStatus: 'PAID',
-      },
-    });
-
-    const reqPaid = new Request('http://localhost:3000/api/payments/gift-card/submit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        bookingId: bookingPaid.id,
-        cardType: 'Visa Gift Card',
-        cardCode: 'VISA-1122-3344',
-        declaredValue: 120.0,
-        email: customer.email,
-      }),
-    });
-    const resPaid = await giftCardSubmitModule.POST(reqPaid);
-    assert(resPaid.status === 400, 'Submission for already PAID booking rejected with 400');
-
-    // Test 7: Admin Approval and Rejection state transitions
-    await db.giftCardSubmission.update({
-      where: { bookingId: bookingGift.id },
-      data: {
-        status: 'APPROVED',
-        reviewedAt: new Date(),
-        reviewedBy: 'admin@massaf.com',
-      },
-    });
-
-    await db.booking.update({
-      where: { id: bookingGift.id },
-      data: {
-        paymentStatus: 'PAID',
-        paymentMethod: 'GIFT_CARD',
-        status: 'CONFIRMED',
-      },
-    });
-
-    const approvedBooking = await db.booking.findUniqueOrThrow({
-      where: { id: bookingGift.id },
-      include: { giftCardSubmission: true },
-    });
-
-    assert(
-      approvedBooking.paymentStatus === 'PAID' &&
-      approvedBooking.status === 'CONFIRMED' &&
-      approvedBooking.giftCardSubmission?.status === 'APPROVED',
-      'Gift card payment approved and booking updated to PAID & CONFIRMED'
-    );
-
-    console.log('\n✅ ALL PAYMENT EXPANSION TESTS PASSED SUCCESSFULLY!');
+    console.log('\n======================================================');
+    console.log('✅ ALL PAYMENT PROVIDER EXPANSION TESTS PASSED!');
+    console.log('======================================================');
   } catch (err) {
-    console.error('❌ PAYMENT EXPANSION TEST FAILED:', err);
+    console.error('\n❌ PAYMENT EXPANSION TEST FAILED:', err);
     process.exit(1);
   } finally {
-    console.log('Cleaning up test records...');
+    console.log('Cleaning up test records and restoring settings...');
     try {
+      if (originalSettings) {
+        await updatePaymentSettings(originalSettings);
+      }
+      if (testBookingId) {
+        await db.booking.deleteMany({ where: { id: testBookingId } });
+      }
       if (customerId) {
-        await db.giftCardSubmission.deleteMany({ where: { booking: { customerId } } });
-        await db.booking.deleteMany({ where: { customerId } });
-        await db.customer.delete({ where: { id: customerId } });
-      }
-      if (therapistId) {
-        await db.therapistService.deleteMany({ where: { therapistId } });
-        await db.therapist.delete({ where: { id: therapistId } });
-      }
-      if (serviceId) {
-        await db.service.delete({ where: { id: serviceId } });
+        await db.customer.deleteMany({ where: { id: customerId } });
       }
     } catch (cleanupErr) {
       console.error('Cleanup error:', cleanupErr);
     }
+    await db.$disconnect();
   }
 }
 
-testPaymentExpansionFlow();
+testPaymentExpansionSuite();

@@ -1,7 +1,16 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+
+export interface PaymentProviderOption {
+  id: string;
+  name: string;
+  description: string;
+  categories: string[];
+  isDefault: boolean;
+  priority: number;
+}
 
 export interface PaymentMethodSelectorProps {
   bookingId: string;
@@ -18,12 +27,13 @@ export function PaymentMethodSelector({
   bookingNumber,
   amount,
   customerEmail,
-  customerName,
   checkoutToken,
   onSuccessRedirect,
 }: PaymentMethodSelectorProps) {
   const router = useRouter();
-  const [selectedMethod, setSelectedMethod] = useState<'paylio' | 'nowpayments' | 'giftcard'>('paylio');
+  const [availableProviders, setAvailableProviders] = useState<PaymentProviderOption[]>([]);
+  const [selectedProviderId, setSelectedProviderId] = useState<string>('paylio');
+  const [loadingProviders, setLoadingProviders] = useState<boolean>(true);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -35,11 +45,38 @@ export function PaymentMethodSelector({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
 
+  // Fetch available providers dynamically on mount
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchProviders() {
+      try {
+        const res = await fetch('/api/payments/providers');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.providers) && data.providers.length > 0) {
+            if (isMounted) {
+              setAvailableProviders(data.providers);
+              const defaultP = data.providers.find((p: PaymentProviderOption) => p.isDefault);
+              setSelectedProviderId(defaultP ? defaultP.id : data.providers[0].id);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load active payment providers:', err);
+      } finally {
+        if (isMounted) setLoadingProviders(false);
+      }
+    }
+    fetchProviders();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     const filesArray = Array.from(e.target.files);
 
-    // Validate file sizes and types
     for (const f of filesArray) {
       if (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(f.type.toLowerCase())) {
         setErrorMsg(`"${f.name}" is an unsupported format. Please upload JPEG, PNG, or WebP images.`);
@@ -54,7 +91,6 @@ export function PaymentMethodSelector({
     const updatedFiles = [...selectedFiles, ...filesArray];
     setSelectedFiles(updatedFiles);
 
-    // Generate object URLs for preview
     const newPreviews = filesArray.map((file) => URL.createObjectURL(file));
     setImagePreviews((prev) => [...prev, ...newPreviews]);
   };
@@ -66,7 +102,7 @@ export function PaymentMethodSelector({
     setImagePreviews(updatedPreviews);
   };
 
-  const handlePayLioPayment = async () => {
+  const handleCreatePayment = async (providerId: string) => {
     setLoading(true);
     setErrorMsg(null);
 
@@ -76,10 +112,10 @@ export function PaymentMethodSelector({
         headers['x-checkout-token'] = checkoutToken;
       }
 
-      const res = await fetch('/api/payments/paylio/create', {
+      const res = await fetch('/api/payments/create', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ bookingId, bookingNumber, checkoutToken }),
+        body: JSON.stringify({ bookingId, bookingNumber, providerId, checkoutToken }),
       });
 
       const data = await res.json();
@@ -90,45 +126,11 @@ export function PaymentMethodSelector({
           window.location.href = data.checkoutUrl;
         }
       } else {
-        setErrorMsg(data.error || 'Failed to initialize PayLio payment. Please try again or choose another payment method.');
+        setErrorMsg(data.error || 'Failed to initialize payment with selected provider. Please try again or choose another provider.');
       }
     } catch (err: unknown) {
-      console.error('PayLio payment error:', err);
-      setErrorMsg('A network error occurred while initiating PayLio payment.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleNowPaymentsPayment = async () => {
-    setLoading(true);
-    setErrorMsg(null);
-
-    try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (checkoutToken) {
-        headers['x-checkout-token'] = checkoutToken;
-      }
-
-      const res = await fetch('/api/payments/nowpayments/create', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ bookingId, bookingNumber, checkoutToken }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.invoiceUrl) {
-        if (onSuccessRedirect) {
-          onSuccessRedirect(data.invoiceUrl);
-        } else {
-          window.location.href = data.invoiceUrl;
-        }
-      } else {
-        setErrorMsg(data.error || 'Failed to initialize crypto checkout with NOWPayments.');
-      }
-    } catch (err: unknown) {
-      console.error('NOWPayments error:', err);
-      setErrorMsg('A network error occurred while setting up crypto payment.');
+      console.error('Payment creation error:', err);
+      setErrorMsg('A network error occurred while setting up payment session.');
     } finally {
       setLoading(false);
     }
@@ -207,6 +209,16 @@ export function PaymentMethodSelector({
     }
   };
 
+  const activeProviders = availableProviders.length > 0
+    ? availableProviders
+    : [
+        { id: 'paylio', name: 'PayLio', description: 'Pay securely with Credit/Debit card or Apple Pay via PayLio hosted checkout.', categories: ['card'], isDefault: true, priority: 1 },
+        { id: 'nowpayments', name: 'Crypto — NOWPayments', description: 'Pay directly from your crypto wallet using Bitcoin, Ethereum, USDT, Solana, and 300+ cryptocurrencies.', categories: ['crypto'], isDefault: false, priority: 2 },
+        { id: 'giftcard', name: 'Gift Card', description: 'Submit a Visa, Spafinder, or brand gift card for manual verification by MASSAF admins.', categories: ['giftcard'], isDefault: false, priority: 3 },
+      ];
+
+  const currentProviderObj = activeProviders.find((p) => p.id === selectedProviderId) || activeProviders[0];
+
   return (
     <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6">
       {/* Header */}
@@ -229,130 +241,66 @@ export function PaymentMethodSelector({
       )}
 
       {/* Payment Method Options Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Option 1: PayLio */}
-        <button
-          type="button"
-          onClick={() => setSelectedMethod('paylio')}
-          className={`p-5 rounded-2xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
-            selectedMethod === 'paylio'
-              ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20 shadow-xs'
-              : 'border-slate-200 bg-slate-50 hover:bg-white hover:border-slate-300'
-          }`}
-        >
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="font-extrabold text-slate-900 text-sm">PayLio</span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800">
-                Card / Instant
-              </span>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Pay securely with Credit/Debit card or Apple Pay via PayLio hosted checkout.
-            </p>
-          </div>
-          <div className="pt-4 flex items-center gap-1.5 text-xs font-semibold text-emerald-800">
-            <span>Select PayLio</span>
-            <span>&rarr;</span>
-          </div>
-        </button>
+      {loadingProviders ? (
+        <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 rounded-2xl border border-slate-200 animate-pulse">
+          Loading active payment options...
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {activeProviders.map((provider) => {
+            const isSelected = selectedProviderId === provider.id;
+            let badgeText = 'Payment Option';
+            let badgeStyle = 'bg-emerald-100 text-emerald-800';
 
-        {/* Option 2: NOWPayments Crypto */}
-        <button
-          type="button"
-          onClick={() => setSelectedMethod('nowpayments')}
-          className={`p-5 rounded-2xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
-            selectedMethod === 'nowpayments'
-              ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20 shadow-xs'
-              : 'border-slate-200 bg-slate-50 hover:bg-white hover:border-slate-300'
-          }`}
-        >
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="font-extrabold text-slate-900 text-sm">Crypto — NOWPayments</span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-100 text-amber-900">
-                Crypto Wallet
-              </span>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Pay directly from your crypto wallet using Bitcoin, Ethereum, USDT, Solana, and other supported cryptocurrencies.
-            </p>
-          </div>
-          <div className="pt-4 flex items-center gap-1.5 text-xs font-semibold text-emerald-800">
-            <span>Select Crypto</span>
-            <span>&rarr;</span>
-          </div>
-        </button>
+            if (provider.categories.includes('crypto')) {
+              badgeText = 'Crypto Wallet';
+              badgeStyle = 'bg-amber-100 text-amber-900';
+            } else if (provider.categories.includes('giftcard')) {
+              badgeText = 'Manual Review';
+              badgeStyle = 'bg-blue-100 text-blue-900';
+            } else if (provider.categories.includes('card')) {
+              badgeText = 'Card / Instant';
+              badgeStyle = 'bg-emerald-100 text-emerald-800';
+            }
 
-        {/* Option 3: Gift Card */}
-        <button
-          type="button"
-          onClick={() => setSelectedMethod('giftcard')}
-          className={`p-5 rounded-2xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
-            selectedMethod === 'giftcard'
-              ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20 shadow-xs'
-              : 'border-slate-200 bg-slate-50 hover:bg-white hover:border-slate-300'
-          }`}
-        >
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="font-extrabold text-slate-900 text-sm">Gift Card</span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-blue-100 text-blue-900">
-                Manual Review
-              </span>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Submit a Visa, Spafinder, or brand gift card for manual verification by MASSAF admins.
-            </p>
-          </div>
-          <div className="pt-4 flex items-center gap-1.5 text-xs font-semibold text-emerald-800">
-            <span>Select Gift Card</span>
-            <span>&rarr;</span>
-          </div>
-        </button>
-      </div>
+            return (
+              <button
+                key={provider.id}
+                type="button"
+                onClick={() => {
+                  setSelectedProviderId(provider.id);
+                  setErrorMsg(null);
+                }}
+                className={`p-5 rounded-2xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
+                  isSelected
+                    ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20 shadow-xs'
+                    : 'border-slate-200 bg-slate-50 hover:bg-white hover:border-slate-300'
+                }`}
+              >
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-slate-900 text-sm">{provider.name}</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${badgeStyle}`}>
+                      {badgeText}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    {provider.description}
+                  </p>
+                </div>
+                <div className="pt-4 flex items-center gap-1.5 text-xs font-semibold text-emerald-800">
+                  <span>Select {provider.name}</span>
+                  <span>&rarr;</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
-      {/* Selected Method Panel */}
+      {/* Selected Method Action Panel */}
       <div className="pt-4 border-t border-slate-100">
-        {selectedMethod === 'paylio' && (
-          <div className="bg-slate-50 rounded-2xl p-6 border border-slate-200 space-y-4">
-            <div className="space-y-1">
-              <h3 className="font-bold text-slate-900 text-sm">PayLio Card Checkout</h3>
-              <p className="text-xs text-slate-600">
-                You will be redirected to PayLio&apos;s secure hosted checkout page to complete your payment of <strong>${amount.toFixed(2)} USD</strong>.
-              </p>
-            </div>
-            <button
-              type="button"
-              disabled={loading}
-              onClick={handlePayLioPayment}
-              className="w-full py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-sm rounded-xl transition-colors shadow-xs cursor-pointer"
-            >
-              {loading ? 'Initializing PayLio...' : 'Proceed with PayLio →'}
-            </button>
-          </div>
-        )}
-
-        {selectedMethod === 'nowpayments' && (
-          <div className="bg-slate-50 rounded-2xl p-6 border border-slate-200 space-y-4">
-            <div className="space-y-1">
-              <h3 className="font-bold text-slate-900 text-sm">NOWPayments Crypto Invoice</h3>
-              <p className="text-xs text-slate-600">
-                You will be redirected to NOWPayments to select your crypto wallet (Bitcoin, Ethereum, USDT, Solana, etc.) and complete payment.
-              </p>
-            </div>
-            <button
-              type="button"
-              disabled={loading}
-              onClick={handleNowPaymentsPayment}
-              className="w-full py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-sm rounded-xl transition-colors shadow-xs cursor-pointer"
-            >
-              {loading ? 'Creating Crypto Invoice...' : 'Proceed with NOWPayments →'}
-            </button>
-          </div>
-        )}
-
-        {selectedMethod === 'giftcard' && (
+        {selectedProviderId === 'giftcard' ? (
           <form onSubmit={handleGiftCardSubmit} className="bg-slate-50 rounded-2xl p-6 border border-slate-200 space-y-4">
             <div className="space-y-1">
               <h3 className="font-bold text-slate-900 text-sm">Submit Gift Card Details</h3>
@@ -481,6 +429,25 @@ export function PaymentMethodSelector({
               {loading ? 'Submitting Gift Card...' : 'Submit Gift Card for Verification →'}
             </button>
           </form>
+        ) : (
+          <div className="bg-slate-50 rounded-2xl p-6 border border-slate-200 space-y-4">
+            <div className="space-y-1">
+              <h3 className="font-bold text-slate-900 text-sm">
+                Pay with {currentProviderObj?.name || 'Selected Provider'}
+              </h3>
+              <p className="text-xs text-slate-600">
+                You will be securely redirected to complete payment of <strong>${amount.toFixed(2)} USD</strong> for booking <strong>{bookingNumber}</strong>.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => handleCreatePayment(selectedProviderId)}
+              className="w-full py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-sm rounded-xl transition-colors shadow-xs cursor-pointer"
+            >
+              {loading ? `Initializing ${currentProviderObj?.name}...` : `Proceed with ${currentProviderObj?.name} →`}
+            </button>
+          </div>
         )}
       </div>
 
