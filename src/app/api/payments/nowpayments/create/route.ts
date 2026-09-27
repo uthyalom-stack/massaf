@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+ import { db } from '@/lib/db';
 import { nowPaymentsClient } from '@/lib/nowpayments';
 import { getCanonicalBaseUrl } from '@/app/api/payments/paylio/create/route';
+import { getVerifiedCustomerSession, extractCheckoutToken, verifyCheckoutToken } from '@/lib/auth-session';
 
 export async function POST(request: Request) {
   try {
@@ -24,6 +25,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Booking record not found.' }, { status: 404 });
     }
 
+    const cookieHeader = request.headers.get('cookie') || undefined;
+    const customerSession = await getVerifiedCustomerSession(cookieHeader);
+    const token = extractCheckoutToken(request, body);
+    const isOwner = Boolean(customerSession && customerSession.entityId === booking.customerId);
+    const hasValidToken = Boolean(token && verifyCheckoutToken(token, booking.id));
+
+    if (!isOwner && !hasValidToken) {
+      return NextResponse.json(
+        { error: 'Unauthorized: You do not have permission to pay for this booking.' },
+        { status: 403 }
+      );
+    }
+
     if (['CANCELLED', 'REFUNDED'].includes(booking.status)) {
       return NextResponse.json(
         { error: 'This booking has been cancelled or refunded and cannot be paid.' },
@@ -40,8 +54,9 @@ export async function POST(request: Request) {
 
     const baseUrl = getCanonicalBaseUrl(request);
     const callbackUrl = `${baseUrl}/api/payments/nowpayments/ipn`;
-    const successUrl = `${baseUrl}/booking/success?id=${booking.id}`;
-    const cancelUrl = `${baseUrl}/booking/success?id=${booking.id}&pay_error=1`;
+    const tokenQueryParam = token ? `&token=${encodeURIComponent(token)}` : '';
+    const successUrl = `${baseUrl}/booking/success?id=${booking.id}${tokenQueryParam}`;
+    const cancelUrl = `${baseUrl}/booking/success?id=${booking.id}&pay_error=1${tokenQueryParam}`;
 
     const invoice = await nowPaymentsClient.createInvoice({
       bookingId: booking.id,

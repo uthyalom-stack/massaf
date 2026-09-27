@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getVerifiedCustomerSession, getVerifiedTherapistSession, getVerifiedAdminSession } from '@/lib/auth-session';
+import { getVerifiedCustomerSession, getVerifiedTherapistSession, getVerifiedAdminSession, extractCheckoutToken, verifyCheckoutToken } from '@/lib/auth-session';
 
 export async function GET(request: Request) {
   try {
@@ -51,18 +51,19 @@ export async function GET(request: Request) {
       );
     }
 
-    // Access control check: Must be authenticated customer (owning booking), therapist assigned, admin, or recently created PENDING/UNPAID booking within 15-minute checkout window
+    // Access control check: Must be authenticated customer (owning booking), therapist assigned, admin, or guest with a valid checkout token
     const cookieHeader = request.headers.get('cookie') || undefined;
     const customerSession = await getVerifiedCustomerSession(cookieHeader);
     const therapistSession = await getVerifiedTherapistSession(cookieHeader);
     const adminSession = await getVerifiedAdminSession(cookieHeader);
+    const token = extractCheckoutToken(request);
 
     const isCustomerOwner = Boolean(customerSession && customerSession.entityId === booking.customerId);
     const isAssignedTherapist = Boolean(therapistSession && therapistSession.entityId === booking.therapistId);
     const isAdmin = Boolean(adminSession);
-    const isRecentUnpaidCheckout = booking.paymentStatus === 'UNPAID' && (Date.now() - booking.createdAt.getTime() <= 15 * 60 * 1000);
+    const hasValidCheckoutToken = Boolean(token && verifyCheckoutToken(token, booking.id));
 
-    if (!isCustomerOwner && !isAssignedTherapist && !isAdmin && !isRecentUnpaidCheckout) {
+    if (!isCustomerOwner && !isAssignedTherapist && !isAdmin && !hasValidCheckoutToken) {
       return NextResponse.json(
         { error: 'Unauthorized: Access to booking details is restricted' },
         { status: 401 }

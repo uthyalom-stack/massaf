@@ -6,8 +6,27 @@ import { isAppointmentTimeAvailable } from '@/lib/availability';
 import { parseAppointmentDateTime } from '@/lib/timezone';
 import { cookies } from 'next/headers';
 
+import { checkRateLimit } from '@/lib/auth-rate-limit';
+
 export async function POST(request: Request) {
   try {
+    // Rate limiting: Max 10 booking attempts per 15 minutes per IP
+    const clientIp = request.headers.get('x-forwarded-for') || 'anon_ip';
+    const rateCheck = await checkRateLimit(clientIp, 'booking_creation', 10, 15);
+
+    if (!rateCheck.allowed) {
+      if (rateCheck.error) {
+        return NextResponse.json(
+          { error: 'Booking system temporarily unavailable. Please try again in a few moments.' },
+          { status: 503 }
+        );
+      }
+      return NextResponse.json(
+        { error: 'Too many booking attempts. Please wait a few minutes before trying again.' },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
 
     // 1. Zod schema validation
@@ -65,13 +84,42 @@ export async function POST(request: Request) {
     }
 
     const service = therapistService.service;
-    const requestedDuration = Number(data.durationMinutes) || therapistService.customDurationMinutes || service.durationMinutes;
-    const durationMinutes = [30, 45, 60, 90, 120].includes(requestedDuration) ? requestedDuration : service.durationMinutes;
+    const isOvernightBooking = Boolean(data.isOvernight || data.durationMinutes === 720);
 
-    // Server-authoritative hourly rate calculation: Total = HourlyRate * (DurationMinutes / 60)
-    const hourlyRateUsed = therapist.hourlyRate || 100.0;
-    const calculatedTotal = Math.round(hourlyRateUsed * (durationMinutes / 60) * 100) / 100;
-    const authoritativePrice = calculatedTotal;
+    let durationMinutes: number;
+    let authoritativePrice: number;
+
+    if (isOvernightBooking) {
+      if (!therapist.overnightAvailable) {
+        return NextResponse.json(
+          { error: 'Overnight appointments are not offered by this therapist.' },
+          { status: 400 }
+        );
+      }
+
+      durationMinutes = 720; // 12 hours interval for overnight
+      const multiplier = therapist.overnightMultiplier && therapist.overnightMultiplier > 0
+        ? therapist.overnightMultiplier
+        : 4.0;
+
+      // Authoritative Overnight Price: Service.price * Therapist.overnightMultiplier
+      authoritativePrice = Math.round(service.price * multiplier * 100) / 100;
+    } else {
+      const requestedDuration = Number(data.durationMinutes);
+      if (![60, 120, 180, 240, 300, 360].includes(requestedDuration)) {
+        return NextResponse.json(
+          { error: 'Invalid appointment duration. Supported durations are 1, 2, 3, 4, 5, or 6 hours.' },
+          { status: 400 }
+        );
+      }
+
+      durationMinutes = requestedDuration;
+      // Authoritative Normal Price: Service.price * durationHours
+      authoritativePrice = Math.round(service.price * (durationMinutes / 60) * 100) / 100;
+    }
+
+    const hourlyRateUsed = service.price;
+    const calculatedTotal = authoritativePrice;
 
     // 4. Validate location type is supported by therapist & validate ServiceArea for IN_HOME
     if (data.locationType === 'STUDIO' && !therapist.offersStudio) {
@@ -265,6 +313,7 @@ export async function POST(request: Request) {
           hourlyRateUsed,
           calculatedTotal,
           amount: authoritativePrice,
+          isOvernight: isOvernightBooking,
           status: 'PENDING',
           paymentStatus: 'UNPAID',
         },
@@ -305,6 +354,9 @@ export async function POST(request: Request) {
       console.error('Failed to dispatch notifyBookingCreated:', notifErr);
     }
 
+    const { createCheckoutToken } = await import('@/lib/auth-session');
+    const checkoutToken = createCheckoutToken(createdBooking.id);
+
     return NextResponse.json(
       {
         message: 'Booking created successfully',
@@ -320,6 +372,7 @@ export async function POST(request: Request) {
           serviceName: service.name,
           durationMinutes,
         },
+        checkoutToken,
       },
       { status: 201 }
     );

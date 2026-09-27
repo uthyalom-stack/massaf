@@ -4,8 +4,13 @@ import { getVerifiedAdminSession } from '@/lib/auth-session';
 
 function escapeCsvField(val: unknown): string {
   if (val === null || val === undefined) return '""';
-  const str = String(val).replace(/"/g, '""');
-  return `"${str}"`;
+  let str = String(val);
+  // Mitigate CSV Formula Injection by prepending single quote if starting with formula triggers
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
+  const escaped = str.replace(/"/g, '""');
+  return `"${escaped}"`;
 }
 
 function buildCsvResponse(filename: string, headerRow: string[], dataRows: string[][]): NextResponse {

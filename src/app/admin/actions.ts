@@ -336,6 +336,7 @@ export async function executeTherapistCsvImportAction(input: {
 export async function createTherapistAction(input: unknown) {
   try {
     await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    const rawInput = input as Record<string, any>;
     const validated = therapistBaseSchema.parse(input);
 
     if (validated.email) {
@@ -345,6 +346,15 @@ export async function createTherapistAction(input: unknown) {
       if (existing) {
         return { success: false, error: 'A therapist with this email address already exists.' };
       }
+    }
+
+    let parsedMultiplier = 4.0;
+    if (rawInput.overnightMultiplier !== undefined && rawInput.overnightMultiplier !== null) {
+      const num = Number(rawInput.overnightMultiplier);
+      if (isNaN(num) || num <= 0) {
+        return { success: false, error: 'Overnight multiplier must be a positive number.' };
+      }
+      parsedMultiplier = num;
     }
 
     const therapist = await db.therapist.create({
@@ -361,6 +371,8 @@ export async function createTherapistAction(input: unknown) {
         isHomepageSelected: validated.isHomepageSelected,
         offersStudio: validated.offersStudio,
         offersInHome: validated.offersInHome,
+        overnightAvailable: Boolean(rawInput.overnightAvailable),
+        overnightMultiplier: parsedMultiplier,
       },
     });
 
@@ -3780,6 +3792,16 @@ export async function updateTherapistAction(id: string, input: unknown) {
       }
     }
 
+    const rawInput = input as Record<string, any>;
+    let parsedMultiplier: number | undefined = undefined;
+    if (rawInput.overnightMultiplier !== undefined && rawInput.overnightMultiplier !== null) {
+      const num = Number(rawInput.overnightMultiplier);
+      if (isNaN(num) || num <= 0) {
+        return { success: false, error: 'Overnight multiplier must be a positive number.' };
+      }
+      parsedMultiplier = num;
+    }
+
     const updated = await db.therapist.update({
       where: { id },
       data: {
@@ -3795,6 +3817,8 @@ export async function updateTherapistAction(id: string, input: unknown) {
         ...(validated.isHomepageSelected !== undefined && { isHomepageSelected: validated.isHomepageSelected }),
         ...(validated.offersStudio !== undefined && { offersStudio: validated.offersStudio }),
         ...(validated.offersInHome !== undefined && { offersInHome: validated.offersInHome }),
+        ...(rawInput.overnightAvailable !== undefined && { overnightAvailable: Boolean(rawInput.overnightAvailable) }),
+        ...(parsedMultiplier !== undefined && { overnightMultiplier: parsedMultiplier }),
       },
     });
 

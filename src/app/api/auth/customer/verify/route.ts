@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     });
 
     // Uniform generic rejection message to prevent user/booking enumeration
-    if (!customer || customer.bookings.length === 0) {
+    if (!customer || !customer.isActive || customer.bookings.length === 0) {
       return NextResponse.json(
         { error: 'Invalid email or booking reference provided' },
         { status: 401 }

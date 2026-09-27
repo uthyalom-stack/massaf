@@ -7,12 +7,24 @@ import { getVerifiedAdminSession } from '@/lib/auth-session';
  * 1. An active, cryptographically signed admin session cookie (`massaf_admin_session`), or
  * 2. A valid administrative API key supplied in `x-admin-api-key` or `Authorization: Bearer <key>`.
  */
-export async function verifyAdminApiKey(request?: Request): Promise<Response | null> {
+export async function verifyAdminApiKey(
+  request?: Request,
+  allowedRoles: string[] = ['SUPER_ADMIN', 'ADMIN']
+): Promise<Response | null> {
   // 1. First check active signed admin session cookie if cookies or request headers are available
   try {
     const cookieHeader = request ? request.headers.get('cookie') || undefined : undefined;
     const adminSession = await getVerifiedAdminSession(cookieHeader);
     if (adminSession) {
+      if (allowedRoles && allowedRoles.length > 0) {
+        const sessionRole = adminSession.role || 'STAFF';
+        if (!allowedRoles.includes(sessionRole)) {
+          return Response.json(
+            { success: false, error: 'Forbidden: Insufficient administrative role privileges.' },
+            { status: 403 }
+          );
+        }
+      }
       return null; // Authorization successful via session cookie
     }
   } catch {

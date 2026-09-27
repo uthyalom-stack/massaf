@@ -1,5 +1,6 @@
 import React from 'react';
 import { redirect } from 'next/navigation';
+import { db } from '@/lib/db';
 import { getVerifiedAdminSession } from '@/lib/auth-session';
 import { AddTherapistForm } from '@/components/admin/AddTherapistForm';
 
@@ -16,5 +17,11 @@ export default async function AddTherapistPage() {
     redirect('/admin/marketer');
   }
 
-  return <AddTherapistForm />;
+  const globalServices = await db.service.findMany({
+    where: { isActive: true },
+    orderBy: { name: 'asc' },
+    select: { id: true, name: true, durationMinutes: true, price: true },
+  });
+
+  return <AddTherapistForm availableGlobalServices={globalServices} />;
 }

@@ -6,6 +6,46 @@ import { uploadToR2, generateGiftCardObjectKey, deleteFromR2 } from '@/lib/r2';
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB per file
+const MAX_FILE_COUNT = 5;
+
+function validateImageMagicBytes(buffer: Buffer): { valid: boolean; format?: string } {
+  if (buffer.length < 8) return { valid: false };
+
+  // JPEG: FF D8 FF
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return { valid: true, format: 'image/jpeg' };
+  }
+
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return { valid: true, format: 'image/png' };
+  }
+
+  // WebP: RIFF ... WEBP
+  if (
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) {
+    return { valid: true, format: 'image/webp' };
+  }
+
+  return { valid: false };
+}
 
 export async function POST(request: Request) {
   try {
@@ -29,6 +69,13 @@ export async function POST(request: Request) {
       email = formData.get('email') as string | null;
 
       const fileEntries = formData.getAll('images');
+      if (fileEntries.length > MAX_FILE_COUNT) {
+        return NextResponse.json(
+          { error: `Maximum of ${MAX_FILE_COUNT} gift card photos permitted per submission.` },
+          { status: 400 }
+        );
+      }
+
       for (const entry of fileEntries) {
         if (entry && typeof entry === 'object' && 'arrayBuffer' in entry) {
           const file = entry as File;
@@ -46,8 +93,15 @@ export async function POST(request: Request) {
               );
             }
             const buffer = Buffer.from(await file.arrayBuffer());
-            const ext = file.name.split('.').pop() || 'jpg';
-            uploadedFiles.push({ fileBuffer: buffer, mimeType: file.type, extension: ext });
+            const magicCheck = validateImageMagicBytes(buffer);
+            if (!magicCheck.valid) {
+              return NextResponse.json(
+                { error: `File content for "${file.name}" does not match a valid JPEG, PNG, or WebP image.` },
+                { status: 400 }
+              );
+            }
+            const ext = magicCheck.format === 'image/png' ? 'png' : magicCheck.format === 'image/webp' ? 'webp' : 'jpg';
+            uploadedFiles.push({ fileBuffer: buffer, mimeType: magicCheck.format || file.type, extension: ext });
           }
         }
       }
@@ -109,20 +163,18 @@ export async function POST(request: Request) {
       );
     }
 
-    // Access control check: Verify authenticated customer owner, admin session, or guest booking verification (matching customer email + booking reference)
+    // Access control check: Verify authenticated customer owner, admin session, or guest with a valid checkout capability token
     const cookieHeader = request.headers.get('cookie') || undefined;
-    const { getVerifiedCustomerSession, getVerifiedAdminSession } = await import('@/lib/auth-session');
+    const { getVerifiedCustomerSession, getVerifiedAdminSession, extractCheckoutToken, verifyCheckoutToken } = await import('@/lib/auth-session');
     const customerSession = await getVerifiedCustomerSession(cookieHeader);
     const adminSession = await getVerifiedAdminSession(cookieHeader);
+    const token = extractCheckoutToken(request, { bookingId, email });
 
-    const isCustomerOwner = customerSession && customerSession.entityId === booking.customerId;
+    const isCustomerOwner = Boolean(customerSession && customerSession.entityId === booking.customerId);
     const isAdmin = Boolean(adminSession);
+    const hasValidCheckoutToken = Boolean(token && verifyCheckoutToken(token, booking.id));
 
-    // Guest checkout authorization check: verify matching customer email provided in request or cookie/header verification
-    const requestEmail = email ? email.trim().toLowerCase() : undefined;
-    const isGuestAuthorized = requestEmail && requestEmail === booking.customer.email.toLowerCase();
-
-    if (!isCustomerOwner && !isAdmin && !isGuestAuthorized) {
+    if (!isCustomerOwner && !isAdmin && !hasValidCheckoutToken) {
       return NextResponse.json(
         { error: 'Unauthorized: You do not have permission to submit payment for this booking.' },
         { status: 403 }
@@ -238,11 +290,12 @@ Review this submission in the MASSAF admin dashboard.`;
       }
     }
 
+    const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
     return NextResponse.json({
       success: true,
       submissionId: submission.id,
       bookingId: booking.id,
-      redirectUrl: `/booking/success?id=${booking.id}&gift_card=1`,
+      redirectUrl: `/booking/success?id=${booking.id}&gift_card=1${tokenParam}`,
     });
   } catch (err: unknown) {
     console.error('Error in gift card submission:', err);

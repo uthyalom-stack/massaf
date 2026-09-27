@@ -9,10 +9,10 @@ export async function GET(request: Request) {
     const cookieHeader = request.headers.get('cookie') || undefined;
     const adminSession = await getVerifiedAdminSession(cookieHeader);
 
-    if (!adminSession) {
+    if (!adminSession || adminSession.role === 'STAFF') {
       return NextResponse.json(
-        { error: 'Unauthorized: Admin authentication required to access gift card proof images.' },
-        { status: 401 }
+        { error: 'Forbidden: Administrative authorization required to access gift card proof images.' },
+        { status: 403 }
       );
     }
 

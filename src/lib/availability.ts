@@ -79,7 +79,7 @@ export function formatMinutesToTimeString(totalMinutes: number): { value: string
 /**
  * Generates 30-minute time preset options (e.g. 06:00 to 22:00) for dropdown selectors.
  */
-export function generateTimePresetOptions(startHour = 6, endHour = 22): { value: string; label: string }[] {
+export function generateTimePresetOptions(startHour = 0, endHour = 23): { value: string; label: string }[] {
   const options: { value: string; label: string }[] = [];
   for (let hour = startHour; hour <= endHour; hour++) {
     for (const min of [0, 30]) {

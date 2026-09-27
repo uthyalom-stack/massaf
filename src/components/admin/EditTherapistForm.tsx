@@ -78,6 +78,8 @@ export interface DetailedTherapist {
   isHomepageSelected?: boolean;
   offersStudio: boolean;
   offersInHome: boolean;
+  overnightAvailable?: boolean;
+  overnightMultiplier?: number;
   photos: PhotoData[];
   services: ServiceData[];
   availabilities: AvailabilityData[];
@@ -132,6 +134,8 @@ export function EditTherapistForm({
     isHomepageSelected: therapist.isHomepageSelected ?? false,
     offersStudio: therapist.offersStudio,
     offersInHome: therapist.offersInHome,
+    overnightAvailable: therapist.overnightAvailable ?? false,
+    overnightMultiplier: therapist.overnightMultiplier ?? 4.0,
   });
 
   // Local state for deferred profile image file & preview
@@ -159,10 +163,10 @@ export function EditTherapistForm({
   const [editingPhotoId, setEditingPhotoId] = useState<string | null>(null);
   const [editingPhotoSortOrder, setEditingPhotoAltSortOrder] = useState<number>(0);
 
-  // State for Service Assignment
-  const [selectedServiceId, setSelectedServiceId] = useState('');
-  const [customPrice, setCustomPrice] = useState('');
-  const [customDuration, setCustomDuration] = useState('');
+  // State for Multi-Service Assignment
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(() =>
+    therapist.services.map((s) => s.serviceId)
+  );
   const [serviceSaving, setServiceSaving] = useState(false);
   const [serviceMsg, setServiceMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -285,6 +289,8 @@ export function EditTherapistForm({
         isHomepageSelected: basicForm.isHomepageSelected,
         offersStudio: basicForm.offersStudio,
         offersInHome: basicForm.offersInHome,
+        overnightAvailable: basicForm.overnightAvailable,
+        overnightMultiplier: basicForm.overnightMultiplier,
       });
 
       if (!res.success) {
@@ -557,58 +563,69 @@ export function EditTherapistForm({
     });
   };
 
-  // Assign Service
-  const handleAssignService = async (e: React.FormEvent) => {
+  // Multi-Service Batch Save
+  const handleSaveServicesBatch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedServiceId) return;
-
     setServiceSaving(true);
     setServiceMsg(null);
 
     try {
-      const res = await assignTherapistServiceAction(therapist.id, {
-        serviceId: selectedServiceId,
-        customPrice: customPrice ? parseFloat(customPrice) : undefined,
-        customDurationMinutes: customDuration ? parseInt(customDuration, 10) : undefined,
-        isActive: true,
-      });
+      const currentAssignedIds = therapist.services.map((s) => s.serviceId);
+      const toAdd = selectedServiceIds.filter((id) => !currentAssignedIds.includes(id));
+      const toRemove = therapist.services.filter((s) => !selectedServiceIds.includes(s.serviceId));
 
-      if (!res.success) {
-        setServiceMsg({ type: 'error', text: res.error || 'Failed to assign service' });
-        return;
-      }
+      let addCount = 0;
+      let removeCount = 0;
 
-      if (res.therapistService) {
-        const ts: ServiceData = {
-          id: res.therapistService.id,
-          serviceId: res.therapistService.serviceId,
-          customPrice: res.therapistService.customPrice,
-          customDurationMinutes: res.therapistService.customDurationMinutes,
-          isActive: res.therapistService.isActive,
-          service: {
-            id: res.therapistService.service.id,
-            name: res.therapistService.service.name,
-            durationMinutes: res.therapistService.service.durationMinutes,
-            price: res.therapistService.service.price,
-          },
-        };
-        setTherapist((prev) => {
-          const filtered = prev.services.filter((s) => s.serviceId !== selectedServiceId);
-          return {
-            ...prev,
-            services: [...filtered, ts],
-          };
+      for (const serviceId of toAdd) {
+        const res = await assignTherapistServiceAction(therapist.id, {
+          serviceId,
+          isActive: true,
         });
+        if (res.success) addCount++;
       }
 
-      setSelectedServiceId('');
-      setCustomPrice('');
-      setCustomDuration('');
-      setServiceMsg({ type: 'success', text: 'Service assigned successfully!' });
+      for (const ts of toRemove) {
+        const res = await removeTherapistServiceAction(therapist.id, ts.serviceId);
+        if (res.success) removeCount++;
+      }
+
+      // Re-construct local therapist service state
+      const updatedServicesList: ServiceData[] = selectedServiceIds
+        .map((id) => {
+          const existing = therapist.services.find((s) => s.serviceId === id);
+          if (existing) return existing;
+          const globalSvc = availableGlobalServices.find((g) => g.id === id);
+          if (!globalSvc) return null;
+          return {
+            id: `temp-${id}`,
+            serviceId: id,
+            customPrice: null,
+            customDurationMinutes: null,
+            isActive: true,
+            service: {
+              id: globalSvc.id,
+              name: globalSvc.name,
+              durationMinutes: globalSvc.durationMinutes,
+              price: globalSvc.price,
+            },
+          };
+        })
+        .filter((s): s is ServiceData => s !== null);
+
+      setTherapist((prev) => ({
+        ...prev,
+        services: updatedServicesList,
+      }));
+
+      setServiceMsg({
+        type: 'success',
+        text: `Services updated successfully! (${addCount} added, ${removeCount} removed)`,
+      });
       router.refresh();
     } catch (err) {
-      console.error('Error assigning service:', err);
-      setServiceMsg({ type: 'error', text: 'An unexpected error occurred.' });
+      console.error('Error updating therapist services batch:', err);
+      setServiceMsg({ type: 'error', text: 'An unexpected error occurred while saving services.' });
     } finally {
       setServiceSaving(false);
     }
@@ -1144,6 +1161,33 @@ export function EditTherapistForm({
                   />
                   <span className="font-semibold text-slate-800">Offers In-Home Appointments</span>
                 </label>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={basicForm.overnightAvailable}
+                    onChange={(e) => setBasicForm({ ...basicForm, overnightAvailable: e.target.checked })}
+                    className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+                  />
+                  <span className="font-semibold text-slate-800">Offers Overnight Appointments</span>
+                </label>
+
+                {basicForm.overnightAvailable && (
+                  <div className="col-span-1 sm:col-span-2 pt-2 flex items-center gap-3">
+                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider whitespace-nowrap">
+                      Overnight Price Multiplier (× Base Service Price)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="1"
+                      required
+                      value={basicForm.overnightMultiplier}
+                      onChange={(e) => setBasicForm({ ...basicForm, overnightMultiplier: parseFloat(e.target.value) || 4.0 })}
+                      className="w-24 px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg font-bold text-emerald-800 focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                    />
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1425,8 +1469,28 @@ export function EditTherapistForm({
       {/* TAB 3: SERVICES & PRICING */}
       {activeTab === 'services' && (
         <div className="space-y-6 max-w-3xl">
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-            <h2 className="text-lg font-bold text-slate-900">Assign Offered Service</h2>
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Manage Offered Services</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Select all global services offered by {therapist.name}. Deselect to remove.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedServiceIds.length === availableGlobalServices.length) {
+                    setSelectedServiceIds([]);
+                  } else {
+                    setSelectedServiceIds(availableGlobalServices.map((s) => s.id));
+                  }
+                }}
+                className="text-xs text-emerald-700 font-extrabold hover:underline cursor-pointer shrink-0"
+              >
+                {selectedServiceIds.length === availableGlobalServices.length ? 'Deselect All' : 'Select All Services'}
+              </button>
+            </div>
 
             {serviceMsg && (
               <div
@@ -1440,109 +1504,56 @@ export function EditTherapistForm({
               </div>
             )}
 
-            <form onSubmit={handleAssignService} className="flex flex-col sm:flex-row gap-3 items-end">
-              <div className="flex-1 w-full">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Select Service
-                </label>
-                <select
-                  required
-                  value={selectedServiceId}
-                  onChange={(e) => setSelectedServiceId(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                >
-                  <option value="">-- Choose a Service --</option>
-                  {availableGlobalServices.map((srv) => (
-                    <option key={srv.id} value={srv.id}>
-                      {srv.name} ({srv.durationMinutes} mins - Base: ${srv.price})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="w-full sm:w-36">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Custom Price ($)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={customPrice}
-                  onChange={(e) => setCustomPrice(e.target.value)}
-                  placeholder="Use default"
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                />
-              </div>
-
-              <div className="w-full sm:w-36">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Custom Duration (min)
-                </label>
-                <input
-                  type="number"
-                  step="5"
-                  min="15"
-                  value={customDuration}
-                  onChange={(e) => setCustomDuration(e.target.value)}
-                  placeholder="Use default"
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={serviceSaving}
-                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shrink-0"
-              >
-                {serviceSaving ? 'Assigning...' : 'Assign Service'}
-              </button>
-            </form>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-            <h2 className="text-lg font-bold text-slate-900">
-              Assigned Services ({therapist.services.length})
-            </h2>
-
-            {therapist.services.length > 0 ? (
-              <div className="divide-y divide-slate-100">
-                {therapist.services.map((ts) => (
-                  <div key={ts.id} className="py-3.5 flex items-center justify-between gap-4">
-                    <div>
-                      <h3 className="font-bold text-slate-900 text-sm">{ts.service.name}</h3>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Duration: {ts.customDurationMinutes || ts.service.durationMinutes} mins &bull; Base Price: ${ts.service.price}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-4">
-                      <div className="text-right">
-                        <span className="text-sm font-extrabold text-slate-900">
-                          ${ts.customPrice !== null && ts.customPrice !== undefined ? ts.customPrice : ts.service.price}
+            <form onSubmit={handleSaveServicesBatch} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {availableGlobalServices.map((srv) => {
+                  const isChecked = selectedServiceIds.includes(srv.id);
+                  return (
+                    <label
+                      key={srv.id}
+                      className={`p-4 rounded-2xl border transition-all flex items-start gap-3 cursor-pointer ${
+                        isChecked
+                          ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20'
+                          : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedServiceIds((prev) => [...prev, srv.id]);
+                          } else {
+                            setSelectedServiceIds((prev) => prev.filter((id) => id !== srv.id));
+                          }
+                        }}
+                        className="mt-0.5 h-4 w-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <span className="font-bold text-slate-900 text-sm block truncate">{srv.name}</span>
+                        <span className="text-xs text-slate-500 block mt-0.5">
+                          Base Rate: ${srv.price} &bull; {srv.durationMinutes} mins
                         </span>
-                        {ts.customPrice !== null && ts.customPrice !== undefined && (
-                          <span className="block text-[10px] text-emerald-700 font-semibold uppercase">Custom Override</span>
-                        )}
                       </div>
-
-                      <button
-                        type="button"
-                        onClick={() => triggerRemoveService(ts.serviceId, ts.service.name)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-                        title="Remove Service"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                    </label>
+                  );
+                })}
               </div>
-            ) : (
-              <p className="text-sm text-slate-500 italic py-4">No services assigned yet.</p>
-            )}
+
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                <span className="text-xs font-semibold text-slate-600">
+                  {selectedServiceIds.length} of {availableGlobalServices.length} services selected
+                </span>
+
+                <button
+                  type="submit"
+                  disabled={serviceSaving}
+                  className="px-6 py-2.5 rounded-xl bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-800 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
+                >
+                  {serviceSaving ? 'Saving Services...' : 'Save Selected Services'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

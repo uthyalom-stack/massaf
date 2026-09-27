@@ -58,6 +58,23 @@ export async function POST(request: Request) {
       );
     }
 
+    // Validate ZIP code against official USZipCode dataset
+    const { getZipInfo } = await import('@/lib/us-locations');
+    const zipInfo = await getZipInfo(cleanZip);
+    if (!zipInfo) {
+      return NextResponse.json(
+        { error: `ZIP code ${cleanZip} is not recognized in the official U.S. ZIP database.` },
+        { status: 400 }
+      );
+    }
+
+    if (zipInfo.state !== cleanState) {
+      return NextResponse.json(
+        { error: `ZIP code ${cleanZip} belongs to ${zipInfo.stateName} (${zipInfo.state}), not ${cleanState}.` },
+        { status: 400 }
+      );
+    }
+
     // Check for duplicate service area record for this therapist
     const existing = await db.serviceArea.findFirst({
       where: {

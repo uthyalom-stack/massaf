@@ -168,6 +168,8 @@ model Therapist {
   isHomepageSelected Boolean            @default(false)
   offersStudio       Boolean            @default(true)
   offersInHome       Boolean            @default(true)
+  overnightAvailable Boolean            @default(false)
+  overnightMultiplier Float             @default(4.0)
   verificationStatus VerificationStatus @default(VERIFIED)
   verificationNotes  String?
   isTest             Boolean            @default(false)
@@ -364,7 +366,8 @@ model Booking {
   reminder24hSentAt DateTime?
   reminder3hSentAt  DateTime?
 
-  isTest    Boolean  @default(false)
+  isOvernight Boolean  @default(false)
+  isTest      Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

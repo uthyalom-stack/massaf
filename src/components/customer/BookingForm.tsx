@@ -55,16 +55,24 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     return selectedTherapist?.services[0] || null;
   });
 
-  // Selected duration minutes state (30, 45, 60, 90, 120 mins)
-  const [selectedDurationMinutes, setSelectedDurationMinutes] = useState<number>(() => {
-    return selectedService?.durationMinutes || 60;
-  });
+  // Selected duration minutes state (60, 120, 180, 240, 300, 360, or 720 for Overnight)
+  const [selectedDurationMinutes, setSelectedDurationMinutes] = useState<number>(60);
+  const [isOvernight, setIsOvernight] = useState<boolean>(false);
 
-  // Calculate dynamic hourly total: (HourlyRate * DurationHours)
+  // Calculate dynamic total from Service.price:
+  // Normal: Service.price * (DurationMinutes / 60)
+  // Overnight: Service.price * (overnightMultiplier || 4)
   const calculatedTotal = useMemo(() => {
-    const hourlyRate = selectedTherapist?.startingPrice || 100.0;
-    return Math.round(hourlyRate * (selectedDurationMinutes / 60) * 100) / 100;
-  }, [selectedTherapist, selectedDurationMinutes]);
+    if (!selectedService) return 0;
+    const baseServicePrice = selectedService.price;
+
+    if (isOvernight || selectedDurationMinutes === 720) {
+      const multiplier = (selectedTherapist as any)?.overnightMultiplier || 4.0;
+      return Math.round(baseServicePrice * multiplier * 100) / 100;
+    }
+
+    return Math.round(baseServicePrice * (selectedDurationMinutes / 60) * 100) / 100;
+  }, [selectedService, selectedTherapist, selectedDurationMinutes, isOvernight]);
 
   // Location state
   const [locationType, setLocationType] = useState<'STUDIO' | 'IN_HOME'>(() => {
@@ -123,6 +131,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     id: string;
     bookingNumber: string;
     amount: number;
+    checkoutToken?: string;
   } | null>(null);
 
   // Submission & Error handling
@@ -138,8 +147,8 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
 
   const availableTimeSlots = useMemo(() => {
     if (!selectedTherapist || !date || !selectedService) return [];
-    return getAvailableTimeSlots(selectedTherapist, date, selectedService.durationMinutes);
-  }, [selectedTherapist, date, selectedService]);
+    return getAvailableTimeSlots(selectedTherapist, date, selectedDurationMinutes);
+  }, [selectedTherapist, date, selectedService, selectedDurationMinutes]);
 
   const handleTherapistChange = (therapistId: string) => {
     const therapist = activeTherapists.find((t) => t.id === therapistId) || null;
@@ -209,6 +218,8 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     const payload = {
       therapistId: selectedTherapist?.id || '',
       serviceId: selectedService?.id || '',
+      durationMinutes: isOvernight ? 720 : selectedDurationMinutes,
+      isOvernight,
       locationType,
       date,
       time,
@@ -258,7 +269,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
       selectedTherapist,
       date,
       time,
-      selectedService.durationMinutes
+      selectedDurationMinutes
     );
 
     if (!availabilityCheck.isValid) {
@@ -269,7 +280,8 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
     const payload = {
       therapistId: selectedTherapist.id,
       serviceId: selectedService.id,
-      durationMinutes: selectedDurationMinutes,
+      durationMinutes: isOvernight ? 720 : selectedDurationMinutes,
+      isOvernight,
       locationType,
       date,
       time,
@@ -334,6 +346,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
         id: createdBooking.id,
         bookingNumber: createdBooking.bookingNumber,
         amount: createdBooking.amount || (selectedService ? selectedService.price : 120),
+        checkoutToken: resData.checkoutToken,
       });
       setIsSubmitting(false);
     } catch (err) {
@@ -405,6 +418,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
         amount={createdBookingData.amount}
         customerEmail={email}
         customerName={`${firstName} ${lastName}`}
+        checkoutToken={createdBookingData.checkoutToken}
       />
     );
   }
@@ -529,36 +543,87 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                     return (
                       <div
                         key={svc.id}
-                        onClick={() => {
-                          setSelectedService(svc);
-                          setSelectedDurationMinutes(svc.durationMinutes || 60);
-                        }}
-                        className={`cursor-pointer p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                        className={`p-4 rounded-2xl border transition-all space-y-3 ${
                           isSelected
                             ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20'
                             : 'border-slate-200 hover:border-slate-300 bg-white'
                         }`}
                       >
-                        <div className="flex items-start gap-3">
-                          <input
-                            type="radio"
-                            name="service"
-                            checked={isSelected}
-                            onChange={() => {
-                              setSelectedService(svc);
-                              setSelectedDurationMinutes(svc.durationMinutes || 60);
-                            }}
-                            className="mt-1 h-4 w-4 text-emerald-700 border-slate-300 focus:ring-emerald-600"
-                          />
-                          <div>
-                            <p className="text-sm font-bold text-slate-900">{svc.name}</p>
-                            <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{svc.description}</p>
+                        <div
+                          onClick={() => {
+                            setSelectedService(svc);
+                          }}
+                          className="cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                        >
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="radio"
+                              name="service"
+                              checked={isSelected}
+                              onChange={() => {
+                                setSelectedService(svc);
+                              }}
+                              className="mt-1 h-4 w-4 text-emerald-700 border-slate-300 focus:ring-emerald-600"
+                            />
+                            <div>
+                              <p className="text-sm font-bold text-slate-900">{svc.name}</p>
+                              <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{svc.description}</p>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0 pl-7 sm:pl-0">
+                            <p className="text-base font-extrabold text-slate-900">${svc.price}/hr</p>
+                            <p className="text-xs font-medium text-slate-500">Hourly Rate</p>
                           </div>
                         </div>
-                        <div className="text-right shrink-0 pl-7 sm:pl-0">
-                          <p className="text-base font-extrabold text-slate-900">${calculatedTotal}</p>
-                          <p className="text-xs font-medium text-slate-500">{selectedDurationMinutes} mins (${selectedTherapist.startingPrice}/hr)</p>
-                        </div>
+
+                        {isSelected && (
+                          <div className="pt-3 border-t border-slate-200/80 space-y-2">
+                            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                              Select Duration
+                            </label>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              {[
+                                { min: 60, label: '1 Hour', isOv: false },
+                                { min: 120, label: '2 Hours', isOv: false },
+                                { min: 180, label: '3 Hours', isOv: false },
+                                { min: 240, label: '4 Hours', isOv: false },
+                                { min: 300, label: '5 Hours', isOv: false },
+                                { min: 360, label: '6 Hours', isOv: false },
+                                ...((selectedTherapist as any)?.overnightAvailable ? [{ min: 720, label: 'Overnight', isOv: true }] : []),
+                              ].map((dur) => {
+                                const isCurrentSelected = dur.isOv
+                                  ? isOvernight
+                                  : (!isOvernight && selectedDurationMinutes === dur.min);
+
+                                return (
+                                  <button
+                                    key={dur.min}
+                                    type="button"
+                                    onClick={() => {
+                                      setIsOvernight(dur.isOv);
+                                      setSelectedDurationMinutes(dur.min);
+                                    }}
+                                    className={`py-2 px-2 rounded-xl text-xs font-bold border text-center transition-all cursor-pointer ${
+                                      isCurrentSelected
+                                        ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                                    }`}
+                                  >
+                                    {dur.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <div className="text-xs font-medium text-emerald-900 pt-1 flex justify-between items-center bg-emerald-100/60 p-2.5 rounded-xl border border-emerald-200/60">
+                              <span>
+                                {isOvernight
+                                  ? `Overnight Calculation: $${svc.price} base × ${(selectedTherapist as any)?.overnightMultiplier || 4} multiplier`
+                                  : `Hourly Calculation: $${svc.price}/hr × ${selectedDurationMinutes / 60} hour(s)`}
+                              </span>
+                              <span className="font-extrabold text-sm text-emerald-950">${calculatedTotal} USD</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1019,7 +1084,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
                 <div>
                   <span className="text-xs text-slate-500 block uppercase font-semibold">Service & Duration</span>
                   <span className="font-bold text-slate-900 text-base">
-                    {selectedService ? `${selectedService.name} (${selectedService.durationMinutes} mins)` : 'Not selected'}
+                    {selectedService ? `${selectedService.name} (${selectedDurationMinutes / 60} hr / ${selectedDurationMinutes} mins)` : 'Not selected'}
                   </span>
                 </div>
                 <button
@@ -1101,7 +1166,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
             <div className="pt-4 border-t border-slate-200 flex justify-between items-center">
               <span className="text-base font-bold text-slate-900">Total Booking Amount</span>
               <span className="text-3xl font-extrabold text-emerald-800">
-                ${selectedService ? selectedService.price : 0}
+                ${calculatedTotal}
               </span>
             </div>
 
@@ -1192,7 +1257,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
             {selectedService && (
               <div className="flex justify-between items-center pb-3 border-b border-slate-100">
                 <span className="text-slate-500">Duration</span>
-                <span className="font-semibold text-slate-800">{selectedService.durationMinutes} minutes</span>
+                <span className="font-semibold text-slate-800">{selectedDurationMinutes / 60} hour(s) ({selectedDurationMinutes} mins)</span>
               </div>
             )}
 
@@ -1251,7 +1316,7 @@ export function BookingForm({ activeTherapists }: BookingFormProps) {
             <div className="pt-2 flex justify-between items-baseline">
               <span className="text-base font-bold text-slate-900">Total Price</span>
               <span className="text-2xl font-extrabold text-emerald-800">
-                ${selectedService ? selectedService.price : 0}
+                ${calculatedTotal}
               </span>
             </div>
 

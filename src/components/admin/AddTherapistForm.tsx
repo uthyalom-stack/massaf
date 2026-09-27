@@ -3,9 +3,18 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { createTherapistAction, updateTherapistAction } from '@/app/admin/actions';
+import { createTherapistAction, updateTherapistAction, assignTherapistServiceAction } from '@/app/admin/actions';
 
-export function AddTherapistForm() {
+interface AddTherapistFormProps {
+  availableGlobalServices?: Array<{
+    id: string;
+    name: string;
+    durationMinutes: number;
+    price: number;
+  }>;
+}
+
+export function AddTherapistForm({ availableGlobalServices = [] }: AddTherapistFormProps) {
   const router = useRouter();
   const [formData, setFormData] = useState({
     name: '',
@@ -18,7 +27,12 @@ export function AddTherapistForm() {
     isFeatured: false,
     offersStudio: true,
     offersInHome: true,
+    overnightAvailable: false,
+    overnightMultiplier: 4.0,
   });
+
+  // Multi-Service selection state
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
 
   // Local state for deferred profile image file & preview
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -82,6 +96,8 @@ export function AddTherapistForm() {
         isFeatured: formData.isFeatured,
         offersStudio: formData.offersStudio,
         offersInHome: formData.offersInHome,
+        overnightAvailable: formData.overnightAvailable,
+        overnightMultiplier: formData.overnightMultiplier,
       });
 
       if (!res.success || !res.therapist?.id) {
@@ -90,6 +106,17 @@ export function AddTherapistForm() {
       }
 
       const createdTherapistId = res.therapist.id;
+
+      // 1b. Assign selected services to created therapist
+      if (selectedServiceIds.length > 0) {
+        setSubmitStepText('Assigning selected services...');
+        for (const serviceId of selectedServiceIds) {
+          await assignTherapistServiceAction(createdTherapistId, {
+            serviceId,
+            isActive: true,
+          });
+        }
+      }
 
       // 2. If a profile image file was selected, upload to R2 using the REAL therapist ID
       if (selectedFile) {
@@ -330,6 +357,60 @@ export function AddTherapistForm() {
             />
           </div>
 
+          {/* Multi-Service Selection Component */}
+          {availableGlobalServices.length > 0 && (
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  Select Offered Services
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedServiceIds.length === availableGlobalServices.length) {
+                      setSelectedServiceIds([]);
+                    } else {
+                      setSelectedServiceIds(availableGlobalServices.map((s) => s.id));
+                    }
+                  }}
+                  className="text-xs text-emerald-700 font-bold hover:underline cursor-pointer"
+                >
+                  {selectedServiceIds.length === availableGlobalServices.length ? 'Deselect All' : 'Select All'}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {availableGlobalServices.map((srv) => {
+                  const isChecked = selectedServiceIds.includes(srv.id);
+                  return (
+                    <label
+                      key={srv.id}
+                      className={`p-3 rounded-xl border flex items-center gap-3 cursor-pointer text-xs transition-colors ${
+                        isChecked
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-900 font-bold'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedServiceIds((prev) => [...prev, srv.id]);
+                          } else {
+                            setSelectedServiceIds((prev) => prev.filter((id) => id !== srv.id));
+                          }
+                        }}
+                        className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+                      />
+                      <span className="truncate">{srv.name} (${srv.price})</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Checkboxes & Switches */}
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">Settings & Availability</h3>
@@ -374,6 +455,33 @@ export function AddTherapistForm() {
                 />
                 <span className="font-semibold text-slate-800">Offers In-Home Appointments</span>
               </label>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.overnightAvailable}
+                  onChange={(e) => setFormData({ ...formData, overnightAvailable: e.target.checked })}
+                  className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+                />
+                <span className="font-semibold text-slate-800">Offers Overnight Appointments</span>
+              </label>
+
+              {formData.overnightAvailable && (
+                <div className="col-span-1 sm:col-span-2 pt-2 flex items-center gap-3">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider whitespace-nowrap">
+                    Overnight Price Multiplier (× Base Service Price)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="1"
+                    required
+                    value={formData.overnightMultiplier}
+                    onChange={(e) => setFormData({ ...formData, overnightMultiplier: parseFloat(e.target.value) || 4.0 })}
+                    className="w-24 px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg font-bold text-emerald-800 focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                  />
+                </div>
+              )}
             </div>
           </div>
 
