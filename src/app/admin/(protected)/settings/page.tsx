@@ -4,6 +4,8 @@ import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { getVerifiedAdminSession } from '@/lib/auth-session';
 import { TestDataCleanupSection } from '@/components/admin/TestDataCleanupSection';
+import { PaymentSettingsSection } from '@/components/admin/PaymentSettingsSection';
+import { getPaymentSettings, getProviderConfigurations } from '@/lib/payments/settings';
 
 export const metadata = {
   title: 'Settings | MASSAF Admin',
@@ -78,6 +80,10 @@ export default async function AdminSettingsPage() {
   const adminKeyStatus = (adminApiKey && adminApiKey.trim().length > 0)
     ? 'Configured'
     : 'Not configured';
+
+  // 7. Payment Provider Architecture Settings
+  const paymentSettings = await getPaymentSettings();
+  const providerConfigurations = getProviderConfigurations();
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
@@ -257,6 +263,12 @@ export default async function AdminSettingsPage() {
         </div>
 
       </div>
+
+      {/* Payment Provider Settings Architecture */}
+      <PaymentSettingsSection
+        initialSettings={paymentSettings}
+        configurations={providerConfigurations}
+      />
 
       {/* Danger Zone: Test Data Cleanup (SUPER_ADMIN Only) */}
       {session.role === 'SUPER_ADMIN' && <TestDataCleanupSection />}

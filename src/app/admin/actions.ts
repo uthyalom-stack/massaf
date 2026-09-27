@@ -88,6 +88,43 @@ export async function previewTherapistCsvAction(csvContent: string) {
   }
 }
 
+// --- Payment Provider Settings Actions ---
+
+export async function getPaymentSettingsAction() {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    const { getPaymentSettings, getProviderConfigurations } = await import('@/lib/payments/settings');
+    const settings = await getPaymentSettings();
+    const configurations = getProviderConfigurations();
+    return { success: true, settings, configurations };
+  } catch (err: unknown) {
+    console.error('Error in getPaymentSettingsAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to retrieve payment settings.',
+    };
+  }
+}
+
+export async function updatePaymentSettingsAction(settings: import('@/lib/payments/types').SystemPaymentSettings) {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    const { updatePaymentSettings } = await import('@/lib/payments/settings');
+    const result = await updatePaymentSettings(settings);
+    if (result.success) {
+      safeRevalidatePath('/admin/settings');
+      safeRevalidatePath('/checkout');
+    }
+    return result;
+  } catch (err: unknown) {
+    console.error('Error in updatePaymentSettingsAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to update payment settings.',
+    };
+  }
+}
+
 export async function executeTherapistCsvImportAction(input: {
   rows: Array<{
     rowNumber: number;
