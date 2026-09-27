@@ -50,7 +50,12 @@ export function PaymentMethodSelector({
     let isMounted = true;
     async function fetchProviders() {
       try {
-        const res = await fetch('/api/payments/providers');
+        const res = await fetch(`/api/payments/providers?_t=${Date.now()}`, {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache',
+          },
+        });
         if (res.ok) {
           const data = await res.json();
           if (data.success && Array.isArray(data.providers) && data.providers.length > 0) {

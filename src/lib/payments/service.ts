@@ -25,11 +25,11 @@ export const ALL_PROVIDER_IDS: PaymentProviderId[] = [
 ];
 
 export const DEFAULT_SYSTEM_PAYMENT_SETTINGS: SystemPaymentSettings = {
-  defaultProviderId: 'paylio',
+  defaultProviderId: 'giftcard',
   providers: {
     paymegate: { id: 'paymegate', enabled: false, priority: 1 },
     norpo: { id: 'norpo', enabled: false, priority: 2 },
-    nowpayments: { id: 'nowpayments', enabled: true, priority: 3 },
+    nowpayments: { id: 'nowpayments', enabled: false, priority: 3 },
     btcpay: { id: 'btcpay', enabled: false, priority: 4 },
     paymento: { id: 'paymento', enabled: false, priority: 5 },
     nexapay: { id: 'nexapay', enabled: false, priority: 6 },
@@ -82,8 +82,20 @@ class PaymentServiceClass {
       // Ensure all current provider keys exist in providers map
       const mergedProviders = { ...DEFAULT_SYSTEM_PAYMENT_SETTINGS.providers, ...parsed.providers };
 
+      let targetDefaultId = parsed.defaultProviderId;
+
+      // MIGRATION: If defaultProviderId is the legacy 'paylio' and defaultMigrated flag is absent,
+      // normalize it to 'giftcard' so initial intended default is Gift Card.
+      if (targetDefaultId === 'paylio' && !(parsed as unknown as Record<string, unknown>).defaultMigrated) {
+        targetDefaultId = 'giftcard';
+      }
+
+      if (!targetDefaultId || !mergedProviders[targetDefaultId]) {
+        targetDefaultId = DEFAULT_SYSTEM_PAYMENT_SETTINGS.defaultProviderId;
+      }
+
       return {
-        defaultProviderId: parsed.defaultProviderId || DEFAULT_SYSTEM_PAYMENT_SETTINGS.defaultProviderId,
+        defaultProviderId: targetDefaultId,
         providers: mergedProviders,
         updatedAt: row.updatedAt.toISOString(),
       };
@@ -120,17 +132,23 @@ class PaymentServiceClass {
         };
       }
 
+      // Save explicit admin default migration flag
+      const settingsToSave = {
+        ...settings,
+        defaultMigrated: true,
+      };
+
       // 4. Save to SiteContent
       await db.siteContent.upsert({
         where: { key: SETTINGS_CMS_KEY },
         update: {
           title: 'System Payment Provider Settings',
-          content: JSON.stringify(settings),
+          content: JSON.stringify(settingsToSave),
         },
         create: {
           key: SETTINGS_CMS_KEY,
           title: 'System Payment Provider Settings',
-          content: JSON.stringify(settings),
+          content: JSON.stringify(settingsToSave),
         },
       });
 

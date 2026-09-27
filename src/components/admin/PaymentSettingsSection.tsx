@@ -218,7 +218,7 @@ export function PaymentSettingsSection({
               } else if (!config?.isImplemented) {
                 statusBadge = (
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-200">
-                    Enabled + Not Implemented
+                    Enabled, but unavailable to customers because integration is not implemented.
                   </span>
                 );
               } else {
