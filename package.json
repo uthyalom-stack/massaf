@@ -10,6 +10,7 @@
     "test:r2": "NODE_PATH=. npx tsx --tsconfig tsconfig.json scripts/test-r2-upload.ts",
     "test:concurrency": "NODE_PATH=. npx tsx --tsconfig tsconfig.json scripts/test-concurrent-booking.ts",
     "test:paylio": "NODE_PATH=. npx tsx --tsconfig tsconfig.json scripts/test-paylio-payment.ts",
+    "test:payment-config": "NODE_PATH=. npx tsx --tsconfig tsconfig.json scripts/test-payment-provider-config.ts",
     "test:phase19-auth": "NODE_PATH=. npx tsx --tsconfig tsconfig.json scripts/test-phase19-auth.ts",
     "test:phase20-sec": "NODE_PATH=. npx tsx --tsconfig tsconfig.json scripts/test-phase20-security.ts",
     "admin:create": "NODE_PATH=. npx tsx --tsconfig tsconfig.json scripts/create-admin.ts"

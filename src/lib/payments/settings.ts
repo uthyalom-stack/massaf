@@ -23,7 +23,17 @@ export function getProviderConfigurations() {
       isImplemented: boolean;
       configFields: Record<string, { configured: boolean; label: string }>;
     }
-  > = {} as any;
+  > = {} as Record<
+    PaymentProviderId,
+    {
+      id: PaymentProviderId;
+      name: string;
+      description: string;
+      isConfigured: boolean;
+      isImplemented: boolean;
+      configFields: Record<string, { configured: boolean; label: string }>;
+    }
+  >;
 
   for (const adapter of adapters) {
     configMap[adapter.id] = {

@@ -114,6 +114,7 @@ export async function updatePaymentSettingsAction(settings: import('@/lib/paymen
     if (result.success) {
       safeRevalidatePath('/admin/settings');
       safeRevalidatePath('/checkout');
+      safeRevalidatePath('/api/payments/providers');
     }
     return result;
   } catch (err: unknown) {
