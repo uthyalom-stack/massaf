@@ -333,9 +333,6 @@ export function LocationSearch() {
                   <span className="font-medium text-slate-900 group-hover:text-emerald-950">
                     {sug.label}
                   </span>
-                  <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 shrink-0">
-                    {sug.count} {sug.count === 1 ? 'therapist' : 'therapists'}
-                  </span>
                 </button>
               ))}
             </div>

@@ -47,21 +47,33 @@ export function TherapistFilters({
     filters.serviceType !== 'all' ||
     filters.specialty !== 'all';
 
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const handleLocationInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setDraftLocation(val);
-    onFilterChange({ locationQuery: val });
 
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
 
-    if (!val.trim() || val.trim().length < 2) {
+    const cleanVal = val.trim();
+    if (!cleanVal) {
       setSuggestions([]);
       setShowSuggestions(false);
+      onFilterChange({ locationQuery: '' });
       return;
     }
 
     debounceTimerRef.current = setTimeout(() => {
-      fetch(`/api/location/suggestions?query=${encodeURIComponent(val.trim())}`, { cache: 'no-store' })
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      fetch(`/api/location/suggestions?query=${encodeURIComponent(cleanVal)}`, {
+        cache: 'no-store',
+        signal: controller.signal,
+      })
         .then((res) => res.json())
         .then((data) => {
           if (data.success && Array.isArray(data.suggestions)) {
@@ -72,9 +84,11 @@ export function TherapistFilters({
             setShowSuggestions(false);
           }
         })
-        .catch(() => {
-          setSuggestions([]);
-          setShowSuggestions(false);
+        .catch((err) => {
+          if (err.name !== 'AbortError') {
+            setSuggestions([]);
+            setShowSuggestions(false);
+          }
         });
     }, 250);
   };
@@ -235,9 +249,6 @@ export function TherapistFilters({
                     >
                       <span className="font-medium text-slate-900 group-hover:text-emerald-950">
                         {sug.label}
-                      </span>
-                      <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 shrink-0">
-                        {sug.count} {sug.count === 1 ? 'therapist' : 'therapists'}
                       </span>
                     </button>
                   ))}

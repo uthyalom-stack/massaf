@@ -13,7 +13,6 @@ export interface LocationSuggestion {
   state: string;
   stateName: string;
   postalCode?: string;
-  count: number;
 }
 
 export async function GET(request: Request) {
@@ -31,7 +30,6 @@ export async function GET(request: Request) {
       );
     }
 
-    const activeTherapists = await getActiveTherapists();
     const suggestions: LocationSuggestion[] = [];
     const seenKeys = new Set<string>();
 
@@ -39,11 +37,12 @@ export async function GET(request: Request) {
     const isNumeric = /^\d+$/.test(clean);
 
     if (isNumeric) {
-      // 1. ZIP Code Match Suggestions
+      // 1. LIGHTWEIGHT ZIP Code Prefix Suggestions (No therapist ranking on typing)
       const zipMatches = await db.uSZipCode.findMany({
         where: { zipCode: { startsWith: clean } },
         select: { zipCode: true, city: true, state: true, stateName: true },
-        take: 6,
+        orderBy: { zipCode: 'asc' },
+        take: 8,
       });
 
       for (const zipRecord of zipMatches) {
@@ -51,25 +50,18 @@ export async function GET(request: Request) {
         if (!seenKeys.has(key)) {
           seenKeys.add(key);
 
-          const matches = await rankTherapistsForMatch(
-            { zipCode: zipRecord.zipCode },
-            activeTherapists
-          );
-
           suggestions.push({
-            label: `${zipRecord.zipCode} (${zipRecord.city}, ${zipRecord.state})`,
+            label: `${zipRecord.zipCode} — ${zipRecord.city}, ${zipRecord.state}`,
             query: zipRecord.zipCode,
             city: zipRecord.city,
             state: zipRecord.state,
             stateName: zipRecord.stateName || zipRecord.state,
             postalCode: zipRecord.zipCode,
-            count: matches.length,
           });
         }
       }
     } else {
-      // 2. City & State Name Match Suggestions
-      // Check if query matches a U.S. State first
+      // 2. LIGHTWEIGHT City & State Name Suggestions
       const stateMatch = FALLBACK_US_STATES.find(
         (s) => s.code.toLowerCase() === clean || s.name.toLowerCase().startsWith(clean)
       );
@@ -78,18 +70,12 @@ export async function GET(request: Request) {
         const key = `state:${stateMatch.code}`;
         seenKeys.add(key);
 
-        const matches = await rankTherapistsForMatch(
-          { locationQuery: stateMatch.name },
-          activeTherapists
-        );
-
         suggestions.push({
           label: `${stateMatch.name} (${stateMatch.code})`,
           query: stateMatch.name,
           city: stateMatch.name,
           state: stateMatch.code,
           stateName: stateMatch.name,
-          count: matches.length,
         });
       }
 
@@ -108,18 +94,12 @@ export async function GET(request: Request) {
         if (!seenKeys.has(key)) {
           seenKeys.add(key);
 
-          const matches = await rankTherapistsForMatch(
-            { locationQuery: `${rec.city}, ${rec.state}` },
-            activeTherapists
-          );
-
           suggestions.push({
             label: `${rec.city}, ${rec.state}`,
             query: `${rec.city}, ${rec.state}`,
             city: rec.city,
             state: rec.state,
             stateName: rec.stateName || rec.state,
-            count: matches.length,
           });
         }
       }
