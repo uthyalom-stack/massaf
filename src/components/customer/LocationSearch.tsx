@@ -230,7 +230,7 @@ export function LocationSearch() {
           </svg>
           <span className="font-semibold">Finding therapists near you...</span>
         </div>
-      ) : detectedLoc ? (
+      ) : detectedLoc && detectedLoc.source !== 'none' && (detectedLoc.city || detectedLoc.rawQuery || detectedLoc.postalCode) ? (
         <div className={`rounded-xl p-3 mb-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs sm:text-sm ${
           detectedLoc.source === 'manual'
             ? 'bg-slate-50 border border-slate-200'

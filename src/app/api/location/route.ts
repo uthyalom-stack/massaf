@@ -4,7 +4,7 @@ import {
   getIpLocation,
   reverseGeocodeGps,
   NormalizedLocation,
-  FALLBACK_DEFAULT_LOCATION,
+  EMPTY_LOCATION,
 } from '@/lib/ip-location';
 import {
   getLocationFromCookie,
@@ -83,7 +83,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         success: true,
-        location: FALLBACK_DEFAULT_LOCATION,
+        location: EMPTY_LOCATION,
         totalMatches: 0,
       },
       {

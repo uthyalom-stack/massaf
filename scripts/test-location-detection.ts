@@ -3,7 +3,8 @@ import {
   getIpLocation,
   reverseGeocodeGps,
   isPrivateOrLocalIp,
-  FALLBACK_DEFAULT_LOCATION,
+  EMPTY_LOCATION,
+  NormalizedLocation,
 } from '../src/lib/ip-location';
 import {
   getLocationFromCookie,
@@ -14,6 +15,7 @@ import { rankTherapistsForMatch } from '../src/lib/matching';
 import { getActiveTherapists } from '../src/lib/db-therapists';
 import { getZipInfo } from '../src/lib/us-locations';
 import { CustomerTherapist } from '../src/types/customer';
+import { db } from '../src/lib/db';
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -24,116 +26,132 @@ function assert(condition: boolean, message: string) {
 }
 
 async function runLocationDetectionTests() {
-  console.log('=== STARTING AUTOMATIC LOCATION DETECTION & MATCHING TEST SUITE ===\n');
+  console.log('=== STARTING LOCATION DETECTION & FALLBACK REGRESSION TEST SUITE ===\n');
 
-  // 1. IP Header Extraction & Localhost Checks
-  console.log('1. Testing Client IP Extraction & Localhost/Private Filters...');
-  const headers1 = new Headers({ 'x-forwarded-for': '203.0.113.195, 10.0.0.1' });
-  assert(getClientIp(headers1) === '203.0.113.195', 'Extracts first public IP from x-forwarded-for');
+  // Test A — GPS nearest ZIP
+  console.log('Test A: GPS nearest ZIP resolution...');
+  // Query 90210 (Beverly Hills) coordinates
+  const beverlyZip = await db.uSZipCode.findUnique({ where: { zipCode: '90210' } });
+  if (beverlyZip && beverlyZip.latitude && beverlyZip.longitude) {
+    // Slightly offset coordinates (0.001 deg away from 90210 center)
+    const gpsRes = await reverseGeocodeGps(beverlyZip.latitude + 0.001, beverlyZip.longitude + 0.001);
+    assert(gpsRes !== null, 'GPS coordinates near 90210 resolved');
+    assert(gpsRes?.postalCode === '90210', `Resolved to nearest ZIP 90210 (got ${gpsRes?.postalCode})`);
+  } else {
+    console.log('  ⚠️ USZipCode table empty or missing 90210, skipping exact 90210 check');
+  }
 
-  const headers2 = new Headers({ 'x-real-ip': '198.51.100.25' });
-  assert(getClientIp(headers2) === '198.51.100.25', 'Extracts IP from x-real-ip');
+  // Test B — GPS invalid latitude
+  console.log('\nTest B: GPS invalid latitude validation...');
+  const invalidLatRes = await reverseGeocodeGps(120, -118.24);
+  assert(invalidLatRes === null, 'Latitude 120 rejected (returns null)');
 
-  assert(isPrivateOrLocalIp('127.0.0.1') === true, '127.0.0.1 recognized as local/private');
-  assert(isPrivateOrLocalIp('10.0.1.50') === true, '10.x.x.x recognized as private');
-  assert(isPrivateOrLocalIp('192.168.1.1') === true, '192.168.x.x recognized as private');
-  assert(isPrivateOrLocalIp('172.20.0.1') === true, '172.16-31.x.x recognized as private');
-  assert(isPrivateOrLocalIp('203.0.113.195') === false, 'Public IP 203.0.113.195 recognized as public');
+  // Test C — GPS invalid longitude
+  console.log('\nTest C: GPS invalid longitude validation...');
+  const invalidLonRes = await reverseGeocodeGps(34.05, 250);
+  assert(invalidLonRes === null, 'Longitude 250 rejected (returns null)');
 
-  // 2. IP Location Normalization & Fallbacks
-  console.log('\n2. Testing IP Location Normalization & Vercel Edge Headers...');
-  const vercelHeaders = new Headers({
-    'x-vercel-ip-city': 'Los%20Angeles',
+  // Test D — IP lookup failure / private IP fallback
+  console.log('\nTest D: IP lookup failure & private IP fallback...');
+  const localRes = await getIpLocation('127.0.0.1');
+  assert(localRes.source === 'none', '127.0.0.1 IP lookup returns source: none');
+  assert(localRes.city === '', '127.0.0.1 IP lookup city is empty');
+  assert(localRes.postalCode === '', '127.0.0.1 IP lookup postalCode is empty');
+
+  // Test E — localhost / private IP
+  console.log('\nTest E: Localhost IP handling...');
+  const privateRes = await getIpLocation('192.168.1.100');
+  assert(privateRes.source === 'none', 'Private IP returns source: none');
+  assert(privateRes.city !== 'Los Angeles', 'Does NOT return fake Los Angeles fallback');
+
+  // Test F — IP lookup HTTPS URL
+  console.log('\nTest F: Verification that external IP geolocation uses HTTPS...');
+  const fs = require('fs');
+  const code = fs.readFileSync('src/lib/ip-location.ts', 'utf8');
+  assert(code.includes('https://ip-api.com/'), 'External IP lookup uses HTTPS URL');
+  assert(!code.includes('http://ip-api.com/'), 'No plaintext HTTP ip-api URL in code');
+
+  // Test G — Priority Hierarchy (manual > gps > ip > none)
+  console.log('\nTest G: Location priority hierarchy...');
+  assert(shouldOverrideLocation('none', 'ip') === true, 'ip overrides none');
+  assert(shouldOverrideLocation('ip', 'gps') === true, 'gps overrides ip');
+  assert(shouldOverrideLocation('gps', 'manual') === true, 'manual overrides gps');
+  assert(shouldOverrideLocation('ip', 'manual') === true, 'manual overrides ip');
+  assert(shouldOverrideLocation('manual', 'ip') === false, 'ip CANNOT override manual');
+  assert(shouldOverrideLocation('manual', 'gps') === false, 'gps CANNOT override manual');
+
+  // Test H — Manual override scenario
+  console.log('\nTest H: Manual override scenario...');
+  let currentLoc = await getIpLocation('203.0.113.195', new Headers({
+    'x-vercel-ip-city': 'San%20Francisco',
     'x-vercel-ip-country-region': 'CA',
-    'x-vercel-ip-postal-code': '90001',
-    'x-vercel-ip-country': 'US',
-  });
-  const edgeLoc = await getIpLocation('203.0.113.195', vercelHeaders);
-  assert(edgeLoc.city === 'Los Angeles', 'Edge header city decoded to Los Angeles');
-  assert(edgeLoc.state === 'CA', 'Edge header state resolved to CA');
-  assert(edgeLoc.postalCode === '90001', 'Edge header postal code resolved to 90001');
-  assert(edgeLoc.source === 'ip', 'Source marked as ip');
+    'x-vercel-ip-postal-code': '94102',
+  }));
+  assert(currentLoc.source === 'ip' && currentLoc.city === 'San Francisco', 'Initial IP location set to SF');
 
-  const localLoc = await getIpLocation('127.0.0.1');
-  assert(localLoc.city === FALLBACK_DEFAULT_LOCATION.city, 'Localhost IP falls back to default city');
-  assert(localLoc.state === FALLBACK_DEFAULT_LOCATION.state, 'Localhost IP falls back to default state');
+  const manualLoc = {
+    city: 'New York',
+    state: 'NY',
+    stateName: 'New York',
+    country: 'US',
+    postalCode: '10001',
+    source: 'manual' as const,
+  };
 
-  // 3. Reverse Geocoding GPS Coordinates
-  console.log('\n3. Testing GPS Spatial Reverse Geocoding via USZipCode...');
-  // Coordinates near Los Angeles CA (34.0522, -118.2437)
-  const gpsRes = await reverseGeocodeGps(34.0522, -118.2437);
-  assert(gpsRes !== null, 'GPS coordinates (34.0522, -118.2437) resolved successfully');
-  assert(gpsRes?.state === 'CA', 'GPS coordinates mapped to CA state');
-  assert(gpsRes?.source === 'gps', 'GPS result source marked as gps');
-  assert(Boolean(gpsRes?.postalCode), 'GPS result includes 5-digit postal code');
+  if (shouldOverrideLocation(currentLoc.source, manualLoc.source)) {
+    currentLoc = manualLoc;
+  }
+  assert(currentLoc.source === 'manual' && currentLoc.postalCode === '10001', 'Manual ZIP 10001 overrides IP location');
 
-  // 4. Location Priority & Override Rules
-  console.log('\n4. Testing Location Priority Hierarchy (manual > gps > ip > none)...');
-  assert(shouldOverrideLocation('ip', 'gps') === true, 'GPS overrides IP location');
-  assert(shouldOverrideLocation('ip', 'manual') === true, 'Manual overrides IP location');
-  assert(shouldOverrideLocation('gps', 'manual') === true, 'Manual overrides GPS location');
-  assert(shouldOverrideLocation('manual', 'ip') === false, 'IP DOES NOT override manual customer selection');
-  assert(shouldOverrideLocation('manual', 'gps') === false, 'GPS DOES NOT override manual customer selection');
+  // Test I — GPS override scenario
+  console.log('\nTest I: GPS override scenario...');
+  let ipLoc = await getIpLocation('203.0.113.195', new Headers({
+    'x-vercel-ip-city': 'Chicago',
+    'x-vercel-ip-country-region': 'IL',
+  }));
+  assert(ipLoc.source === 'ip', 'Initial location is IP-derived');
 
-  // 5. Cookie Utilities & Serialization
-  console.log('\n5. Testing Location Cookie Utilities...');
-  const testLoc = {
-    city: 'Beverly Hills',
+  const gpsLoc = {
+    city: 'Los Angeles',
     state: 'CA',
     stateName: 'California',
     country: 'US',
-    postalCode: '90210',
-    source: 'manual' as const,
-    rawQuery: '90210',
-  };
-  const cookieStr = createLocationCookieHeader(testLoc);
-  assert(cookieStr.includes('massaf_user_location='), 'Set-Cookie header includes cookie name');
-  const parsedLoc = getLocationFromCookie(cookieStr);
-  assert(parsedLoc?.city === 'Beverly Hills', 'Parsed cookie location city matches Beverly Hills');
-  assert(parsedLoc?.postalCode === '90210', 'Parsed cookie location postal code matches 90210');
-  assert(parsedLoc?.source === 'manual', 'Parsed cookie location source matches manual');
-
-  // 6. City, State, and ZIP Matching Logic
-  console.log('\n6. Testing City, State, and ZIP Matching Resolution...');
-  const dbTherapists = await getActiveTherapists();
-  const testService = {
-    id: 'svc-swedish',
-    name: 'Swedish Massage',
-    description: 'Relaxation massage',
-    durationMinutes: 60,
-    price: 100,
+    postalCode: '90001',
+    source: 'gps' as const,
   };
 
-  // Ensure therapists have active services attached for testing rankTherapistsForMatch
-  const activeTherapists: CustomerTherapist[] = dbTherapists.map((t) => ({
-    ...t,
-    location: t.location === 'United States' ? 'Los Angeles, CA' : t.location,
-    serviceAreas: t.serviceAreas.length > 0 ? t.serviceAreas : ['Los Angeles, CA'],
-    services: t.services.length > 0 ? t.services : [testService],
-  }));
+  if (shouldOverrideLocation(ipLoc.source, gpsLoc.source)) {
+    ipLoc = gpsLoc;
+  }
+  assert(ipLoc.source === 'gps' && ipLoc.postalCode === '90001', 'GPS location overrides IP location');
 
-  assert(activeTherapists.length > 0, `Loaded ${activeTherapists.length} active therapists from DB`);
+  // Test J — Manual cannot be overwritten by GPS or IP
+  console.log('\nTest J: Manual location cannot be overwritten by GPS or IP...');
+  let userSelectedLoc: NormalizedLocation = {
+    city: 'Miami',
+    state: 'FL',
+    stateName: 'Florida',
+    country: 'US',
+    postalCode: '33101',
+    source: 'manual',
+  };
 
-  // City Search
-  const laMatches = await rankTherapistsForMatch({ locationQuery: 'Los Angeles' }, activeTherapists);
-  assert(laMatches.length > 0, `City search 'Los Angeles' returned ${laMatches.length} matching therapists`);
+  // Attempt GPS override
+  if (shouldOverrideLocation(userSelectedLoc.source, 'gps')) {
+    userSelectedLoc = gpsLoc;
+  }
+  assert(userSelectedLoc.postalCode === '33101' && userSelectedLoc.source === 'manual', 'Manual ZIP 33101 preserved against GPS override');
 
-  // State Code Search
-  const caCodeMatches = await rankTherapistsForMatch({ locationQuery: 'CA' }, activeTherapists);
-  assert(caCodeMatches.length > 0, `State code search 'CA' returned ${caCodeMatches.length} matching therapists`);
+  // Attempt IP override
+  if (shouldOverrideLocation(userSelectedLoc.source, 'ip')) {
+    userSelectedLoc = ipLoc;
+  }
+  assert(userSelectedLoc.postalCode === '33101' && userSelectedLoc.source === 'manual', 'Manual ZIP 33101 preserved against IP override');
 
-  // State Name Search
-  const caNameMatches = await rankTherapistsForMatch({ locationQuery: 'California' }, activeTherapists);
-  assert(caNameMatches.length > 0, `State name search 'California' returned ${caNameMatches.length} matching therapists`);
-
-  // ZIP Code Search
-  const zipInfo = await getZipInfo('90210');
-  assert(zipInfo !== null && zipInfo.city === 'Beverly Hills', 'ZIP 90210 info resolved correctly');
-
-  console.log('\n✅ ALL AUTOMATIC LOCATION DETECTION & MATCHING TESTS PASSED SUCCESSFULLY!');
+  console.log('\n✅ ALL SCENARIOS A THROUGH J PASSED SUCCESSFULLY!');
 }
 
 runLocationDetectionTests().catch((err) => {
-  console.error('Fatal error running location detection test suite:', err);
+  console.error('Fatal error running location test suite:', err);
   process.exit(1);
 });

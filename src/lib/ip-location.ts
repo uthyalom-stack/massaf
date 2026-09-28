@@ -13,14 +13,17 @@ export interface NormalizedLocation {
   rawQuery?: string;
 }
 
-export const FALLBACK_DEFAULT_LOCATION: NormalizedLocation = {
-  city: 'Los Angeles',
-  state: 'CA',
-  stateName: 'California',
-  country: 'US',
-  postalCode: '90001',
-  source: 'ip',
+export const EMPTY_LOCATION: NormalizedLocation = {
+  city: '',
+  state: '',
+  stateName: '',
+  country: '',
+  postalCode: '',
+  source: 'none',
 };
+
+// Kept for backward compatibility if imported elsewhere, but points to empty location with source 'none'
+export const FALLBACK_DEFAULT_LOCATION: NormalizedLocation = EMPTY_LOCATION;
 
 /**
  * Extracts the visitor client IP address safely from platform request headers.
@@ -93,24 +96,24 @@ export async function getIpLocation(ip: string, headers?: Headers): Promise<Norm
         state: stateCode,
         stateName,
         country: (vercelCountry || 'US').toUpperCase(),
-        postalCode: zip || '90001',
+        postalCode: zip,
         source: 'ip',
       };
     }
   }
 
-  // 2. Localhost / Private IP / missing IP fallback
+  // 2. Localhost / Private IP / missing IP fallback -> return source: 'none'
   if (isPrivateOrLocalIp(ip)) {
-    return { ...FALLBACK_DEFAULT_LOCATION };
+    return { ...EMPTY_LOCATION };
   }
 
-  // 3. External IP Geolocation Service (http://ip-api.com/json/{ip}) with 2.5s timeout
+  // 3. External IP Geolocation Service (https://ip-api.com/json/{ip}) with 2.5s timeout over HTTPS
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2500);
 
     const response = await fetch(
-      `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon`,
+      `https://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon`,
       {
         signal: controller.signal,
         headers: { Accept: 'application/json' },
@@ -124,9 +127,13 @@ export async function getIpLocation(ip: string, headers?: Headers): Promise<Norm
       if (data && data.status === 'success') {
         const countryCode = String(data.countryCode || 'US').toUpperCase();
         const stateCode = String(data.region || '').toUpperCase();
-        const stateName = String(data.regionName || getStateNameByCode(stateCode));
-        const city = String(data.city || 'Los Angeles');
+        const stateName = String(data.regionName || (stateCode ? getStateNameByCode(stateCode) : ''));
+        const city = String(data.city || '');
         const zip = data.zip && /^\d{5}$/.test(String(data.zip)) ? String(data.zip) : '';
+
+        if (!city && !stateCode && !zip) {
+          return { ...EMPTY_LOCATION };
+        }
 
         // If zip was returned, check USZipCode database to get authoritative city/state
         if (zip) {
@@ -145,10 +152,10 @@ export async function getIpLocation(ip: string, headers?: Headers): Promise<Norm
 
         return {
           city,
-          state: stateCode || 'CA',
-          stateName: stateName || 'California',
+          state: stateCode,
+          stateName,
           country: countryCode,
-          postalCode: zip || '90001',
+          postalCode: zip,
           source: 'ip',
         };
       }
@@ -157,8 +164,8 @@ export async function getIpLocation(ip: string, headers?: Headers): Promise<Norm
     console.warn('[getIpLocation] External IP geolocation lookup failed or timed out:', err);
   }
 
-  // Fallback to default U.S. location on failure
-  return { ...FALLBACK_DEFAULT_LOCATION };
+  // Fallback to empty location on failure
+  return { ...EMPTY_LOCATION };
 }
 
 /**
@@ -170,30 +177,55 @@ export async function reverseGeocodeGps(
   lat: number,
   lon: number
 ): Promise<NormalizedLocation | null> {
-  if (typeof lat !== 'number' || typeof lon !== 'number' || isNaN(lat) || isNaN(lon)) {
+  // Validate coordinates: latitude in [-90, 90], longitude in [-180, 180]
+  if (
+    typeof lat !== 'number' ||
+    typeof lon !== 'number' ||
+    isNaN(lat) ||
+    isNaN(lon) ||
+    lat < -90 ||
+    lat > 90 ||
+    lon < -180 ||
+    lon > 180
+  ) {
     return null;
   }
 
   try {
-    // Spatial bounding box query (~1 degree ~ 60 miles)
-    let candidates = await db.uSZipCode.findMany({
-      where: {
-        latitude: { gte: lat - 1.5, lte: lat + 1.5 },
-        longitude: { gte: lon - 1.5, lte: lon + 1.5 },
-      },
-      select: {
-        zipCode: true,
-        city: true,
-        state: true,
-        stateName: true,
-        latitude: true,
-        longitude: true,
-      },
-      take: 100,
-    });
+    // Progressive bounding box radii (in degrees): ~30mi, ~90mi, ~180mi, ~600mi
+    const radiuses = [0.5, 1.5, 3.0, 10.0];
+    let candidates: Array<{
+      zipCode: string;
+      city: string;
+      state: string;
+      stateName: string | null;
+      latitude: number | null;
+      longitude: number | null;
+    }> = [];
 
+    for (const radius of radiuses) {
+      candidates = await db.uSZipCode.findMany({
+        where: {
+          latitude: { gte: lat - radius, lte: lat + radius },
+          longitude: { gte: lon - radius, lte: lon + radius },
+        },
+        select: {
+          zipCode: true,
+          city: true,
+          state: true,
+          stateName: true,
+          latitude: true,
+          longitude: true,
+        },
+      });
+
+      if (candidates.length > 0) {
+        break;
+      }
+    }
+
+    // If progressive bounding boxes found no candidates, query all non-null lat/lon records in USZipCode
     if (candidates.length === 0) {
-      // Fallback query if candidate bounding box is empty
       candidates = await db.uSZipCode.findMany({
         where: {
           latitude: { not: null },
@@ -207,7 +239,6 @@ export async function reverseGeocodeGps(
           latitude: true,
           longitude: true,
         },
-        take: 500,
       });
     }
 
@@ -215,6 +246,7 @@ export async function reverseGeocodeGps(
       return null;
     }
 
+    // Accurate nearest-neighbor calculation using Euclidean/squared distance on lat/lon
     let minDistanceSq = Infinity;
     let closestRecord = candidates[0];
 
