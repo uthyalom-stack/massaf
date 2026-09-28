@@ -20,6 +20,14 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const query = (searchParams.get('query') || '').trim();
+    const serviceId = (searchParams.get('service') || searchParams.get('serviceId') || '').trim();
+    const serviceTypeRaw = (searchParams.get('type') || '').trim();
+    const locationType =
+      serviceTypeRaw === 'studio'
+        ? 'STUDIO'
+        : serviceTypeRaw === 'in_home'
+        ? 'IN_HOME'
+        : undefined;
 
     if (!query || query.length < 1) {
       return NextResponse.json(
@@ -39,11 +47,12 @@ export async function GET(request: Request) {
     const isNumeric = /^\d+$/.test(clean);
 
     if (isNumeric) {
-      // 1. ZIP Code Match Suggestions
+      // 1. ZIP Code Match Suggestions (Support numeric prefix from 1 digit: '1', '90', '902', '90210')
       const zipMatches = await db.uSZipCode.findMany({
         where: { zipCode: { startsWith: clean } },
         select: { zipCode: true, city: true, state: true, stateName: true },
-        take: 6,
+        orderBy: { zipCode: 'asc' },
+        take: 8,
       });
 
       for (const zipRecord of zipMatches) {
@@ -52,12 +61,16 @@ export async function GET(request: Request) {
           seenKeys.add(key);
 
           const matches = await rankTherapistsForMatch(
-            { zipCode: zipRecord.zipCode },
+            {
+              zipCode: zipRecord.zipCode,
+              ...(serviceId ? { serviceId } : {}),
+              ...(locationType ? { locationType } : {}),
+            },
             activeTherapists
           );
 
           suggestions.push({
-            label: `${zipRecord.zipCode} (${zipRecord.city}, ${zipRecord.state})`,
+            label: `${zipRecord.zipCode} — ${zipRecord.city}, ${zipRecord.state}`,
             query: zipRecord.zipCode,
             city: zipRecord.city,
             state: zipRecord.state,
@@ -79,7 +92,11 @@ export async function GET(request: Request) {
         seenKeys.add(key);
 
         const matches = await rankTherapistsForMatch(
-          { locationQuery: stateMatch.name },
+          {
+            locationQuery: stateMatch.name,
+            ...(serviceId ? { serviceId } : {}),
+            ...(locationType ? { locationType } : {}),
+          },
           activeTherapists
         );
 
@@ -109,7 +126,11 @@ export async function GET(request: Request) {
           seenKeys.add(key);
 
           const matches = await rankTherapistsForMatch(
-            { locationQuery: `${rec.city}, ${rec.state}` },
+            {
+              locationQuery: `${rec.city}, ${rec.state}`,
+              ...(serviceId ? { serviceId } : {}),
+              ...(locationType ? { locationType } : {}),
+            },
             activeTherapists
           );
 

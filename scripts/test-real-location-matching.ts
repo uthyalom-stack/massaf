@@ -198,6 +198,7 @@ async function runRealLocationTests() {
     clearZipLocationCaches(); // CLEAR CACHE BEFORE MATCHING
     const criteria: MatchCriteria = {
       serviceId,
+      specialty: '',
       locationType: 'IN_HOME',
       locationQuery: '',
       zipCode: customerZip,

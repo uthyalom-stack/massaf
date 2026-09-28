@@ -67,6 +67,7 @@ export function MatchWizard({ services }: MatchWizardProps) {
 
     const criteria: MatchCriteria = {
       serviceId: selectedServiceId,
+      specialty: '',
       locationType,
       locationQuery,
       zipCode,

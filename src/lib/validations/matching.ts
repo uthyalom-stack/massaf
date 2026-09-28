@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const matchCriteriaSchema = z.object({
   serviceId: z.string().optional().default(''),
+  specialty: z.string().optional().default(''),
   locationType: z.enum(['STUDIO', 'IN_HOME']).optional(),
   locationQuery: z.string().optional().default(''),
   zipCode: z
@@ -39,4 +40,5 @@ export const matchCriteriaSchema = z.object({
     }, 'Please select or enter a valid appointment time (e.g. 09:00, 2:30 PM, or morning/afternoon/evening).'),
 });
 
+export type MatchCriteriaInput = z.input<typeof matchCriteriaSchema>;
 export type MatchCriteria = z.infer<typeof matchCriteriaSchema>;

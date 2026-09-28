@@ -36,8 +36,15 @@ export function TherapistDiscoveryClient({
   const [debouncedLocationQuery, setDebouncedLocationQuery] = useState(initialLocationQuery);
   const [isSearching, setIsSearching] = useState(false);
 
-  // Track total ZIP matching count separately from displayed 5 rotated therapists
-  const [totalZipMatches, setTotalZipMatches] = useState<number | null>(null);
+  // Results state from authoritative server-side matching route (/api/match)
+  const [filteredTherapists, setFilteredTherapists] = useState<CustomerTherapist[]>(initialTherapists);
+  const [totalMatchesCount, setTotalMatchesCount] = useState<number>(initialTherapists.length);
+  const [searchedZip, setSearchedZip] = useState<string | null>(
+    /^\d{5}$/.test(initialLocationQuery.trim()) ? initialLocationQuery.trim() : null
+  );
+
+  // Track search request sequence ID to prevent out-of-order stale response overwrites
+  const lastSearchReqIdRef = useRef<number>(0);
 
   // Sync state if URL searchParams change externally (e.g., Browser Back / Forward)
   useEffect(() => {
@@ -45,7 +52,7 @@ export function TherapistDiscoveryClient({
     setDebouncedLocationQuery(initialLocationQuery);
   }, [initialLocationQuery]);
 
-  // Debounce debouncedLocationQuery updates (300ms) to prevent URL router thrashing while typing
+  // Debounce debouncedLocationQuery updates (250ms) to prevent URL router thrashing while typing
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleLocationQueryChange = useCallback((newQuery: string) => {
@@ -58,8 +65,7 @@ export function TherapistDiscoveryClient({
 
     debounceTimerRef.current = setTimeout(() => {
       setDebouncedLocationQuery(newQuery);
-      setIsSearching(false);
-    }, 300);
+    }, 250);
   }, []);
 
   // Update URL search parameters when debounced query or select dropdown filters change
@@ -153,20 +159,9 @@ export function TherapistDiscoveryClient({
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     setLocationQuery('');
     setDebouncedLocationQuery('');
-    setTotalZipMatches(null);
     setIsSearching(false);
     router.replace(pathname, { scroll: false });
   };
-
-  // Pre-seed USZipCode database cache for requested customer 5-digit ZIP
-  useEffect(() => {
-    const cleanZip = debouncedLocationQuery.trim();
-    if (cleanZip && /^\d{5}$/.test(cleanZip)) {
-      import('@/app/actions/locations').then(({ fetchZipInfoAction }) => {
-        fetchZipInfoAction(cleanZip).catch(() => null);
-      });
-    }
-  }, [debouncedLocationQuery]);
 
   // Extract all unique specialties from active database dataset
   const availableSpecialties = useMemo(() => {
@@ -177,140 +172,75 @@ export function TherapistDiscoveryClient({
     return Array.from(specs).sort();
   }, [initialTherapists]);
 
-  // Filter therapists against service, location (ZIP, City, State abbreviation, State name), session type, and specialty
-  const baseFilteredTherapists = useMemo(() => {
-    const cleanQuery = debouncedLocationQuery.trim().toLowerCase();
-    const isZip = /^\d{5}$/.test(cleanQuery);
+  // Execute central authoritative matching via POST /api/match whenever filters change
+  useEffect(() => {
+    const currentReqId = ++lastSearchReqIdRef.current;
+    setIsSearching(true);
 
-    // Identify if query matches a U.S. State abbreviation or full name
-    const matchedState = cleanQuery
-      ? FALLBACK_US_STATES.find(
-          (s) => s.code.toLowerCase() === cleanQuery || s.name.toLowerCase() === cleanQuery
-        )
-      : null;
+    const cleanLoc = debouncedLocationQuery.trim();
+    const isZip = /^\d{5}$/.test(cleanLoc);
 
-    return initialTherapists
-      .filter((therapist) => {
-        // 1. Service Filtering
-        if (serviceIdFilter !== 'all') {
-          const offersService = therapist.services.some((s) => s.id === serviceIdFilter);
-          if (!offersService) return false;
-        }
+    const payload = {
+      serviceId: serviceIdFilter !== 'all' ? serviceIdFilter : '',
+      specialty: specialtyFilter !== 'all' ? specialtyFilter : '',
+      locationType:
+        serviceTypeFilter === 'studio'
+          ? 'STUDIO'
+          : serviceTypeFilter === 'in_home'
+          ? 'IN_HOME'
+          : undefined,
+      ...(isZip ? { zipCode: cleanLoc } : { locationQuery: cleanLoc }),
+    };
 
-        // 2. Service Location Type Filtering
-        if (serviceTypeFilter === 'in_home' && !therapist.offersInHome) return false;
-        if (serviceTypeFilter === 'studio' && !therapist.offersStudio) return false;
+    fetch('/api/match', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        // Drop stale out-of-order response
+        if (currentReqId !== lastSearchReqIdRef.current) return;
 
-        // 3. Location Query Filtering (ZIP, City, State abbreviation, State name)
-        if (cleanQuery && !isZip) {
-          const matchesLocationStr = therapist.location.toLowerCase().includes(cleanQuery);
-          const matchesServiceAreas = therapist.serviceAreas.some((sa) =>
-            sa.toLowerCase().includes(cleanQuery)
+        if (data.success && Array.isArray(data.matches)) {
+          const matchedTherapists = data.matches.map(
+            (m: { therapist: CustomerTherapist }) => m.therapist
           );
-          const matchesRawServiceAreas = (therapist.rawServiceAreas || []).some(
-            (rsa) =>
-              rsa.cityName.toLowerCase().includes(cleanQuery) ||
-              rsa.state.toLowerCase() === cleanQuery
+          setFilteredTherapists(matchedTherapists);
+          setTotalMatchesCount(
+            typeof data.totalMatches === 'number' ? data.totalMatches : matchedTherapists.length
           );
-          const matchesState = matchedState
-            ? therapist.location.toLowerCase().includes(matchedState.code.toLowerCase()) ||
-              therapist.location.toLowerCase().includes(matchedState.name.toLowerCase()) ||
-              therapist.serviceAreas.some(
-                (sa) =>
-                  sa.toLowerCase().includes(matchedState.code.toLowerCase()) ||
-                  sa.toLowerCase().includes(matchedState.name.toLowerCase())
-              ) ||
-              (therapist.rawServiceAreas || []).some(
-                (rsa) => rsa.state.toLowerCase() === matchedState.code.toLowerCase()
-              )
-            : false;
-
-          if (!matchesLocationStr && !matchesServiceAreas && !matchesRawServiceAreas && !matchesState) {
-            return false;
-          }
+          setSearchedZip(isZip ? cleanLoc : null);
+        } else {
+          setFilteredTherapists([]);
+          setTotalMatchesCount(0);
+          setSearchedZip(isZip ? cleanLoc : null);
         }
-
-        // 4. Specialty Filtering
-        if (specialtyFilter !== 'all' && !therapist.specialties.includes(specialtyFilter)) {
-          return false;
-        }
-
-        return true;
       })
-      .map((therapist) => {
-        if (serviceIdFilter !== 'all') {
-          const serviceMatch = therapist.services.find((s) => s.id === serviceIdFilter);
-          if (serviceMatch) {
-            return {
-              ...therapist,
-              startingPrice: serviceMatch.price,
-            };
-          }
+      .catch((err) => {
+        if (currentReqId !== lastSearchReqIdRef.current) return;
+        console.error('[TherapistDiscoveryClient] Search error:', err);
+        setFilteredTherapists([]);
+        setTotalMatchesCount(0);
+        setSearchedZip(isZip ? cleanLoc : null);
+      })
+      .finally(() => {
+        if (currentReqId === lastSearchReqIdRef.current) {
+          setIsSearching(false);
         }
-        return therapist;
       });
   }, [
-    initialTherapists,
-    serviceIdFilter,
     debouncedLocationQuery,
+    serviceIdFilter,
     serviceTypeFilter,
     specialtyFilter,
   ]);
-
-  const [filteredTherapists, setFilteredTherapists] = useState<CustomerTherapist[]>(baseFilteredTherapists);
-
-  // Apply authoritative 5-therapist rotation when a 5-digit ZIP is entered
-  useEffect(() => {
-    const cleanZip = debouncedLocationQuery.trim();
-    if (cleanZip && /^\d{5}$/.test(cleanZip)) {
-      const payload = {
-        serviceId: serviceIdFilter !== 'all' ? serviceIdFilter : '',
-        locationType:
-          serviceTypeFilter === 'studio'
-            ? 'STUDIO'
-            : serviceTypeFilter === 'in_home'
-            ? 'IN_HOME'
-            : undefined,
-        zipCode: cleanZip,
-      };
-
-      fetch('/api/match', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.success && Array.isArray(data.matches)) {
-            const matchedTherapists = data.matches.map(
-              (m: { therapist: CustomerTherapist }) => m.therapist
-            );
-            setFilteredTherapists(matchedTherapists.slice(0, 5));
-            setTotalZipMatches(typeof data.totalMatches === 'number' ? data.totalMatches : matchedTherapists.length);
-          } else {
-            setFilteredTherapists([]);
-            setTotalZipMatches(0);
-          }
-        })
-        .catch(() => {
-          setFilteredTherapists([]);
-          setTotalZipMatches(0);
-        });
-    } else {
-      setFilteredTherapists(baseFilteredTherapists);
-      setTotalZipMatches(null);
-    }
-  }, [debouncedLocationQuery, serviceIdFilter, serviceTypeFilter, baseFilteredTherapists]);
 
   const hasActiveFilters =
     serviceIdFilter !== 'all' ||
     Boolean(locationQuery.trim()) ||
     serviceTypeFilter !== 'all' ||
     specialtyFilter !== 'all';
-
-  const cleanZipQuery = debouncedLocationQuery.trim();
-  const isZipQuery = cleanZipQuery && /^\d{5}$/.test(cleanZipQuery);
-  const totalMatchedCount = isZipQuery && totalZipMatches !== null ? totalZipMatches : baseFilteredTherapists.length;
 
   return (
     <div className="space-y-8">
@@ -326,7 +256,7 @@ export function TherapistDiscoveryClient({
         onReset={handleReset}
         availableServices={availableServices}
         availableSpecialties={availableSpecialties}
-        matchedCount={totalMatchedCount}
+        matchedCount={totalMatchesCount}
         isSearching={isSearching}
       />
 
@@ -335,6 +265,8 @@ export function TherapistDiscoveryClient({
         therapists={filteredTherapists}
         onResetFilters={handleReset}
         hasActiveFilters={hasActiveFilters}
+        isSearching={isSearching}
+        searchedZip={searchedZip}
       />
     </div>
   );

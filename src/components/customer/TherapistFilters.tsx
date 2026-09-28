@@ -47,21 +47,41 @@ export function TherapistFilters({
     filters.serviceType !== 'all' ||
     filters.specialty !== 'all';
 
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const handleLocationInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setDraftLocation(val);
     onFilterChange({ locationQuery: val });
 
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
 
-    if (!val.trim() || val.trim().length < 2) {
+    const cleanVal = val.trim();
+    if (!cleanVal) {
       setSuggestions([]);
       setShowSuggestions(false);
       return;
     }
 
     debounceTimerRef.current = setTimeout(() => {
-      fetch(`/api/location/suggestions?query=${encodeURIComponent(val.trim())}`, { cache: 'no-store' })
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      const params = new URLSearchParams({ query: cleanVal });
+      if (filters.serviceId && filters.serviceId !== 'all') {
+        params.set('service', filters.serviceId);
+      }
+      if (filters.serviceType && filters.serviceType !== 'all') {
+        params.set('type', filters.serviceType);
+      }
+
+      fetch(`/api/location/suggestions?${params.toString()}`, {
+        cache: 'no-store',
+        signal: controller.signal,
+      })
         .then((res) => res.json())
         .then((data) => {
           if (data.success && Array.isArray(data.suggestions)) {
@@ -72,11 +92,13 @@ export function TherapistFilters({
             setShowSuggestions(false);
           }
         })
-        .catch(() => {
-          setSuggestions([]);
-          setShowSuggestions(false);
+        .catch((err) => {
+          if (err.name !== 'AbortError') {
+            setSuggestions([]);
+            setShowSuggestions(false);
+          }
         });
-    }, 250);
+    }, 200);
   };
 
   const handleSelectSuggestion = (sug: LocationSuggestion) => {

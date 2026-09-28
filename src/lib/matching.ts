@@ -1,9 +1,70 @@
 import { CustomerTherapist } from '@/types/customer';
 import { therapistCoversZipAsync, getActiveDistributionTime } from '@/lib/db-therapists';
-import { MatchCriteria } from '@/lib/validations/matching';
+import { MatchCriteria, MatchCriteriaInput } from '@/lib/validations/matching';
 import { db } from '@/lib/db';
 import { getZipInfo } from '@/lib/us-locations';
 import { FALLBACK_US_STATES } from '@/lib/us-states-data';
+
+/**
+ * Checks whether a therapist matches a location query string representing a City or State (code or full name).
+ * Resolves: City -> State -> relevant ZIP / TherapistZipEligibility coverage.
+ */
+export function normalizeLocationQuery(query: string): {
+  clean: string;
+  cityName: string | null;
+  stateCode: string | null;
+  stateName: string | null;
+  isZip: boolean;
+} {
+  const clean = query.trim().toLowerCase().replace(/,/g, ' ').replace(/\s+/g, ' ');
+  if (!clean) {
+    return { clean: '', cityName: null, stateCode: null, stateName: null, isZip: false };
+  }
+
+  const isZip = /^\d{5}$/.test(clean);
+
+  // Check if input is formatted like "City, ST" or "City ST" e.g. "Los Angeles CA"
+  const tokens = clean.split(' ');
+  let stateCode: string | null = null;
+  let stateName: string | null = null;
+  let cityName: string | null = null;
+
+  // 1. Exact match state code or name
+  const exactStateMatch = FALLBACK_US_STATES.find(
+    (s) => s.code.toLowerCase() === clean || s.name.toLowerCase() === clean
+  );
+
+  if (exactStateMatch) {
+    stateCode = exactStateMatch.code;
+    stateName = exactStateMatch.name;
+  } else {
+    // Check state prefix (e.g. "Cal", "Tex", "Flor")
+    const prefixStateMatch = FALLBACK_US_STATES.find(
+      (s) => s.code.toLowerCase() === clean || s.name.toLowerCase().startsWith(clean)
+    );
+    if (prefixStateMatch && clean.length >= 3) {
+      stateCode = prefixStateMatch.code;
+      stateName = prefixStateMatch.name;
+    }
+
+    // Check last token as state code e.g. "los angeles ca"
+    if (!stateCode && tokens.length > 1) {
+      const lastToken = tokens[tokens.length - 1];
+      const tokenState = FALLBACK_US_STATES.find((s) => s.code.toLowerCase() === lastToken);
+      if (tokenState) {
+        stateCode = tokenState.code;
+        stateName = tokenState.name;
+        cityName = tokens.slice(0, tokens.length - 1).join(' ');
+      }
+    }
+  }
+
+  if (!cityName && !stateCode) {
+    cityName = clean;
+  }
+
+  return { clean, cityName, stateCode, stateName, isZip };
+}
 
 /**
  * Checks whether a therapist matches a location query string representing a City or State (code or full name).
@@ -15,24 +76,22 @@ export async function isTherapistMatchingLocationQueryAsync(
 ): Promise<boolean> {
   if (!locQueryClean) return true;
 
-  // 1. Check if query matches a U.S. State abbreviation or full name
-  const matchedState = FALLBACK_US_STATES.find(
-    (s) =>
-      s.code.toLowerCase() === locQueryClean ||
-      s.name.toLowerCase() === locQueryClean ||
-      s.name.toLowerCase().startsWith(locQueryClean)
-  );
+  const norm = normalizeLocationQuery(locQueryClean);
 
-  if (matchedState) {
-    const stateCodeClean = matchedState.code.toLowerCase();
-    const stateNameClean = matchedState.name.toLowerCase();
+  // 1. If query is a State match (e.g. "TX", "Texas", "Cal", or "Los Angeles CA")
+  if (norm.stateCode) {
+    const stateCodeClean = norm.stateCode.toLowerCase();
+    const stateNameClean = (norm.stateName || '').toLowerCase();
 
+    // Matching location text (e.g. "Dallas, TX", "Los Angeles, CA")
     const matchesLocation =
       therapist.location.toLowerCase().includes(stateCodeClean) ||
-      therapist.location.toLowerCase().includes(stateNameClean);
+      (stateNameClean && therapist.location.toLowerCase().includes(stateNameClean));
 
     const matchesServiceAreas = therapist.serviceAreas.some(
-      (sa) => sa.toLowerCase().includes(stateCodeClean) || sa.toLowerCase().includes(stateNameClean)
+      (sa) =>
+        sa.toLowerCase().includes(stateCodeClean) ||
+        (stateNameClean && sa.toLowerCase().includes(stateNameClean))
     );
 
     const matchesRawServiceAreas = (therapist.rawServiceAreas || []).some(
@@ -40,21 +99,23 @@ export async function isTherapistMatchingLocationQueryAsync(
     );
 
     if (matchesLocation || matchesServiceAreas || matchesRawServiceAreas) {
-      return true;
+      if (!norm.cityName) return true;
     }
 
-    // Check TherapistZipEligibility for state
+    // Check TherapistZipEligibility for state coverage
     try {
       const activeTime = await getActiveDistributionTime();
       if (activeTime) {
         const eligibilityCount = await db.therapistZipEligibility.count({
           where: {
             therapistId: therapist.id,
-            state: matchedState.code,
+            state: norm.stateCode,
             createdAt: activeTime,
           },
         });
-        if (eligibilityCount > 0) return true;
+        if (eligibilityCount > 0) {
+          if (!norm.cityName) return true;
+        }
       }
     } catch {
       // Fallback
@@ -62,14 +123,16 @@ export async function isTherapistMatchingLocationQueryAsync(
   }
 
   // 2. City or general location string matching
-  const matchesLocationStr = therapist.location.toLowerCase().includes(locQueryClean);
+  const searchCity = norm.cityName || norm.clean;
+
+  const matchesLocationStr = therapist.location.toLowerCase().includes(searchCity);
   const matchesServiceAreas = therapist.serviceAreas.some((sa) =>
-    sa.toLowerCase().includes(locQueryClean)
+    sa.toLowerCase().includes(searchCity)
   );
   const matchesRawServiceAreas = (therapist.rawServiceAreas || []).some(
     (rsa) =>
-      rsa.cityName.toLowerCase().includes(locQueryClean) ||
-      rsa.state.toLowerCase() === locQueryClean
+      rsa.cityName.toLowerCase().includes(searchCity) ||
+      rsa.state.toLowerCase() === searchCity
   );
 
   if (matchesLocationStr || matchesServiceAreas || matchesRawServiceAreas) {
@@ -80,7 +143,8 @@ export async function isTherapistMatchingLocationQueryAsync(
   try {
     const matchedZip = await db.uSZipCode.findFirst({
       where: {
-        city: { contains: locQueryClean },
+        city: { contains: searchCity },
+        ...(norm.stateCode ? { state: norm.stateCode } : {}),
       },
       select: { zipCode: true, state: true },
     });
@@ -408,6 +472,16 @@ export async function rankTherapistsForMatch(
     if (!matchedService) {
       // Disqualified: therapist does not offer this service
       continue;
+    }
+
+    // 1b. Specialty Compatibility
+    if (criteria.specialty && criteria.specialty !== 'all') {
+      const hasSpecialty = (therapist.specialties || []).some(
+        (s) => s.toLowerCase() === criteria.specialty!.toLowerCase()
+      );
+      if (!hasSpecialty) {
+        continue;
+      }
     }
 
     let points = 0;
