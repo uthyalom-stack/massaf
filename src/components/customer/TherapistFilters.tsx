@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { TherapistService as PublicServiceOption } from '@/types/customer';
+import { LocationSuggestion } from '@/app/api/location/suggestions/route';
 
 export interface FilterState {
   serviceId: string;
@@ -31,6 +32,9 @@ export function TherapistFilters({
 }: TherapistFiltersProps) {
   // Local draft state for location query to ensure completely stable typing without keystroke drops
   const [draftLocation, setDraftLocation] = useState(filters.locationQuery);
+  const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Sync draft state if external filters change (e.g., Reset or URL change)
   useEffect(() => {
@@ -47,10 +51,43 @@ export function TherapistFilters({
     const val = e.target.value;
     setDraftLocation(val);
     onFilterChange({ locationQuery: val });
+
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+
+    if (!val.trim() || val.trim().length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    debounceTimerRef.current = setTimeout(() => {
+      fetch(`/api/location/suggestions?query=${encodeURIComponent(val.trim())}`, { cache: 'no-store' })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.suggestions)) {
+            setSuggestions(data.suggestions);
+            setShowSuggestions(data.suggestions.length > 0);
+          } else {
+            setSuggestions([]);
+            setShowSuggestions(false);
+          }
+        })
+        .catch(() => {
+          setSuggestions([]);
+          setShowSuggestions(false);
+        });
+    }, 250);
+  };
+
+  const handleSelectSuggestion = (sug: LocationSuggestion) => {
+    setDraftLocation(sug.query);
+    setShowSuggestions(false);
+    onFilterChange({ locationQuery: sug.query });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setShowSuggestions(false);
     onFilterChange({
       serviceId: filters.serviceId,
       locationQuery: draftLocation,
@@ -61,6 +98,8 @@ export function TherapistFilters({
 
   const handleClear = () => {
     setDraftLocation('');
+    setSuggestions([]);
+    setShowSuggestions(false);
     onReset();
   };
 
@@ -110,7 +149,7 @@ export function TherapistFilters({
           </div>
 
           {/* Unified Location Search (ZIP, City, State) */}
-          <div className="space-y-1.5 lg:col-span-2">
+          <div className="space-y-1.5 lg:col-span-2 relative">
             <div className="flex items-center justify-between">
               <label
                 htmlFor="filter-location"
@@ -160,6 +199,9 @@ export function TherapistFilters({
                 name="locationQuery"
                 value={draftLocation}
                 onChange={handleLocationInputChange}
+                onFocus={() => {
+                  if (suggestions.length > 0) setShowSuggestions(true);
+                }}
                 placeholder="Search ZIP (e.g. 90210), City (Los Angeles), or State (CA, Texas)"
                 className="w-full pl-9 pr-8 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent transition-all"
               />
@@ -168,6 +210,8 @@ export function TherapistFilters({
                   type="button"
                   onClick={() => {
                     setDraftLocation('');
+                    setSuggestions([]);
+                    setShowSuggestions(false);
                     onFilterChange({ locationQuery: '' });
                   }}
                   className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
@@ -177,6 +221,27 @@ export function TherapistFilters({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
+              )}
+
+              {/* Suggestions Dropdown */}
+              {showSuggestions && suggestions.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 overflow-hidden divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                  {suggestions.map((sug, idx) => (
+                    <button
+                      key={`${sug.query}-${idx}`}
+                      type="button"
+                      onClick={() => handleSelectSuggestion(sug)}
+                      className="w-full px-3.5 py-2.5 text-left text-xs sm:text-sm hover:bg-emerald-50/80 transition-colors flex items-center justify-between gap-2 cursor-pointer group"
+                    >
+                      <span className="font-medium text-slate-900 group-hover:text-emerald-950">
+                        {sug.label}
+                      </span>
+                      <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 shrink-0">
+                        {sug.count} {sug.count === 1 ? 'therapist' : 'therapists'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           </div>

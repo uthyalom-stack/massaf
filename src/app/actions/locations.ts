@@ -61,3 +61,18 @@ export async function verifyZipCoverageAction(
     return false;
   }
 }
+
+export async function fetchLocationSuggestionsAction(query: string) {
+  if (!query || !query.trim()) return [];
+  try {
+    const res = await fetch(
+      `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/location/suggestions?query=${encodeURIComponent(query.trim())}`,
+      { cache: 'no-store' }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.suggestions || [];
+  } catch {
+    return [];
+  }
+}
