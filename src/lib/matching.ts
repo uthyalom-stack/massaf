@@ -1,8 +1,147 @@
 import { CustomerTherapist } from '@/types/customer';
-import { therapistCoversZipAsync } from '@/lib/db-therapists';
+import { therapistCoversZipAsync, getActiveDistributionTime } from '@/lib/db-therapists';
 import { MatchCriteria } from '@/lib/validations/matching';
 import { db } from '@/lib/db';
 import { getZipInfo } from '@/lib/us-locations';
+import { FALLBACK_US_STATES } from '@/lib/us-states-data';
+
+/**
+ * Checks whether a therapist matches a location query string representing a City or State (code or full name).
+ * Resolves: City -> State -> relevant ZIP / TherapistZipEligibility coverage.
+ */
+export async function isTherapistMatchingLocationQueryAsync(
+  therapist: CustomerTherapist,
+  locQueryClean: string
+): Promise<boolean> {
+  if (!locQueryClean) return true;
+
+  // 1. Check if query matches a U.S. State abbreviation or full name
+  const matchedState = FALLBACK_US_STATES.find(
+    (s) =>
+      s.code.toLowerCase() === locQueryClean ||
+      s.name.toLowerCase() === locQueryClean ||
+      s.name.toLowerCase().startsWith(locQueryClean)
+  );
+
+  if (matchedState) {
+    const stateCodeClean = matchedState.code.toLowerCase();
+    const stateNameClean = matchedState.name.toLowerCase();
+
+    const matchesLocation =
+      therapist.location.toLowerCase().includes(stateCodeClean) ||
+      therapist.location.toLowerCase().includes(stateNameClean);
+
+    const matchesServiceAreas = therapist.serviceAreas.some(
+      (sa) => sa.toLowerCase().includes(stateCodeClean) || sa.toLowerCase().includes(stateNameClean)
+    );
+
+    const matchesRawServiceAreas = (therapist.rawServiceAreas || []).some(
+      (rsa) => rsa.state.toLowerCase() === stateCodeClean
+    );
+
+    if (matchesLocation || matchesServiceAreas || matchesRawServiceAreas) {
+      return true;
+    }
+
+    // Check TherapistZipEligibility for state
+    try {
+      const activeTime = await getActiveDistributionTime();
+      if (activeTime) {
+        const eligibilityCount = await db.therapistZipEligibility.count({
+          where: {
+            therapistId: therapist.id,
+            state: matchedState.code,
+            createdAt: activeTime,
+          },
+        });
+        if (eligibilityCount > 0) return true;
+      }
+    } catch {
+      // Fallback
+    }
+  }
+
+  // 2. City or general location string matching
+  const matchesLocationStr = therapist.location.toLowerCase().includes(locQueryClean);
+  const matchesServiceAreas = therapist.serviceAreas.some((sa) =>
+    sa.toLowerCase().includes(locQueryClean)
+  );
+  const matchesRawServiceAreas = (therapist.rawServiceAreas || []).some(
+    (rsa) =>
+      rsa.cityName.toLowerCase().includes(locQueryClean) ||
+      rsa.state.toLowerCase() === locQueryClean
+  );
+
+  if (matchesLocationStr || matchesServiceAreas || matchesRawServiceAreas) {
+    return true;
+  }
+
+  // 3. City -> State -> relevant ZIP lookup in USZipCode database
+  try {
+    const matchedZip = await db.uSZipCode.findFirst({
+      where: {
+        city: { contains: locQueryClean },
+      },
+      select: { zipCode: true, state: true },
+    });
+
+    if (matchedZip) {
+      const covers = await therapistCoversZipAsync(therapist, matchedZip.zipCode);
+      if (covers) return true;
+    }
+  } catch {
+    // Graceful fallback
+  }
+
+  return false;
+}
+
+export function isTherapistMatchingLocationQuery(
+  therapist: CustomerTherapist,
+  locQueryClean: string
+): boolean {
+  if (!locQueryClean) return true;
+
+  const matchedState = FALLBACK_US_STATES.find(
+    (s) =>
+      s.code.toLowerCase() === locQueryClean ||
+      s.name.toLowerCase() === locQueryClean ||
+      s.name.toLowerCase().startsWith(locQueryClean)
+  );
+
+  if (matchedState) {
+    const stateCodeClean = matchedState.code.toLowerCase();
+    const stateNameClean = matchedState.name.toLowerCase();
+
+    const matchesLocation =
+      therapist.location.toLowerCase().includes(stateCodeClean) ||
+      therapist.location.toLowerCase().includes(stateNameClean);
+
+    const matchesServiceAreas = therapist.serviceAreas.some(
+      (sa) => sa.toLowerCase().includes(stateCodeClean) || sa.toLowerCase().includes(stateNameClean)
+    );
+
+    const matchesRawServiceAreas = (therapist.rawServiceAreas || []).some(
+      (rsa) => rsa.state.toLowerCase() === stateCodeClean
+    );
+
+    if (matchesLocation || matchesServiceAreas || matchesRawServiceAreas) {
+      return true;
+    }
+  }
+
+  const matchesLocationStr = therapist.location.toLowerCase().includes(locQueryClean);
+  const matchesServiceAreas = therapist.serviceAreas.some((sa) =>
+    sa.toLowerCase().includes(locQueryClean)
+  );
+  const matchesRawServiceAreas = (therapist.rawServiceAreas || []).some(
+    (rsa) =>
+      rsa.cityName.toLowerCase().includes(locQueryClean) ||
+      rsa.state.toLowerCase() === locQueryClean
+  );
+
+  return matchesLocationStr || matchesServiceAreas || matchesRawServiceAreas;
+}
 import {
   getScheduleWindowForDate,
   getAvailableTimeSlots,
@@ -33,7 +172,7 @@ export async function getRotatingTherapistsForZip(
   const zipInfo = await getZipInfo(cleanZip);
 
   // 1. Single batched DB query to fetch all therapist IDs in the automatic distribution pool for this state
-  let eligibleTherapistIdsFromPool = new Set<string>();
+  const eligibleTherapistIdsFromPool = new Set<string>();
   if (zipInfo) {
     try {
       const { getActiveDistributionTime } = await import('@/lib/db-therapists');
@@ -250,7 +389,7 @@ export function checkTimeRangeAvailability(
  * using actual database fields (services, service areas, location types, pricing, and availability schedules).
  */
 export async function rankTherapistsForMatch(
-  criteria: MatchCriteria,
+  criteria: Partial<MatchCriteria>,
   therapists: CustomerTherapist[]
 ): Promise<MatchedTherapistResult[]> {
   const results: MatchedTherapistResult[] = [];
@@ -294,10 +433,7 @@ export async function rankTherapistsForMatch(
       locationCompatible = true;
 
       const matchesZip = zipClean ? await therapistCoversZipAsync(therapist, zipClean) : false;
-      const matchesCity =
-        locQueryClean &&
-        (therapist.location.toLowerCase().includes(locQueryClean) ||
-          therapist.serviceAreas.some((sa) => sa.toLowerCase().includes(locQueryClean)));
+      const matchesCity = locQueryClean ? await isTherapistMatchingLocationQueryAsync(therapist, locQueryClean) : false;
 
       if (zipClean) {
         // AUTHORITATIVE ZIP ELIGIBILITY: When customer supplies explicit ZIP, ZIP eligibility is mandatory.
@@ -310,7 +446,7 @@ export async function rankTherapistsForMatch(
       } else if (locQueryClean) {
         if (matchesCity) {
           points += 30;
-          reasons.push(`Provides in-home service in ${locQueryClean.toUpperCase()}`);
+          reasons.push(`Provides in-home service near ${locQueryClean.toUpperCase()}`);
         } else {
           locationCompatible = false;
         }
@@ -326,10 +462,7 @@ export async function rankTherapistsForMatch(
 
       locationCompatible = true;
 
-      const matchesCity =
-        locQueryClean &&
-        (therapist.location.toLowerCase().includes(locQueryClean) ||
-          therapist.serviceAreas.some((sa) => sa.toLowerCase().includes(locQueryClean)));
+      const matchesCity = locQueryClean ? await isTherapistMatchingLocationQueryAsync(therapist, locQueryClean) : false;
 
       const matchesZip = zipClean ? await therapistCoversZipAsync(therapist, zipClean) : false;
 
@@ -361,10 +494,7 @@ export async function rankTherapistsForMatch(
       locationCompatible = true;
 
       const matchesZip = zipClean ? await therapistCoversZipAsync(therapist, zipClean) : false;
-      const matchesCity =
-        locQueryClean &&
-        (therapist.location.toLowerCase().includes(locQueryClean) ||
-          therapist.serviceAreas.some((sa) => sa.toLowerCase().includes(locQueryClean)));
+      const matchesCity = locQueryClean ? await isTherapistMatchingLocationQueryAsync(therapist, locQueryClean) : false;
 
       if (zipClean) {
         if (matchesZip) {
@@ -376,7 +506,7 @@ export async function rankTherapistsForMatch(
       } else if (locQueryClean) {
         if (matchesCity) {
           points += 30;
-          reasons.push(`Provides appointment coverage in ${locQueryClean.toUpperCase()}`);
+          reasons.push(`Provides appointment coverage near ${locQueryClean.toUpperCase()}`);
         } else {
           locationCompatible = false;
         }
