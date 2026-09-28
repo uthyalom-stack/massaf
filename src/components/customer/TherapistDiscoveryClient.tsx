@@ -31,9 +31,9 @@ export function TherapistDiscoveryClient({
   const serviceTypeFilter = searchParams.get('type') || 'all';
   const specialtyFilter = searchParams.get('specialty') || 'all';
 
-  // Controlled draft location input state (does NOT trigger router replacement while typing)
-  const [locationQuery, setLocationQuery] = useState(initialLocationQuery);
-  const [debouncedLocationQuery, setDebouncedLocationQuery] = useState(initialLocationQuery);
+  // Separation of Raw Location Input (typing) from Committed Location (matching trigger)
+  const [locationInput, setLocationInput] = useState(initialLocationQuery);
+  const [committedLocation, setCommittedLocation] = useState(initialLocationQuery);
   const [isSearching, setIsSearching] = useState(false);
 
   // Results state from authoritative server-side matching route (/api/match)
@@ -48,37 +48,22 @@ export function TherapistDiscoveryClient({
 
   // Sync state if URL searchParams change externally (e.g., Browser Back / Forward)
   useEffect(() => {
-    setLocationQuery(initialLocationQuery);
-    setDebouncedLocationQuery(initialLocationQuery);
+    setLocationInput(initialLocationQuery);
+    setCommittedLocation(initialLocationQuery);
   }, [initialLocationQuery]);
 
-  // Debounce debouncedLocationQuery updates (250ms) to prevent URL router thrashing while typing
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  const handleLocationQueryChange = useCallback((newQuery: string) => {
-    setLocationQuery(newQuery);
-    setIsSearching(true);
-
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-    }
-
-    debounceTimerRef.current = setTimeout(() => {
-      setDebouncedLocationQuery(newQuery);
-    }, 250);
-  }, []);
-
-  // Update URL search parameters when debounced query or select dropdown filters change
-  const syncUrlParams = useCallback(
+  // Helper to commit location and synchronize URL parameters
+  const commitSearch = useCallback(
     (nextState: {
       serviceId: string;
       locationQuery: string;
       serviceType: string;
       specialty: string;
     }) => {
+      setCommittedLocation(nextState.locationQuery);
+
       const params = new URLSearchParams(searchParams.toString());
 
-      // Delete deprecated single parameters
       params.delete('query');
       params.delete('city');
       params.delete('zip');
@@ -119,17 +104,7 @@ export function TherapistDiscoveryClient({
     [pathname, router, searchParams]
   );
 
-  // Sync debounced query to URL
-  useEffect(() => {
-    syncUrlParams({
-      serviceId: serviceIdFilter,
-      locationQuery: debouncedLocationQuery,
-      serviceType: serviceTypeFilter,
-      specialty: specialtyFilter,
-    });
-  }, [debouncedLocationQuery]);
-
-  // Handle immediate dropdown selection filter changes
+  // Handle filter changes: typing ONLY updates locationInput (no matching/URL sync until committed)
   const handleFilterChange = (
     updated: Partial<{
       serviceId: string;
@@ -138,27 +113,29 @@ export function TherapistDiscoveryClient({
       specialty: string;
     }>
   ) => {
-    if (updated.locationQuery !== undefined) {
-      handleLocationQueryChange(updated.locationQuery);
+    // Typing input update: update visible input text ONLY, do NOT commit search
+    if (updated.locationQuery !== undefined && updated.serviceId === undefined && updated.serviceType === undefined && updated.specialty === undefined) {
+      setLocationInput(updated.locationQuery);
       return;
     }
 
+    // Explicit location commitment (e.g. suggestion selected, form submit, or clear) or dropdown filter change
+    const nextLoc = updated.locationQuery !== undefined ? updated.locationQuery : locationInput;
     const nextService = updated.serviceId !== undefined ? updated.serviceId : serviceIdFilter;
     const nextType = updated.serviceType !== undefined ? updated.serviceType : serviceTypeFilter;
     const nextSpecialty = updated.specialty !== undefined ? updated.specialty : specialtyFilter;
 
-    syncUrlParams({
+    commitSearch({
       serviceId: nextService,
-      locationQuery: debouncedLocationQuery,
+      locationQuery: nextLoc,
       serviceType: nextType,
       specialty: nextSpecialty,
     });
   };
 
   const handleReset = () => {
-    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-    setLocationQuery('');
-    setDebouncedLocationQuery('');
+    setLocationInput('');
+    setCommittedLocation('');
     setIsSearching(false);
     router.replace(pathname, { scroll: false });
   };
@@ -187,7 +164,7 @@ export function TherapistDiscoveryClient({
 
     setIsSearching(true);
 
-    const cleanLoc = debouncedLocationQuery.trim();
+    const cleanLoc = committedLocation.trim();
     const isZip = /^\d{5}$/.test(cleanLoc);
 
     const payload = {
@@ -242,7 +219,7 @@ export function TherapistDiscoveryClient({
         }
       });
   }, [
-    debouncedLocationQuery,
+    committedLocation,
     serviceIdFilter,
     serviceTypeFilter,
     specialtyFilter,
@@ -250,7 +227,7 @@ export function TherapistDiscoveryClient({
 
   const hasActiveFilters =
     serviceIdFilter !== 'all' ||
-    Boolean(locationQuery.trim()) ||
+    Boolean(locationInput.trim()) ||
     serviceTypeFilter !== 'all' ||
     specialtyFilter !== 'all';
 
@@ -260,7 +237,7 @@ export function TherapistDiscoveryClient({
       <TherapistFilters
         filters={{
           serviceId: serviceIdFilter,
-          locationQuery: locationQuery,
+          locationQuery: locationInput,
           serviceType: serviceTypeFilter,
           specialty: specialtyFilter,
         }}
