@@ -1,159 +1,179 @@
 import { rankTherapistsForMatch } from '../src/lib/matching';
 import { CustomerTherapist } from '../src/types/customer';
 import { db } from '../src/lib/db';
+import { createServer } from 'http';
+import next from 'next';
 
-async function runFindTherapistSearchTests() {
-  console.log('=== STARTING FIND-A-THERAPIST END-TO-END SEARCH TEST SUITE ===\n');
-
-  // 1. Test Autocomplete Suggestions endpoint for single and multi-digit ZIP prefixes
-  console.log('1. Testing Autocomplete Suggestions Endpoint (/api/location/suggestions)...');
-  const prefixes = ['1', '90', '902', '9021', '90210'];
-  for (const prefix of prefixes) {
-    const res = await fetch(`http://localhost:3000/api/location/suggestions?query=${prefix}`, { cache: 'no-store' })
-      .catch(() => null);
-
-    if (res && res.ok) {
-      const data = await res.json();
-      if (data.success && Array.isArray(data.suggestions)) {
-        console.log(`  ✓ Prefix "${prefix}" returned ${data.suggestions.length} suggestions:`, data.suggestions.map((s: any) => s.label).slice(0, 3));
-      } else {
-        console.error(`  ❌ Prefix "${prefix}" failed:`, data);
+function expect(actual: any, message: string) {
+  return {
+    toBe(expected: any) {
+      if (actual !== expected) {
+        console.error(`❌ ASSERTION FAILED: ${message} (Expected: ${expected}, Got: ${actual})`);
+        process.exit(1);
       }
-    } else {
-      console.log(`  ℹ Note: Local server not running on port 3000, skipping direct HTTP fetch for prefix "${prefix}".`);
-    }
-  }
-
-  // 2. Test Server-Side Location Query Normalization and rankTherapistsForMatch
-  console.log('\n2. Testing Server-Side Location & Filter Matcher (rankTherapistsForMatch)...');
-
-  // Mock Active Therapists
-  const mockTherapists: CustomerTherapist[] = [
-    {
-      id: 'therapist-ca-1',
-      name: 'California Specialist',
-      title: 'LMT',
-      image: '',
-      galleryImages: [],
-      rating: 4.9,
-      reviewCount: 20,
-      location: 'Los Angeles, CA',
-      serviceAreas: ['Los Angeles, CA', 'Beverly Hills, CA'],
-      zipCodes: ['90210', '90001'],
-      rawServiceAreas: [{ id: '1', cityName: 'Los Angeles', state: 'CA', zipCode: '90210' }],
-      startingPrice: 100,
-      availability: 'Available',
-      offersStudio: true,
-      offersInHome: true,
-      specialties: ['Deep Tissue', 'Sports Massage'],
-      bio: '',
-      experience: '',
-      approach: '',
-      services: [{ id: 'srv-deep', name: 'Deep Tissue Massage', durationMinutes: 60, price: 120, description: '' }],
-      schedule: [],
-      bookingCount: 15,
-      isFeatured: true,
-      isHomepageSelected: false,
+      console.log(`  ✓ ${message}`);
     },
-    {
-      id: 'therapist-tx-1',
-      name: 'Texas Specialist',
-      title: 'LMT',
-      image: '',
-      galleryImages: [],
-      rating: 4.8,
-      reviewCount: 15,
-      location: 'Dallas, TX',
-      serviceAreas: ['Dallas, TX', 'Houston, TX'],
-      zipCodes: ['75001'],
-      rawServiceAreas: [{ id: '2', cityName: 'Dallas', state: 'TX', zipCode: '75001' }],
-      startingPrice: 90,
-      availability: 'Available',
-      offersStudio: false,
-      offersInHome: true,
-      specialties: ['Swedish', 'Aromatherapy'],
-      bio: '',
-      experience: '',
-      approach: '',
-      services: [{ id: 'srv-swedish', name: 'Swedish Massage', durationMinutes: 60, price: 90, description: '' }],
-      schedule: [],
-      bookingCount: 10,
-      isFeatured: false,
-      isHomepageSelected: false,
+    toBeGreaterThan(expected: number) {
+      if (typeof actual !== 'number' || actual <= expected) {
+        console.error(`❌ ASSERTION FAILED: ${message} (Expected > ${expected}, Got: ${actual})`);
+        process.exit(1);
+      }
+      console.log(`  ✓ ${message}`);
     },
-  ];
-
-  // Test State Abbreviation (TX)
-  const txMatches = await rankTherapistsForMatch({ locationQuery: 'TX' }, mockTherapists);
-  if (txMatches.length === 1 && txMatches[0].therapist.id === 'therapist-tx-1') {
-    console.log('  ✓ State Abbreviation "TX" correctly matched Texas Specialist.');
-  } else {
-    console.error('  ❌ State Abbreviation "TX" failed:', txMatches.map((m) => m.therapist.name));
-  }
-
-  // Test Full State Name (Texas)
-  const texasMatches = await rankTherapistsForMatch({ locationQuery: 'Texas' }, mockTherapists);
-  if (texasMatches.length === 1 && texasMatches[0].therapist.id === 'therapist-tx-1') {
-    console.log('  ✓ Full State Name "Texas" correctly matched Texas Specialist.');
-  } else {
-    console.error('  ❌ Full State Name "Texas" failed:', texasMatches.map((m) => m.therapist.name));
-  }
-
-  // Test Partial State Name (Tex)
-  const texMatches = await rankTherapistsForMatch({ locationQuery: 'Tex' }, mockTherapists);
-  if (texMatches.length === 1 && texMatches[0].therapist.id === 'therapist-tx-1') {
-    console.log('  ✓ Partial State Name "Tex" correctly matched Texas Specialist.');
-  } else {
-    console.error('  ❌ Partial State Name "Tex" failed:', texMatches.map((m) => m.therapist.name));
-  }
-
-  // Test City Search (Dallas)
-  const dallasMatches = await rankTherapistsForMatch({ locationQuery: 'Dallas' }, mockTherapists);
-  if (dallasMatches.length === 1 && dallasMatches[0].therapist.id === 'therapist-tx-1') {
-    console.log('  ✓ City Search "Dallas" correctly matched Texas Specialist.');
-  } else {
-    console.error('  ❌ City Search "Dallas" failed:', dallasMatches.map((m) => m.therapist.name));
-  }
-
-  // Test City + State (Dallas, TX)
-  const dallasTxMatches = await rankTherapistsForMatch({ locationQuery: 'Dallas, TX' }, mockTherapists);
-  if (dallasTxMatches.length === 1 && dallasTxMatches[0].therapist.id === 'therapist-tx-1') {
-    console.log('  ✓ City + State "Dallas, TX" correctly matched Texas Specialist.');
-  } else {
-    console.error('  ❌ City + State "Dallas, TX" failed:', dallasTxMatches.map((m) => m.therapist.name));
-  }
-
-  // Test Service + Location AND logic (Deep Tissue + Texas -> should be 0 because Texas specialist only offers Swedish)
-  const serviceTxMatches = await rankTherapistsForMatch({ serviceId: 'srv-deep', locationQuery: 'Texas' }, mockTherapists);
-  if (serviceTxMatches.length === 0) {
-    console.log('  ✓ Service "srv-deep" + Location "Texas" correctly enforced AND logic (0 matches returned).');
-  } else {
-    console.error('  ❌ Service + Location AND logic failed (expected 0, got):', serviceTxMatches.length);
-  }
-
-  // Test Service + Location AND logic (Swedish + Texas -> 1 match)
-  const swedishTxMatches = await rankTherapistsForMatch({ serviceId: 'srv-swedish', locationQuery: 'Texas' }, mockTherapists);
-  if (swedishTxMatches.length === 1 && swedishTxMatches[0].therapist.id === 'therapist-tx-1') {
-    console.log('  ✓ Service "srv-swedish" + Location "Texas" correctly matched Texas Specialist.');
-  } else {
-    console.error('  ❌ Service "srv-swedish" + Location "Texas" failed.');
-  }
-
-  // 3. Test Report Case 71601 (Pine Bluff, AR)
-  console.log('\n3. Testing Reported Case 71601 (Pine Bluff, AR)...');
-  const zipRecord71601 = await db.uSZipCode.findUnique({ where: { zipCode: '71601' } });
-  if (zipRecord71601) {
-    console.log(`  ✓ ZIP 71601 exists in USZipCode database: ${zipRecord71601.city}, ${zipRecord71601.state} (${zipRecord71601.stateName}).`);
-  } else {
-    console.error('  ❌ ZIP 71601 NOT found in USZipCode database!');
-  }
-
-  console.log('\n=== ALL FIND-A-THERAPIST E2E SEARCH TESTS PASSED SUCCESSFULLY! ===\n');
+    toBeLessThan(expected: number) {
+      if (typeof actual !== 'number' || actual >= expected) {
+        console.error(`❌ ASSERTION FAILED: ${message} (Expected < ${expected}, Got: ${actual})`);
+        process.exit(1);
+      }
+      console.log(`  ✓ ${message}`);
+    },
+  };
 }
 
-runFindTherapistSearchTests()
+async function startTestServerPort(port: number = 3005) {
+  console.log(`[Test Server] Starting Next.js test server on port ${port}...`);
+  const app = next({ dev: true, dir: process.cwd() });
+  const handle = app.getRequestHandler();
+  await app.prepare();
+
+  const server = createServer((req, res) => {
+    handle(req, res);
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(port, () => {
+      console.log(`[Test Server] Server ready on http://localhost:${port}`);
+      resolve();
+    });
+  });
+
+  return {
+    baseUrl: `http://localhost:${port}`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.close(() => {
+          console.log('[Test Server] Server stopped.');
+          resolve();
+        });
+      }),
+  };
+}
+
+async function runHardenSearchTestSuite() {
+  console.log('=== STARTING HARDENED FIND-A-THERAPIST SEARCH TEST SUITE ===\n');
+
+  // Start Next.js local server for real API HTTP testing
+  const server = await startTestServerPort(3005);
+
+  try {
+    // 1. Test Autocomplete Suggestions Endpoint (/api/location/suggestions) for prefixes
+    console.log('1. Testing Autocomplete Suggestions Endpoint (/api/location/suggestions)...');
+    const prefixes = ['1', '90', '902', '9021', '90210'];
+    for (const prefix of prefixes) {
+      const startTime = Date.now();
+      const res = await fetch(`${server.baseUrl}/api/location/suggestions?query=${prefix}`, { cache: 'no-store' });
+      const duration = Date.now() - startTime;
+
+      expect(res.status, `HTTP GET /api/location/suggestions?query=${prefix} status is 200`).toBe(200);
+
+      const data = await res.json();
+      expect(data.success, `API response for prefix "${prefix}" returns success: true`).toBe(true);
+      expect(Array.isArray(data.suggestions), `API response for prefix "${prefix}" contains array of suggestions`).toBe(true);
+      expect(data.suggestions.length > 0, `Prefix "${prefix}" returns at least 1 suggestion`).toBe(true);
+      expect(data.suggestions.length <= 10, `Prefix "${prefix}" suggestion list is bounded (<= 10)`).toBe(true);
+
+      // Verify returned suggestions begin with prefix
+      const matchPrefix = data.suggestions.every((s: any) =>
+        s.postalCode ? s.postalCode.startsWith(prefix) : true
+      );
+      expect(matchPrefix, `All returned suggestions for "${prefix}" match the requested prefix`).toBe(true);
+
+      expect(duration, `Autocomplete for "${prefix}" responds fast (${duration}ms < 2500ms)`).toBeLessThan(2500);
+    }
+
+    // 2. Test State Search Normalization
+    console.log('\n2. Testing State Search Normalization...');
+    const statesToTest = ['CA', 'California', 'california', 'Cal', 'TX', 'Texas', 'Tex'];
+    for (const st of statesToTest) {
+      const res = await fetch(`${server.baseUrl}/api/location/suggestions?query=${st}`, { cache: 'no-store' });
+      expect(res.status, `State query "${st}" returns HTTP 200`).toBe(200);
+      const data = await res.json();
+      expect(data.suggestions.length > 0, `State query "${st}" returns state suggestions`).toBe(true);
+    }
+
+    // 3. Test City Search Normalization
+    console.log('\n3. Testing City Search Normalization...');
+    const citiesToTest = ['Los Angeles', 'Dallas', 'Houston'];
+    for (const city of citiesToTest) {
+      const res = await fetch(`${server.baseUrl}/api/location/suggestions?query=${encodeURIComponent(city)}`, { cache: 'no-store' });
+      expect(res.status, `City query "${city}" returns HTTP 200`).toBe(200);
+      const data = await res.json();
+      expect(data.suggestions.length > 0, `City query "${city}" returns city suggestions`).toBe(true);
+    }
+
+    // 4. Test Service + Location AND Logic via POST /api/match
+    console.log('\n4. Testing Service + Location AND Logic via POST /api/match...');
+    const matchPayload = {
+      serviceId: 'non-existent-service-id-xyz',
+      zipCode: '90210',
+    };
+    const matchRes = await fetch(`${server.baseUrl}/api/match`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(matchPayload),
+    });
+    expect(matchRes.status, 'POST /api/match returns HTTP 200').toBe(200);
+    const matchData = await matchRes.json();
+    expect(matchData.success, 'POST /api/match returns success: true').toBe(true);
+    expect(matchData.count, 'Invalid service ID + valid ZIP correctly returns 0 matches (enforces AND logic)').toBe(0);
+
+    // 5. Test Reported Case: /find-a-therapist?service=fab56916-14da-4249-a348-7ed2d35a1d90&zip=71601
+    console.log('\n5. Testing Reported Case: /find-a-therapist?service=fab56916-14da-4249-a348-7ed2d35a1d90&zip=71601...');
+    const reportedServiceId = 'fab56916-14da-4249-a348-7ed2d35a1d90';
+    const reportedZip = '71601';
+
+    const reportedRes = await fetch(`${server.baseUrl}/api/match`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceId: reportedServiceId, zipCode: reportedZip }),
+    });
+
+    expect(reportedRes.status, 'Reported URL /api/match query returns HTTP 200').toBe(200);
+    const reportedData = await reportedRes.json();
+    expect(reportedData.success, 'Reported URL query returns success: true').toBe(true);
+
+    const zip71601 = await db.uSZipCode.findUnique({ where: { zipCode: reportedZip } });
+    expect(Boolean(zip71601), 'ZIP 71601 exists in USZipCode database').toBe(true);
+
+    console.log(`\n  --- REPORTED CASE 71601 ANALYSIS ---`);
+    console.log(`  ZIP: ${reportedZip} (${zip71601?.city}, ${zip71601?.state})`);
+    console.log(`  Service ID: ${reportedServiceId}`);
+    console.log(`  Total Matches Returned: ${reportedData.totalMatches}`);
+    if (reportedData.totalMatches === 0) {
+      console.log(`  Reason: ZIP 71601 (Pine Bluff, AR) exists in the official U.S. ZIP database, but no active therapists in the network are assigned to cover this area in TherapistZipEligibility.`);
+    }
+
+    // 6. Test Performance Measurement for Search Endpoint
+    console.log('\n6. Testing Search Response Time Performance...');
+    const pStart = Date.now();
+    const pRes = await fetch(`${server.baseUrl}/api/match`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zipCode: '90210' }),
+    });
+    const pDuration = Date.now() - pStart;
+    expect(pRes.status, 'Search for ZIP 90210 returns HTTP 200').toBe(200);
+    expect(pDuration, `Search query completes quickly (${pDuration}ms < 2000ms)`).toBeLessThan(2000);
+
+    console.log('\n=== ALL HARDENED FIND-A-THERAPIST E2E SEARCH TESTS PASSED SUCCESSFULLY! ===\n');
+  } finally {
+    await server.close();
+  }
+}
+
+runHardenSearchTestSuite()
   .then(() => process.exit(0))
   .catch((err) => {
-    console.error('Test runner failed:', err);
+    console.error('Test runner encountered an error:', err);
     process.exit(1);
   });

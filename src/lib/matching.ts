@@ -72,7 +72,8 @@ export function normalizeLocationQuery(query: string): {
  */
 export async function isTherapistMatchingLocationQueryAsync(
   therapist: CustomerTherapist,
-  locQueryClean: string
+  locQueryClean: string,
+  stateEligibleTherapistIds?: Set<string> | null
 ): Promise<boolean> {
   if (!locQueryClean) return true;
 
@@ -103,22 +104,28 @@ export async function isTherapistMatchingLocationQueryAsync(
     }
 
     // Check TherapistZipEligibility for state coverage
-    try {
-      const activeTime = await getActiveDistributionTime();
-      if (activeTime) {
-        const eligibilityCount = await db.therapistZipEligibility.count({
-          where: {
-            therapistId: therapist.id,
-            state: norm.stateCode,
-            createdAt: activeTime,
-          },
-        });
-        if (eligibilityCount > 0) {
-          if (!norm.cityName) return true;
-        }
+    if (stateEligibleTherapistIds !== undefined) {
+      if (stateEligibleTherapistIds && stateEligibleTherapistIds.has(therapist.id)) {
+        if (!norm.cityName) return true;
       }
-    } catch {
-      // Fallback
+    } else {
+      try {
+        const activeTime = await getActiveDistributionTime();
+        if (activeTime) {
+          const eligibilityCount = await db.therapistZipEligibility.count({
+            where: {
+              therapistId: therapist.id,
+              state: norm.stateCode,
+              createdAt: activeTime,
+            },
+          });
+          if (eligibilityCount > 0) {
+            if (!norm.cityName) return true;
+          }
+        }
+      } catch {
+        // Fallback
+      }
     }
   }
 
@@ -461,6 +468,63 @@ export async function rankTherapistsForMatch(
   const locQueryClean = (criteria.locationQuery || '').trim().toLowerCase();
   const zipClean = (criteria.zipCode || '').trim().toLowerCase();
 
+  // BATCHED PRE-FETCHING: Fetch ZIP Info, active distribution timestamp, and matching TherapistZipEligibility set ONCE per request
+  let eligibleTherapistIdsForZip: Set<string> | null = null;
+  let zipInfoCache: { zipCode: string; city: string; state: string } | null = null;
+  let stateEligibleTherapistIds: Set<string> | null = null;
+
+  if (zipClean && /^\d{5}$/.test(zipClean)) {
+    eligibleTherapistIdsForZip = new Set<string>();
+    zipInfoCache = await getZipInfo(zipClean);
+
+    if (zipInfoCache) {
+      try {
+        const activeTime = await getActiveDistributionTime();
+        if (activeTime) {
+          const records = await db.therapistZipEligibility.findMany({
+            where: {
+              state: zipInfoCache.state,
+              createdAt: activeTime,
+            },
+            select: { therapistId: true, startZip: true, endZip: true },
+          });
+
+          const reqNum = parseInt(zipClean, 10);
+          for (const rec of records) {
+            const sNum = parseInt(rec.startZip, 10);
+            const eNum = parseInt(rec.endZip, 10);
+            if (!isNaN(reqNum) && !isNaN(sNum) && !isNaN(eNum)) {
+              if (reqNum >= Math.min(sNum, eNum) && reqNum <= Math.max(sNum, eNum)) {
+                eligibleTherapistIdsForZip.add(rec.therapistId);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[rankTherapistsForMatch] Error pre-fetching ZIP eligibility:', err);
+      }
+    }
+  } else if (locQueryClean) {
+    const norm = normalizeLocationQuery(locQueryClean);
+    if (norm.stateCode) {
+      try {
+        const activeTime = await getActiveDistributionTime();
+        if (activeTime) {
+          const records = await db.therapistZipEligibility.findMany({
+            where: {
+              state: norm.stateCode,
+              createdAt: activeTime,
+            },
+            select: { therapistId: true },
+          });
+          stateEligibleTherapistIds = new Set(records.map((r) => r.therapistId));
+        }
+      } catch (err) {
+        console.error('[rankTherapistsForMatch] Error pre-fetching state eligibility:', err);
+      }
+    }
+  }
+
   for (const therapist of therapists) {
     if (!therapist) continue;
 
@@ -506,8 +570,12 @@ export async function rankTherapistsForMatch(
 
       locationCompatible = true;
 
-      const matchesZip = zipClean ? await therapistCoversZipAsync(therapist, zipClean) : false;
-      const matchesCity = locQueryClean ? await isTherapistMatchingLocationQueryAsync(therapist, locQueryClean) : false;
+      const matchesZip = zipClean
+        ? eligibleTherapistIdsForZip
+          ? eligibleTherapistIdsForZip.has(therapist.id)
+          : await therapistCoversZipAsync(therapist, zipClean)
+        : false;
+      const matchesCity = locQueryClean ? await isTherapistMatchingLocationQueryAsync(therapist, locQueryClean, stateEligibleTherapistIds) : false;
 
       if (zipClean) {
         // AUTHORITATIVE ZIP ELIGIBILITY: When customer supplies explicit ZIP, ZIP eligibility is mandatory.
@@ -536,9 +604,13 @@ export async function rankTherapistsForMatch(
 
       locationCompatible = true;
 
-      const matchesCity = locQueryClean ? await isTherapistMatchingLocationQueryAsync(therapist, locQueryClean) : false;
+      const matchesCity = locQueryClean ? await isTherapistMatchingLocationQueryAsync(therapist, locQueryClean, stateEligibleTherapistIds) : false;
 
-      const matchesZip = zipClean ? await therapistCoversZipAsync(therapist, zipClean) : false;
+      const matchesZip = zipClean
+        ? eligibleTherapistIdsForZip
+          ? eligibleTherapistIdsForZip.has(therapist.id)
+          : await therapistCoversZipAsync(therapist, zipClean)
+        : false;
 
       if (zipClean) {
         // AUTHORITATIVE ZIP ELIGIBILITY: When customer supplies explicit ZIP for studio search, TherapistZipEligibility is mandatory.
@@ -567,8 +639,12 @@ export async function rankTherapistsForMatch(
 
       locationCompatible = true;
 
-      const matchesZip = zipClean ? await therapistCoversZipAsync(therapist, zipClean) : false;
-      const matchesCity = locQueryClean ? await isTherapistMatchingLocationQueryAsync(therapist, locQueryClean) : false;
+      const matchesZip = zipClean
+        ? eligibleTherapistIdsForZip
+          ? eligibleTherapistIdsForZip.has(therapist.id)
+          : await therapistCoversZipAsync(therapist, zipClean)
+        : false;
+      const matchesCity = locQueryClean ? await isTherapistMatchingLocationQueryAsync(therapist, locQueryClean, stateEligibleTherapistIds) : false;
 
       if (zipClean) {
         if (matchesZip) {

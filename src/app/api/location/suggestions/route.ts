@@ -13,21 +13,12 @@ export interface LocationSuggestion {
   state: string;
   stateName: string;
   postalCode?: string;
-  count: number;
 }
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const query = (searchParams.get('query') || '').trim();
-    const serviceId = (searchParams.get('service') || searchParams.get('serviceId') || '').trim();
-    const serviceTypeRaw = (searchParams.get('type') || '').trim();
-    const locationType =
-      serviceTypeRaw === 'studio'
-        ? 'STUDIO'
-        : serviceTypeRaw === 'in_home'
-        ? 'IN_HOME'
-        : undefined;
 
     if (!query || query.length < 1) {
       return NextResponse.json(
@@ -39,7 +30,6 @@ export async function GET(request: Request) {
       );
     }
 
-    const activeTherapists = await getActiveTherapists();
     const suggestions: LocationSuggestion[] = [];
     const seenKeys = new Set<string>();
 
@@ -47,7 +37,7 @@ export async function GET(request: Request) {
     const isNumeric = /^\d+$/.test(clean);
 
     if (isNumeric) {
-      // 1. ZIP Code Match Suggestions (Support numeric prefix from 1 digit: '1', '90', '902', '90210')
+      // 1. LIGHTWEIGHT ZIP Code Prefix Suggestions (No therapist ranking on typing)
       const zipMatches = await db.uSZipCode.findMany({
         where: { zipCode: { startsWith: clean } },
         select: { zipCode: true, city: true, state: true, stateName: true },
@@ -60,15 +50,6 @@ export async function GET(request: Request) {
         if (!seenKeys.has(key)) {
           seenKeys.add(key);
 
-          const matches = await rankTherapistsForMatch(
-            {
-              zipCode: zipRecord.zipCode,
-              ...(serviceId ? { serviceId } : {}),
-              ...(locationType ? { locationType } : {}),
-            },
-            activeTherapists
-          );
-
           suggestions.push({
             label: `${zipRecord.zipCode} — ${zipRecord.city}, ${zipRecord.state}`,
             query: zipRecord.zipCode,
@@ -76,13 +57,11 @@ export async function GET(request: Request) {
             state: zipRecord.state,
             stateName: zipRecord.stateName || zipRecord.state,
             postalCode: zipRecord.zipCode,
-            count: matches.length,
           });
         }
       }
     } else {
-      // 2. City & State Name Match Suggestions
-      // Check if query matches a U.S. State first
+      // 2. LIGHTWEIGHT City & State Name Suggestions
       const stateMatch = FALLBACK_US_STATES.find(
         (s) => s.code.toLowerCase() === clean || s.name.toLowerCase().startsWith(clean)
       );
@@ -91,22 +70,12 @@ export async function GET(request: Request) {
         const key = `state:${stateMatch.code}`;
         seenKeys.add(key);
 
-        const matches = await rankTherapistsForMatch(
-          {
-            locationQuery: stateMatch.name,
-            ...(serviceId ? { serviceId } : {}),
-            ...(locationType ? { locationType } : {}),
-          },
-          activeTherapists
-        );
-
         suggestions.push({
           label: `${stateMatch.name} (${stateMatch.code})`,
           query: stateMatch.name,
           city: stateMatch.name,
           state: stateMatch.code,
           stateName: stateMatch.name,
-          count: matches.length,
         });
       }
 
@@ -125,22 +94,12 @@ export async function GET(request: Request) {
         if (!seenKeys.has(key)) {
           seenKeys.add(key);
 
-          const matches = await rankTherapistsForMatch(
-            {
-              locationQuery: `${rec.city}, ${rec.state}`,
-              ...(serviceId ? { serviceId } : {}),
-              ...(locationType ? { locationType } : {}),
-            },
-            activeTherapists
-          );
-
           suggestions.push({
             label: `${rec.city}, ${rec.state}`,
             query: `${rec.city}, ${rec.state}`,
             city: rec.city,
             state: rec.state,
             stateName: rec.stateName || rec.state,
-            count: matches.length,
           });
         }
       }

@@ -52,7 +52,6 @@ export function TherapistFilters({
   const handleLocationInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setDraftLocation(val);
-    onFilterChange({ locationQuery: val });
 
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     if (abortControllerRef.current) {
@@ -63,6 +62,7 @@ export function TherapistFilters({
     if (!cleanVal) {
       setSuggestions([]);
       setShowSuggestions(false);
+      onFilterChange({ locationQuery: '' });
       return;
     }
 
@@ -70,15 +70,7 @@ export function TherapistFilters({
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
-      const params = new URLSearchParams({ query: cleanVal });
-      if (filters.serviceId && filters.serviceId !== 'all') {
-        params.set('service', filters.serviceId);
-      }
-      if (filters.serviceType && filters.serviceType !== 'all') {
-        params.set('type', filters.serviceType);
-      }
-
-      fetch(`/api/location/suggestions?${params.toString()}`, {
+      fetch(`/api/location/suggestions?query=${encodeURIComponent(cleanVal)}`, {
         cache: 'no-store',
         signal: controller.signal,
       })
@@ -98,7 +90,7 @@ export function TherapistFilters({
             setShowSuggestions(false);
           }
         });
-    }, 200);
+    }, 250);
   };
 
   const handleSelectSuggestion = (sug: LocationSuggestion) => {
@@ -257,9 +249,6 @@ export function TherapistFilters({
                     >
                       <span className="font-medium text-slate-900 group-hover:text-emerald-950">
                         {sug.label}
-                      </span>
-                      <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 shrink-0">
-                        {sug.count} {sug.count === 1 ? 'therapist' : 'therapists'}
                       </span>
                     </button>
                   ))}
