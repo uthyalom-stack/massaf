@@ -169,8 +169,31 @@ export async function getIpLocation(ip: string, headers?: Headers): Promise<Norm
 }
 
 /**
+ * Calculates the great-circle distance between two geographic coordinates using the Haversine formula (in km).
+ */
+export function calculateHaversineDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const EARTH_RADIUS_KM = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const rLat1 = (lat1 * Math.PI) / 180;
+  const rLat2 = (lat2 * Math.PI) / 180;
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(rLat1) * Math.cos(rLat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return EARTH_RADIUS_KM * c;
+}
+
+/**
  * Reverse-geocodes GPS coordinates (latitude, longitude) into official USZipCode location info
- * using nearest-neighbor spatial search against the database.
+ * using progressive bounding box candidate searches and Haversine distance calculation.
  * Does NOT permanently store raw lat/lon coordinates.
  */
 export async function reverseGeocodeGps(
@@ -192,7 +215,7 @@ export async function reverseGeocodeGps(
   }
 
   try {
-    // Progressive bounding box radii (in degrees): ~30mi, ~90mi, ~180mi, ~600mi
+    // Progressive bounding box radii (in degrees): ~30mi (0.5deg), ~90mi (1.5deg), ~180mi (3.0deg), ~600mi (10.0deg)
     const radiuses = [0.5, 1.5, 3.0, 10.0];
     let candidates: Array<{
       zipCode: string;
@@ -224,40 +247,20 @@ export async function reverseGeocodeGps(
       }
     }
 
-    // If progressive bounding boxes found no candidates, query all non-null lat/lon records in USZipCode
-    if (candidates.length === 0) {
-      candidates = await db.uSZipCode.findMany({
-        where: {
-          latitude: { not: null },
-          longitude: { not: null },
-        },
-        select: {
-          zipCode: true,
-          city: true,
-          state: true,
-          stateName: true,
-          latitude: true,
-          longitude: true,
-        },
-      });
-    }
-
+    // If no candidate ZIPs found within maximum search radius, return null (location unavailable)
     if (candidates.length === 0) {
       return null;
     }
 
-    // Accurate nearest-neighbor calculation using Euclidean/squared distance on lat/lon
-    let minDistanceSq = Infinity;
+    // Nearest-neighbor candidate selection using Haversine distance
+    let minDistanceKm = Infinity;
     let closestRecord = candidates[0];
 
     for (const rec of candidates) {
       if (rec.latitude !== null && rec.longitude !== null) {
-        const dLat = rec.latitude - lat;
-        const dLon = rec.longitude - lon;
-        const distSq = dLat * dLat + dLon * dLon;
-
-        if (distSq < minDistanceSq) {
-          minDistanceSq = distSq;
+        const distKm = calculateHaversineDistance(lat, lon, rec.latitude, rec.longitude);
+        if (distKm < minDistanceKm) {
+          minDistanceKm = distKm;
           closestRecord = rec;
         }
       }

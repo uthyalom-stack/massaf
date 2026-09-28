@@ -3,6 +3,7 @@ import {
   getIpLocation,
   reverseGeocodeGps,
   isPrivateOrLocalIp,
+  calculateHaversineDistance,
   EMPTY_LOCATION,
   NormalizedLocation,
 } from '../src/lib/ip-location';
@@ -28,18 +29,35 @@ function assert(condition: boolean, message: string) {
 async function runLocationDetectionTests() {
   console.log('=== STARTING LOCATION DETECTION & FALLBACK REGRESSION TEST SUITE ===\n');
 
+  // Test 1: Haversine Accuracy
+  console.log('Test 1: Haversine distance accuracy...');
+  // Distance between Beverly Hills (90210: ~34.0901, -118.4065) and Downtown LA (90012: ~34.0537, -118.2427)
+  const distKm = calculateHaversineDistance(34.0901, -118.4065, 34.0537, -118.2427);
+  assert(distKm > 10 && distKm < 20, `Haversine calculated distance between 90210 and Downtown LA is ~15.6 km (got ${distKm.toFixed(1)} km)`);
+
   // Test A — GPS nearest ZIP
-  console.log('Test A: GPS nearest ZIP resolution...');
-  // Query 90210 (Beverly Hills) coordinates
+  console.log('\nTest A: GPS nearest ZIP resolution via Haversine...');
   const beverlyZip = await db.uSZipCode.findUnique({ where: { zipCode: '90210' } });
   if (beverlyZip && beverlyZip.latitude && beverlyZip.longitude) {
-    // Slightly offset coordinates (0.001 deg away from 90210 center)
     const gpsRes = await reverseGeocodeGps(beverlyZip.latitude + 0.001, beverlyZip.longitude + 0.001);
     assert(gpsRes !== null, 'GPS coordinates near 90210 resolved');
     assert(gpsRes?.postalCode === '90210', `Resolved to nearest ZIP 90210 (got ${gpsRes?.postalCode})`);
   } else {
     console.log('  ⚠️ USZipCode table empty or missing 90210, skipping exact 90210 check');
   }
+
+  // Test 2: Progressive Search Expansion & No Candidates
+  console.log('\nTest 2: Progressive search & No Candidates handling...');
+  // Middle of Atlantic Ocean (0.0, -30.0) where no US ZIP codes exist
+  const oceanRes = await reverseGeocodeGps(0.0, -30.0);
+  assert(oceanRes === null, 'GPS in middle of ocean returns null (location unavailable) without error');
+
+  // Test 3: Large Dataset Protection
+  console.log('\nTest 3: Verification that full-US fallback is removed...');
+  const fs = require('fs');
+  const code = fs.readFileSync('src/lib/ip-location.ts', 'utf8');
+  assert(!code.includes('take: 500'), 'Code does not contain take: 500 fallback');
+  assert(!code.includes('take: 100'), 'Code does not contain arbitrary take: 100 limit');
 
   // Test B — GPS invalid latitude
   console.log('\nTest B: GPS invalid latitude validation...');
@@ -66,8 +84,6 @@ async function runLocationDetectionTests() {
 
   // Test F — IP lookup HTTPS URL
   console.log('\nTest F: Verification that external IP geolocation uses HTTPS...');
-  const fs = require('fs');
-  const code = fs.readFileSync('src/lib/ip-location.ts', 'utf8');
   assert(code.includes('https://ip-api.com/'), 'External IP lookup uses HTTPS URL');
   assert(!code.includes('http://ip-api.com/'), 'No plaintext HTTP ip-api URL in code');
 
@@ -148,7 +164,7 @@ async function runLocationDetectionTests() {
   }
   assert(userSelectedLoc.postalCode === '33101' && userSelectedLoc.source === 'manual', 'Manual ZIP 33101 preserved against IP override');
 
-  console.log('\n✅ ALL SCENARIOS A THROUGH J PASSED SUCCESSFULLY!');
+  console.log('\n✅ ALL HAVERSINE & LOCATION REGRESSION TESTS PASSED SUCCESSFULLY!');
 }
 
 runLocationDetectionTests().catch((err) => {
