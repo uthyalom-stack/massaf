@@ -172,9 +172,19 @@ export function TherapistDiscoveryClient({
     return Array.from(specs).sort();
   }, [initialTherapists]);
 
-  // Execute central authoritative matching via POST /api/match whenever filters change
+  const matchAbortControllerRef = useRef<AbortController | null>(null);
+
+  // Execute central authoritative matching via POST /api/match whenever committed filters change
   useEffect(() => {
     const currentReqId = ++lastSearchReqIdRef.current;
+
+    // Abort previous in-flight matching fetch if a new search is committed
+    if (matchAbortControllerRef.current) {
+      matchAbortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    matchAbortControllerRef.current = controller;
+
     setIsSearching(true);
 
     const cleanLoc = debouncedLocationQuery.trim();
@@ -196,6 +206,7 @@ export function TherapistDiscoveryClient({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     })
       .then((res) => res.json())
       .then((data) => {
@@ -218,6 +229,7 @@ export function TherapistDiscoveryClient({
         }
       })
       .catch((err) => {
+        if (err.name === 'AbortError') return;
         if (currentReqId !== lastSearchReqIdRef.current) return;
         console.error('[TherapistDiscoveryClient] Search error:', err);
         setFilteredTherapists([]);

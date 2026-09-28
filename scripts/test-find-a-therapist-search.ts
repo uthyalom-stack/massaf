@@ -153,8 +153,33 @@ async function runHardenSearchTestSuite() {
       console.log(`  Reason: ZIP 71601 (Pine Bluff, AR) exists in the official U.S. ZIP database, but no active therapists in the network are assigned to cover this area in TherapistZipEligibility.`);
     }
 
-    // 6. Test Performance Measurement for Search Endpoint
-    console.log('\n6. Testing Search Response Time Performance...');
+    // 6. Test Decoupled Typing vs Committed Match Request Count
+    console.log('\n6. Testing Decoupled Typing vs Committed Match Request Count...');
+    let matchRequestCount = 0;
+    let suggestionRequestCount = 0;
+
+    // Simulate keystrokes: 9, 90, 902, 9021, 90210
+    const typingSteps = ['9', '90', '902', '9021', '90210'];
+    for (const step of typingSteps) {
+      const sRes = await fetch(`${server.baseUrl}/api/location/suggestions?query=${step}`, { cache: 'no-store' });
+      if (sRes.ok) suggestionRequestCount++;
+    }
+
+    expect(suggestionRequestCount, '5 intermediate keystrokes issued 5 lightweight suggestion requests').toBe(5);
+    expect(matchRequestCount, '0 /api/match requests executed during intermediate raw typing').toBe(0);
+
+    // Commit search: Select location / Press Enter
+    const committedRes = await fetch(`${server.baseUrl}/api/match`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zipCode: '90210' }),
+    });
+    if (committedRes.ok) matchRequestCount++;
+
+    expect(matchRequestCount, 'Exactly 1 /api/match request executed after committing search').toBe(1);
+
+    // 7. Test Performance Measurement for Search Endpoint
+    console.log('\n7. Testing Search Response Time Performance...');
     const pStart = Date.now();
     const pRes = await fetch(`${server.baseUrl}/api/match`, {
       method: 'POST',
