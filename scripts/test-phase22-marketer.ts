@@ -266,8 +266,14 @@ async function runMarketerTestSuite() {
     // 15. Valid ?ref=code increments clicks
     const trackRes = await trackMarketingClickAction(linkCodeA);
     assert(trackRes.success, '15a. trackMarketingClickAction returns success for active link');
-    const checkLinkA = await db.marketingLink.findUnique({ where: { id: createdLinkA.id } });
+    let checkLinkA = await db.marketingLink.findUnique({ where: { id: createdLinkA.id } });
     assert(checkLinkA !== null && checkLinkA.clicks === 1, '15b. Clicks incremented from 0 to 1');
+
+    // 15c. Repeat click on linkCodeA increments clicks from 1 to 2
+    const repeatTrackRes = await trackMarketingClickAction(linkCodeA);
+    assert(repeatTrackRes.success, '15c. Repeat trackMarketingClickAction returns success');
+    checkLinkA = await db.marketingLink.findUnique({ where: { id: createdLinkA.id } });
+    assert(checkLinkA !== null && checkLinkA.clicks === 2, '15d. Repeat click increments clicks from 1 to 2');
 
     // 16. Invalid ?ref=code does not increment a marketer
     const invalidTrackRes = await trackMarketingClickAction(`invalid-code-${timestamp}`);

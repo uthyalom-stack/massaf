@@ -26,27 +26,8 @@ export async function trackMarketingClickAction(code: string): Promise<{ success
 
   try {
     const cookieStore = await safeGetCookieStore();
-    const existingRef = cookieStore?.get(MARKETING_COOKIE_NAME)?.value;
 
-    // Step 1: If an existing cookie value exists, verify if it corresponds to a VALID ACTIVE marketing link in the database.
-    if (existingRef) {
-      const existingLink = await db.marketingLink.findUnique({
-        where: { code: existingRef },
-        include: {
-          user: {
-            select: { isActive: true },
-          },
-        },
-      });
-
-      // Retain first VALID marketing reference (link must be active and owner user, if any, must be active)
-      if (existingLink && existingLink.isActive && (!existingLink.user || existingLink.user.isActive)) {
-        return { success: true };
-      }
-      // If the existing cookie is stale/invalid/inactive, we proceed below to check the new incoming code!
-    }
-
-    // Step 2: Validate the incoming code against active marketing links
+    // Validate the incoming code against active marketing links
     const newMarketingLink = await db.marketingLink.findUnique({
       where: { code: cleanCode },
       include: {
