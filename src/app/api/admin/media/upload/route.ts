@@ -12,7 +12,7 @@ const ALLOWED_MIME_TYPES: Record<string, string> = {
   'image/webp': 'webp',
 };
 
-const ALLOWED_FOLDERS = new Set(['profile', 'gallery']);
+const ALLOWED_FOLDERS = new Set(['profile', 'gallery', 'branding']);
 
 /**
  * Inspects buffer magic bytes to ensure file content actually matches an allowed image format.

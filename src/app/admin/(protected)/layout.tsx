@@ -2,6 +2,7 @@ import React from 'react';
 import { redirect } from 'next/navigation';
 import { getVerifiedAdminSession, clearAdminSessionCookie } from '@/lib/auth-session';
 import { AdminSidebarLayout, NavSection } from '@/components/admin/AdminSidebarLayout';
+import { getBrandingSettings } from '@/lib/branding';
 
 export default async function ProtectedAdminLayout({
   children,
@@ -85,6 +86,8 @@ export default async function ProtectedAdminLayout({
         },
       ];
 
+  const branding = await getBrandingSettings();
+
   async function handleSignOut() {
     'use server';
     await clearAdminSessionCookie();
@@ -98,6 +101,7 @@ export default async function ProtectedAdminLayout({
       userEmail={session.email}
       userRole={session.role || 'ADMIN'}
       signOutAction={handleSignOut}
+      branding={branding}
     >
       {children}
     </AdminSidebarLayout>
