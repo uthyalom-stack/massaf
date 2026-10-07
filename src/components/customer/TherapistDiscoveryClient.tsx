@@ -40,7 +40,7 @@ export function TherapistDiscoveryClient({
   const [filteredTherapists, setFilteredTherapists] = useState<CustomerTherapist[]>(initialTherapists);
   const [totalMatchesCount, setTotalMatchesCount] = useState<number>(initialTherapists.length);
   const [searchedZip, setSearchedZip] = useState<string | null>(
-    /^\d{5}$/.test(initialLocationQuery.trim()) ? initialLocationQuery.trim() : null
+    rawZip ? rawZip.trim() : null
   );
 
   // Track search request sequence ID to prevent out-of-order stale response overwrites
@@ -77,10 +77,10 @@ export function TherapistDiscoveryClient({
 
       const cleanLoc = nextState.locationQuery.trim();
       if (cleanLoc) {
-        if (/^\d{5}$/.test(cleanLoc)) {
+        if (rawZip && cleanLoc === rawZip.trim()) {
           params.set('zip', cleanLoc);
         } else {
-          params.set('city', cleanLoc);
+          params.set('query', cleanLoc);
         }
       }
 
@@ -165,7 +165,7 @@ export function TherapistDiscoveryClient({
     setIsSearching(true);
 
     const cleanLoc = committedLocation.trim();
-    const isZip = /^\d{5}$/.test(cleanLoc);
+    const isZip = Boolean(rawZip && cleanLoc === rawZip.trim());
 
     const payload = {
       serviceId: serviceIdFilter !== 'all' ? serviceIdFilter : '',
