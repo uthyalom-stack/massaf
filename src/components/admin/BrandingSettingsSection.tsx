@@ -69,15 +69,13 @@ export function BrandingSettingsSection({ initialSettings }: BrandingSettingsSec
     let activeLogoUrl = settings.logoUrl;
 
     try {
-      // 1. If a new file is selected, upload it first to /api/admin/media/upload
+      // 1. If a new file is selected, upload it first to dedicated /api/admin/branding/upload endpoint
       if (selectedFile) {
         setUploading(true);
         const formData = new FormData();
         formData.append('file', selectedFile);
-        formData.append('folder', 'branding');
-        formData.append('therapistId', 'system');
 
-        const uploadRes = await fetch('/api/admin/media/upload', {
+        const uploadRes = await fetch('/api/admin/branding/upload', {
           method: 'POST',
           body: formData,
         });
