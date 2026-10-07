@@ -14,8 +14,8 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
   const branding = await getBrandingSettings();
   const name = branding.siteName || 'MASSAF';
   const tagline = branding.tagline || 'Wellness & Therapy';
-  const logoUrl = branding.logoUrl || '/favicon.ico';
-  const iconType = getIconMimeType(logoUrl);
+  const logoUrl = branding.logoUrl;
+  const iconType = logoUrl ? getIconMimeType(logoUrl) : 'image/png';
 
   return {
     name: `${name} — ${tagline}`,
@@ -25,17 +25,19 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
     display: 'standalone',
     background_color: '#0f172a',
     theme_color: '#047857',
-    icons: [
-      {
-        src: logoUrl,
-        sizes: '192x192',
-        type: iconType,
-      },
-      {
-        src: logoUrl,
-        sizes: '512x512',
-        type: iconType,
-      },
-    ],
+    icons: logoUrl
+      ? [
+          {
+            src: logoUrl,
+            sizes: '192x192',
+            type: iconType,
+          },
+          {
+            src: logoUrl,
+            sizes: '512x512',
+            type: iconType,
+          },
+        ]
+      : undefined,
   };
 }
