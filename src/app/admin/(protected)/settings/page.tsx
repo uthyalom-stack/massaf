@@ -5,7 +5,9 @@ import { db } from '@/lib/db';
 import { getVerifiedAdminSession } from '@/lib/auth-session';
 import { TestDataCleanupSection } from '@/components/admin/TestDataCleanupSection';
 import { PaymentSettingsSection } from '@/components/admin/PaymentSettingsSection';
+import { BrandingSettingsSection } from '@/components/admin/BrandingSettingsSection';
 import { getPaymentSettings, getProviderConfigurations } from '@/lib/payments/settings';
+import { getBrandingSettings } from '@/lib/branding';
 
 export const metadata = {
   title: 'Settings | MASSAF Admin',
@@ -87,6 +89,9 @@ export default async function AdminSettingsPage() {
   // 7. Payment Provider Architecture Settings
   const paymentSettings = await getPaymentSettings();
   const providerConfigurations = getProviderConfigurations();
+
+  // 8. Branding Settings
+  const brandingSettings = await getBrandingSettings();
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
@@ -266,6 +271,9 @@ export default async function AdminSettingsPage() {
         </div>
 
       </div>
+
+      {/* Branding & Brand Identity Section */}
+      <BrandingSettingsSection initialSettings={brandingSettings} />
 
       {/* Payment Provider Settings Architecture */}
       <PaymentSettingsSection

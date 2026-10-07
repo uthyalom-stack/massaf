@@ -88,6 +88,91 @@ export async function previewTherapistCsvAction(csvContent: string) {
   }
 }
 
+// --- Branding Settings Actions ---
+
+export async function getBrandingSettingsAction() {
+  try {
+    await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    const { getBrandingSettings } = await import('@/lib/branding');
+    const settings = await getBrandingSettings();
+    return { success: true, settings };
+  } catch (err: unknown) {
+    console.error('Error in getBrandingSettingsAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to retrieve branding settings.',
+    };
+  }
+}
+
+export async function updateBrandingSettingsAction(input: {
+  logoUrl?: string | null;
+  siteName?: string;
+  tagline?: string;
+}) {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    const { saveBrandingSettings } = await import('@/lib/branding');
+
+    const updated = await saveBrandingSettings(input);
+
+    await logAdminAction({
+      session: adminSession,
+      action: 'UPDATE_BRANDING_SETTINGS',
+      entityType: 'SETTINGS',
+      entityId: 'branding_settings',
+      description: `Updated branding settings (Site Name: ${updated.siteName})`,
+      metadata: {
+        logoUrl: updated.logoUrl,
+        siteName: updated.siteName,
+        tagline: updated.tagline,
+      },
+    });
+
+    safeRevalidatePath('/admin/settings');
+    safeRevalidatePath('/');
+    safeRevalidatePath('/(customer)');
+    return { success: true, settings: updated };
+  } catch (err: unknown) {
+    console.error('Error in updateBrandingSettingsAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to update branding settings.',
+    };
+  }
+}
+
+export async function resetBrandingSettingsAction() {
+  try {
+    const adminSession = await checkServerAdminAuth(['SUPER_ADMIN', 'ADMIN']);
+    const { saveBrandingSettings, DEFAULT_BRANDING_SETTINGS } = await import('@/lib/branding');
+
+    const resetSettings = await saveBrandingSettings(DEFAULT_BRANDING_SETTINGS);
+
+    await logAdminAction({
+      session: adminSession,
+      action: 'RESET_BRANDING_SETTINGS',
+      entityType: 'SETTINGS',
+      entityId: 'branding_settings',
+      description: 'Reset branding settings to system default',
+      metadata: {
+        message: 'Branding settings reset to system default.',
+      },
+    });
+
+    safeRevalidatePath('/admin/settings');
+    safeRevalidatePath('/');
+    safeRevalidatePath('/(customer)');
+    return { success: true, settings: resetSettings };
+  } catch (err: unknown) {
+    console.error('Error in resetBrandingSettingsAction:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to reset branding settings.',
+    };
+  }
+}
+
 // --- Payment Provider Settings Actions ---
 
 export async function getPaymentSettingsAction() {

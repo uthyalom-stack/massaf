@@ -19,6 +19,11 @@ interface AdminSidebarLayoutProps {
   userEmail: string;
   userRole: string;
   signOutAction: () => Promise<void>;
+  branding?: {
+    logoUrl: string | null;
+    siteName: string;
+    tagline: string;
+  };
   children: React.ReactNode;
 }
 
@@ -28,8 +33,11 @@ export function AdminSidebarLayout({
   userEmail,
   userRole,
   signOutAction,
+  branding,
   children,
 }: AdminSidebarLayoutProps) {
+  const siteName = branding?.siteName || 'MASSAF';
+  const logoUrl = branding?.logoUrl || null;
   const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
@@ -72,12 +80,21 @@ export function AdminSidebarLayout({
 
           {/* Logo / Brand */}
           <Link href={brandHref} className="flex items-center gap-2.5 group">
-            <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-black text-lg group-hover:bg-emerald-500 transition-colors">
-              M
-            </div>
+            {logoUrl ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={logoUrl}
+                alt={`${siteName} Logo`}
+                className="w-8 h-8 object-contain rounded-lg group-hover:opacity-90 transition-opacity"
+              />
+            ) : (
+              <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-black text-lg group-hover:bg-emerald-500 transition-colors">
+                {siteName.charAt(0) || 'M'}
+              </div>
+            )}
             <div className="flex flex-col">
               <span className="font-extrabold text-white text-lg tracking-tight leading-none">
-                MASSAF
+                {siteName}
               </span>
               <span className="text-[10px] text-emerald-400 font-semibold tracking-wider uppercase leading-tight">
                 {isMarketer ? 'Marketer Portal' : 'Admin Console'}
@@ -167,7 +184,7 @@ export function AdminSidebarLayout({
           </div>
 
           <div className="p-3 border-t border-slate-800 text-[11px] text-slate-500 text-center">
-            {!isCollapsed ? 'MASSAF Platform v1.0' : 'M'}
+            {!isCollapsed ? `${siteName} Platform v1.0` : siteName.charAt(0) || 'M'}
           </div>
         </aside>
 

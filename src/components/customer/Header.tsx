@@ -7,9 +7,17 @@ import { MobileBottomNav } from '@/components/customer/MobileBottomNav';
 
 interface HeaderProps {
   navLinks: NavItem[];
+  branding?: {
+    logoUrl: string | null;
+    siteName: string;
+    tagline: string;
+  };
 }
 
-export function Header({ navLinks }: HeaderProps) {
+export function Header({ navLinks, branding }: HeaderProps) {
+  const siteName = branding?.siteName || 'MASSAF';
+  const tagline = branding?.tagline || 'Wellness & Therapy';
+  const logoUrl = branding?.logoUrl || null;
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
@@ -19,15 +27,24 @@ export function Header({ navLinks }: HeaderProps) {
           {/* Logo / Branding */}
           <div className="flex items-center gap-3">
             <Link href="/" className="flex items-center gap-2 group focus:outline-none">
-              <span className="w-8 h-8 rounded-lg bg-emerald-700 flex items-center justify-center text-white font-bold text-lg shadow-sm group-hover:bg-emerald-800 transition-colors">
-                M
-              </span>
+              {logoUrl ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={logoUrl}
+                  alt={`${siteName} Logo`}
+                  className="w-9 h-9 object-contain rounded-lg shadow-2xs group-hover:opacity-90 transition-opacity"
+                />
+              ) : (
+                <span className="w-8 h-8 rounded-lg bg-emerald-700 flex items-center justify-center text-white font-bold text-lg shadow-sm group-hover:bg-emerald-800 transition-colors">
+                  {siteName.charAt(0) || 'M'}
+                </span>
+              )}
               <div className="flex flex-col">
                 <span className="text-xl font-extrabold tracking-tight text-slate-900 group-hover:text-emerald-800 transition-colors">
-                  MASSAF
+                  {siteName}
                 </span>
                 <span className="text-[10px] font-semibold text-emerald-800 tracking-widest uppercase -mt-1">
-                  Wellness & Therapy
+                  {tagline}
                 </span>
               </div>
             </Link>
