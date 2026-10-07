@@ -38,10 +38,12 @@ export function LocationSearch() {
           setTotalMatches(typeof data.totalMatches === 'number' ? data.totalMatches : null);
 
           // Pre-fill input if not already touched
-          if (!locationQuery) {
-            const display = data.location.rawQuery || `${data.location.city}, ${data.location.state}`;
-            setLocationQuery(display);
-          }
+          setLocationQuery((prev) => {
+            if (!prev) {
+              return data.location.rawQuery || `${data.location.city}, ${data.location.state}`;
+            }
+            return prev;
+          });
         }
       })
       .catch((err) => {
@@ -141,7 +143,7 @@ export function LocationSearch() {
     );
   }, []);
 
-  // Change Location Button Click
+  // Change Location / Focus Search Input
   const handleChangeLocation = useCallback(() => {
     setShowSuggestions(false);
     if (inputRef.current) {
@@ -149,6 +151,45 @@ export function LocationSearch() {
       inputRef.current.select();
     }
   }, []);
+
+  // Format display text for detected location
+  const getLocationDisplay = (loc: NormalizedLocation): string => {
+    if (loc.rawQuery && loc.rawQuery.trim()) {
+      return loc.rawQuery.trim();
+    }
+    if (loc.city && loc.state) {
+      return `${loc.city}, ${loc.state}`;
+    }
+    if (loc.city) {
+      return loc.city;
+    }
+    if (loc.postalCode) {
+      return loc.postalCode;
+    }
+    return '';
+  };
+
+  // Navigate to existing therapist discovery/results flow with detected location applied
+  const handleViewTherapists = useCallback(() => {
+    if (!detectedLoc) return;
+    const locStr = detectedLoc.postalCode && /^\d{5}$/.test(detectedLoc.postalCode)
+      ? detectedLoc.postalCode
+      : getLocationDisplay(detectedLoc);
+
+    const params = new URLSearchParams();
+    if (locStr) {
+      if (/^\d{5}$/.test(locStr)) {
+        params.set('zip', locStr);
+      } else {
+        params.set('query', locStr);
+      }
+    }
+    if (serviceType && serviceType !== 'all') {
+      params.set('type', serviceType);
+    }
+    const queryString = params.toString();
+    router.push(`/find-a-therapist${queryString ? `?${queryString}` : ''}`);
+  }, [detectedLoc, serviceType, router]);
 
   // Select a suggestion from the autocomplete dropdown
   const handleSelectSuggestion = (sug: LocationSuggestion) => {
@@ -165,14 +206,18 @@ export function LocationSearch() {
       .then((data) => {
         if (data.success && data.location) {
           setDetectedLoc(data.location);
-          setTotalMatches(data.totalMatches);
+          setTotalMatches(typeof data.totalMatches === 'number' ? data.totalMatches : null);
         }
       })
       .catch(() => null);
 
     // Direct search
     const params = new URLSearchParams();
-    params.set('query', sug.query);
+    if (/^\d{5}$/.test(sug.query)) {
+      params.set('zip', sug.query);
+    } else {
+      params.set('query', sug.query);
+    }
     if (serviceType && serviceType !== 'all') {
       params.set('type', serviceType);
     }
@@ -182,30 +227,38 @@ export function LocationSearch() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (isSearching) return;
-    setIsSearching(true);
-    setShowSuggestions(false);
 
     const cleanQuery = locationQuery.trim();
 
-    if (cleanQuery) {
-      fetch('/api/location', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ manualLocation: cleanQuery }),
-      })
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.success && data.location) {
-            setDetectedLoc(data.location);
-            setTotalMatches(data.totalMatches);
-          }
-        })
-        .catch(() => null);
+    if (!cleanQuery) {
+      handleChangeLocation();
+      return;
     }
+
+    setIsSearching(true);
+    setShowSuggestions(false);
+
+    fetch('/api/location', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manualLocation: cleanQuery }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.location) {
+          setDetectedLoc(data.location);
+          setTotalMatches(typeof data.totalMatches === 'number' ? data.totalMatches : null);
+        }
+      })
+      .catch(() => null);
 
     const params = new URLSearchParams();
     if (cleanQuery) {
-      params.set('query', cleanQuery);
+      if (/^\d{5}$/.test(cleanQuery)) {
+        params.set('zip', cleanQuery);
+      } else {
+        params.set('query', cleanQuery);
+      }
     }
     if (serviceType && serviceType !== 'all') {
       params.set('type', serviceType);
@@ -213,6 +266,12 @@ export function LocationSearch() {
     const queryString = params.toString();
     router.push(`/find-a-therapist${queryString ? `?${queryString}` : ''}`);
   };
+
+  const hasValidLocation = Boolean(
+    detectedLoc &&
+    detectedLoc.source !== 'none' &&
+    (detectedLoc.city || detectedLoc.rawQuery || detectedLoc.postalCode)
+  );
 
   return (
     <div className="w-full max-w-3xl mx-auto bg-white p-3 sm:p-5 rounded-2xl shadow-xl ring-1 ring-slate-900/5 backdrop-blur-md relative z-30">
@@ -230,53 +289,99 @@ export function LocationSearch() {
           </svg>
           <span className="font-semibold">Finding therapists near you...</span>
         </div>
-      ) : detectedLoc && detectedLoc.source !== 'none' && (detectedLoc.city || detectedLoc.rawQuery || detectedLoc.postalCode) ? (
-        <div className={`rounded-xl p-3 mb-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs sm:text-sm ${
-          detectedLoc.source === 'manual'
-            ? 'bg-slate-50 border border-slate-200'
-            : 'bg-emerald-50/80 border border-emerald-200/80'
-        }`}>
-          <div className="space-y-0.5">
-            <div className="font-bold text-slate-900">
-              {detectedLoc.source === 'gps'
-                ? 'Your location'
-                : detectedLoc.source === 'manual'
-                ? 'Selected location'
-                : 'Therapists near you'}
+      ) : hasValidLocation && detectedLoc ? (
+        totalMatches !== null && totalMatches > 0 ? (
+          /* STATE 1: Detected location WITH therapists available */
+          <div className="rounded-xl p-3 sm:p-4 mb-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs sm:text-sm bg-emerald-50/80 border border-emerald-200/80">
+            <div className="space-y-1 text-left">
+              <div className="font-bold text-slate-900 text-sm sm:text-base">
+                Therapists near you
+              </div>
+              <div className="text-slate-600">
+                Based on your approximate location:{' '}
+                <strong className="text-slate-900 font-semibold">
+                  {getLocationDisplay(detectedLoc)}
+                </strong>
+              </div>
+              <div className="font-bold text-emerald-800 text-xs sm:text-sm">
+                {totalMatches} {totalMatches === 1 ? 'therapist' : 'therapists'} nearby
+              </div>
             </div>
-            <div className="text-slate-600">
-              {detectedLoc.source === 'ip' && 'Based on your approximate location: '}
-              <strong className="text-slate-900 font-semibold">
-                {detectedLoc.rawQuery || `${detectedLoc.city}, ${detectedLoc.state}`}
-              </strong>
-              {totalMatches !== null && (
-                <span className="ml-1.5 font-bold text-emerald-800">
-                  ({totalMatches} {totalMatches === 1 ? 'therapist' : 'therapists'} available)
-                </span>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0 pt-1 sm:pt-0">
+              {detectedLoc.source === 'ip' && (
+                <button
+                  type="button"
+                  onClick={handleUsePreciseLocation}
+                  className="min-h-[44px] sm:min-h-[38px] px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium rounded-lg transition-colors cursor-pointer text-xs"
+                >
+                  Use Precise Location
+                </button>
               )}
+              <button
+                type="button"
+                onClick={handleViewTherapists}
+                className="min-h-[44px] sm:min-h-[38px] px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl transition-colors cursor-pointer text-xs sm:text-sm inline-flex items-center gap-1.5 shadow-xs"
+              >
+                <span>View therapists</span>
+                <span>&rarr;</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* STATE 2: Detected location WITH 0 therapists available */
+          <div className="rounded-xl p-3 sm:p-4 mb-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs sm:text-sm bg-amber-50/80 border border-amber-200/80">
+            <div className="space-y-1 text-left">
+              <div className="font-bold text-slate-900 text-sm sm:text-base">
+                Therapists near you
+              </div>
+              <div className="text-slate-600">
+                Based on your approximate location:{' '}
+                <strong className="text-slate-900 font-semibold">
+                  {getLocationDisplay(detectedLoc)}
+                </strong>
+              </div>
+              <div className="font-bold text-amber-800 text-xs sm:text-sm">
+                No therapists currently available nearby.
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 pt-1 sm:pt-0">
+              <button
+                type="button"
+                onClick={handleChangeLocation}
+                className="min-h-[44px] sm:min-h-[38px] px-4 py-2 bg-white border border-amber-300 text-amber-900 hover:bg-amber-100/50 font-bold rounded-xl transition-colors cursor-pointer text-xs sm:text-sm inline-flex items-center gap-1.5 shadow-2xs"
+              >
+                <span>Search another location</span>
+                <span>&rarr;</span>
+              </button>
+            </div>
+          </div>
+        )
+      ) : (
+        /* STATE 3: Location Unavailable */
+        <div className="rounded-xl p-3 sm:p-4 mb-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs sm:text-sm bg-slate-50 border border-slate-200/80">
+          <div className="space-y-1 text-left">
+            <div className="font-bold text-slate-900 text-sm sm:text-base">
+              Therapists near you
+            </div>
+            <div className="text-slate-600 font-medium">
+              Find therapists available in your area.
             </div>
           </div>
 
           <div className="flex items-center gap-2 shrink-0 pt-1 sm:pt-0">
-            {detectedLoc.source === 'ip' && (
-              <button
-                type="button"
-                onClick={handleUsePreciseLocation}
-                className="min-h-[44px] sm:min-h-[38px] px-3.5 py-2 sm:py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold rounded-lg transition-colors cursor-pointer text-xs shadow-2xs"
-              >
-                Use My Precise Location
-              </button>
-            )}
             <button
               type="button"
               onClick={handleChangeLocation}
-              className="min-h-[44px] sm:min-h-[38px] px-3.5 py-2 sm:py-1.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-semibold rounded-lg transition-colors cursor-pointer text-xs"
+              className="min-h-[44px] sm:min-h-[38px] px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl transition-colors cursor-pointer text-xs sm:text-sm inline-flex items-center gap-1.5 shadow-xs"
             >
-              Change Location
+              <span>Find therapists</span>
+              <span>&rarr;</span>
             </button>
           </div>
         </div>
-      ) : null}
+      )}
 
       {/* 2. GPS ERROR NOTICE */}
       {gpsError && (

@@ -19,6 +19,10 @@ export const dynamic = 'force-dynamic';
 
 async function calculateMatchesForLocation(location: NormalizedLocation): Promise<number> {
   try {
+    if (location.source === 'none' || (!location.postalCode && !location.city && !location.rawQuery)) {
+      return 0;
+    }
+
     const activeTherapists = await getActiveTherapists();
     if (activeTherapists.length === 0) return 0;
 
@@ -32,7 +36,9 @@ async function calculateMatchesForLocation(location: NormalizedLocation): Promis
     }
 
     // 2. Otherwise rank using City / State query criteria
-    const locQuery = location.rawQuery || `${location.city}, ${location.state}`;
+    const locQuery = (location.rawQuery || `${location.city}, ${location.state}`).trim();
+    if (!locQuery || locQuery === ',') return 0;
+
     const matches = await rankTherapistsForMatch(
       { locationQuery: locQuery },
       activeTherapists
