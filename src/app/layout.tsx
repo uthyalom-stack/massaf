@@ -28,8 +28,14 @@ export async function generateMetadata(): Promise<Metadata> {
     },
     description,
     icons: branding.logoUrl
-      ? [{ rel: "icon", url: branding.logoUrl }]
-      : [{ rel: "icon", url: "/favicon.ico" }],
+      ? {
+          icon: branding.logoUrl,
+          apple: branding.logoUrl,
+        }
+      : {
+          icon: "/favicon.ico",
+          apple: "/favicon.ico",
+        },
     openGraph: {
       title,
       description,

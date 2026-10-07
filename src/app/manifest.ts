@@ -1,11 +1,21 @@
 import { MetadataRoute } from 'next';
 import { getBrandingSettings } from '@/lib/branding';
 
+function getIconMimeType(url: string): string {
+  const clean = url.split('?')[0].toLowerCase();
+  if (clean.endsWith('.jpg') || clean.endsWith('.jpeg')) return 'image/jpeg';
+  if (clean.endsWith('.webp')) return 'image/webp';
+  if (clean.endsWith('.ico')) return 'image/x-icon';
+  if (clean.endsWith('.svg')) return 'image/svg+xml';
+  return 'image/png';
+}
+
 export default async function manifest(): Promise<MetadataRoute.Manifest> {
   const branding = await getBrandingSettings();
   const name = branding.siteName || 'MASSAF';
   const tagline = branding.tagline || 'Wellness & Therapy';
   const logoUrl = branding.logoUrl || '/favicon.ico';
+  const iconType = getIconMimeType(logoUrl);
 
   return {
     name: `${name} — ${tagline}`,
@@ -19,12 +29,12 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
       {
         src: logoUrl,
         sizes: '192x192',
-        type: 'image/png',
+        type: iconType,
       },
       {
         src: logoUrl,
         sizes: '512x512',
-        type: 'image/png',
+        type: iconType,
       },
     ],
   };
