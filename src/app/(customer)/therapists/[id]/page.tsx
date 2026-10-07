@@ -28,9 +28,38 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const titleText = therapist.title ? ` - ${therapist.title}` : '';
   const bioExcerpt = therapist.bio ? `${therapist.bio.slice(0, 150)}...` : '';
 
+  const pageTitle = `${therapist.name} | MASSAF Massage Therapy`;
+  const pageDescription = `${therapist.name}${titleText} in ${therapist.location}. ${bioExcerpt}`;
+
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const profileUrl = `${baseUrl}/therapists/${therapist.id}`;
+
+  const rawImage = therapist.image || '/images/default-avatar.svg';
+  const imageUrl = rawImage.startsWith('http://') || rawImage.startsWith('https://')
+    ? rawImage
+    : `${baseUrl}${rawImage.startsWith('/') ? '' : '/'}${rawImage}`;
+
   return {
-    title: `${therapist.name} | MASSAF Massage Therapy`,
-    description: `${therapist.name}${titleText} in ${therapist.location}. ${bioExcerpt}`,
+    title: pageTitle,
+    description: pageDescription,
+    openGraph: {
+      title: pageTitle,
+      description: pageDescription,
+      type: 'profile',
+      url: profileUrl,
+      images: [
+        {
+          url: imageUrl,
+          alt: therapist.name,
+        },
+      ],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: pageTitle,
+      description: pageDescription,
+      images: [imageUrl],
+    },
   };
 }
 
