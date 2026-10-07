@@ -172,18 +172,19 @@ export function LocationSearch() {
   // Navigate to existing therapist discovery/results flow with detected location applied
   const handleViewTherapists = useCallback(() => {
     if (!detectedLoc) return;
-    const locStr = detectedLoc.postalCode && /^\d{5}$/.test(detectedLoc.postalCode)
-      ? detectedLoc.postalCode
-      : getLocationDisplay(detectedLoc);
 
     const params = new URLSearchParams();
-    if (locStr) {
-      if (/^\d{5}$/.test(locStr)) {
-        params.set('zip', locStr);
-      } else {
+    if (detectedLoc.postalCode && detectedLoc.postalCode.trim()) {
+      params.set('zip', detectedLoc.postalCode.trim());
+    } else if (detectedLoc.city && detectedLoc.city.trim()) {
+      params.set('city', detectedLoc.city.trim());
+    } else {
+      const locStr = getLocationDisplay(detectedLoc);
+      if (locStr) {
         params.set('query', locStr);
       }
     }
+
     if (serviceType && serviceType !== 'all') {
       params.set('type', serviceType);
     }
@@ -213,8 +214,8 @@ export function LocationSearch() {
 
     // Direct search
     const params = new URLSearchParams();
-    if (/^\d{5}$/.test(sug.query)) {
-      params.set('zip', sug.query);
+    if (sug.postalCode && sug.postalCode.trim()) {
+      params.set('zip', sug.postalCode.trim());
     } else {
       params.set('query', sug.query);
     }
@@ -254,11 +255,7 @@ export function LocationSearch() {
 
     const params = new URLSearchParams();
     if (cleanQuery) {
-      if (/^\d{5}$/.test(cleanQuery)) {
-        params.set('zip', cleanQuery);
-      } else {
-        params.set('query', cleanQuery);
-      }
+      params.set('query', cleanQuery);
     }
     if (serviceType && serviceType !== 'all') {
       params.set('type', serviceType);
