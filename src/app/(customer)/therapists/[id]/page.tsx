@@ -31,7 +31,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const pageTitle = `${therapist.name} | MASSAF Massage Therapy`;
   const pageDescription = `${therapist.name}${titleText} in ${therapist.location}. ${bioExcerpt}`;
 
-  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://massaf.com').replace(/\/$/, '');
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');
   const profileUrl = `${baseUrl}/therapists/${therapist.id}`;
 
   const rawImage = therapist.image || '/images/default-avatar.svg';
