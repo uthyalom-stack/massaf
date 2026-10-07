@@ -32,10 +32,7 @@ export async function generateMetadata(): Promise<Metadata> {
           icon: branding.logoUrl,
           apple: branding.logoUrl,
         }
-      : {
-          icon: "/favicon.ico",
-          apple: "/favicon.ico",
-        },
+      : undefined,
     openGraph: {
       title,
       description,
